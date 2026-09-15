@@ -329,8 +329,11 @@ same stream. Retry failures through a fresh explicit Analysis batch.
 `pauseFolderStream` stops **new waves**, not previously confirmed batches or local
 import. Resume reviews the **total** ceiling including already allocated waves;
 allocation is conservative, not actual spend, and unused wave estimates are not
-automatically refunded. Profile/source changes pause the stream. Daily/monthly
-budget exhaustion defers new waves to the next UTC window; per-photo ledger
+automatically refunded. Profile/source changes pause the stream. Monthly budget
+exhaustion (or daily exhaustion when enabled) defers new waves to the next UTC
+window. An explicit `mediaKnowledge.promoGuard.dailyGrossLimitUsd: null` disables
+only the daily stop; dispatch then uses monthly capacity while continuing to
+record daily usage. Missing values retain the guarded default. Per-photo ledger
 reservations remain the final race-safe limit. No Google request is authorized
 merely by starting a local scan.
 

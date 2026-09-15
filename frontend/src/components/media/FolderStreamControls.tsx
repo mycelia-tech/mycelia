@@ -218,7 +218,9 @@ export function FolderStreamControls({ campaign, status, onChange }: {
                   </dd>
                   <dt>Daily / monthly caps</dt>
                   <dd>
-                    ${preview.dailyGrossLimitUsd}{" "}
+                    {preview.dailyGrossLimitUsd === null
+                      ? "No daily limit"
+                      : `$${preview.dailyGrossLimitUsd}`}{" "}
                     / ${preview.monthlyGrossLimitUsd}
                   </dd>
                   <dt>Project / location</dt>

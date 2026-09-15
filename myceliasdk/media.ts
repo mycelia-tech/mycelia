@@ -190,7 +190,8 @@ export const zMediaKnowledgeConfig = z.object({
     promotionExpiresAt: z.string().datetime().optional(),
     stopBeforeHours: z.number().int().min(1).max(168).default(72),
     monthlyGrossLimitUsd: z.number().positive().max(300).default(1),
-    dailyGrossLimitUsd: z.number().positive().max(50).default(0.1),
+    // Only an explicit null disables the daily stop; missing values stay guarded.
+    dailyGrossLimitUsd: z.number().positive().max(50).nullable().default(0.1),
     perImportGrossLimitUsd: z.number().positive().max(10).default(0.01),
     creditVerifiedAt: z.string().datetime().optional(),
     creditVerifiedProjectId: z.string().trim().min(1).optional(),

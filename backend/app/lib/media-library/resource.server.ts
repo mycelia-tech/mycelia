@@ -2829,7 +2829,7 @@ async function dispatchReadyFolderStreams(db: Db) {
         const perPhoto = current.streaming.perAssetMicros;
         const photos = Math.floor(
           Math.min(
-            usdMicros(usage.dailyRemainingUsd),
+            usdMicros(usage.dailyRemainingUsd ?? usage.monthlyRemainingUsd),
             usdMicros(usage.monthlyRemainingUsd),
           ) / perPhoto,
         );

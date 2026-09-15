@@ -237,6 +237,66 @@ function event(db: FakeDb): Document {
   return value;
 }
 
+Deno.test("disabling the daily stop permits more than $50 but preserves the monthly stop", async () => {
+  const fake = new FakeDb();
+  const db = fake as unknown as Db;
+  const settings = config();
+  settings.promoGuard.monthlyGrossLimitUsd = 300;
+  settings.promoGuard.dailyGrossLimitUsd = null;
+  fake.data.set("gcp_usage_months", [{
+    _id: `${projectId}:2026-08`,
+    revision: 0,
+    grossCommittedUsd: 51,
+    grossReservedUsd: 0,
+    days: { "2026-08-22": { grossUsd: 51 } },
+  }]);
+  await reserveGcpBudget(
+    db,
+    "owner-a",
+    "over-daily",
+    0.006,
+    settings,
+    projectId,
+    { now },
+  );
+  assertEquals(ledger(fake).grossReservedUsd, 0.006);
+  assertEquals(ledger(fake).days["2026-08-22"].grossUsd, 51.006);
+
+  settings.promoGuard.dailyGrossLimitUsd = 50;
+  await assertRejects(
+    () =>
+      reserveGcpBudget(
+        db,
+        "owner-a",
+        "daily-blocked",
+        0.006,
+        settings,
+        projectId,
+        { now },
+      ),
+    Error,
+    "GCP_DAILY_BUDGET_BLOCKED",
+  );
+
+  settings.promoGuard.dailyGrossLimitUsd = null;
+  settings.promoGuard.monthlyGrossLimitUsd = 51.01;
+  await assertRejects(
+    () =>
+      reserveGcpBudget(
+        db,
+        "owner-a",
+        "monthly-blocked",
+        0.006,
+        settings,
+        projectId,
+        { now },
+      ),
+    Error,
+    "GCP_MONTHLY_BUDGET_BLOCKED",
+  );
+  assertEquals(ledger(fake).grossReservedUsd, 0.006);
+});
+
 Deno.test("a live budget claim cannot be inherited by a duplicate provider call", async () => {
   const fake = new FakeDb();
   const db = fake as unknown as Db;

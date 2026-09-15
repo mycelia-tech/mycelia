@@ -123,6 +123,28 @@ Deno.test("Google spend ledger is shared by every Mycelia principal using a proj
   );
 });
 
+Deno.test("disabled daily stop retains usage and JSON-safe unlimited values", () => {
+  const config = zMediaKnowledgeConfig.parse({
+    promoGuard: { dailyGrossLimitUsd: null, monthlyGrossLimitUsd: 300 },
+  });
+  const snapshot = summarizeGcpUsage(
+    {
+      grossCommittedUsd: 51,
+      grossReservedUsd: 1,
+      days: { "2026-08-21": { grossUsd: 52 } },
+    },
+    config,
+    new Date("2026-08-21T12:00:00.000Z"),
+  );
+
+  assertEquals(snapshot.grossTodayUsd, 52);
+  assertEquals(snapshot.dailyLimitUsd, null);
+  assertEquals(snapshot.dailyRemainingUsd, null);
+  assertEquals(snapshot.monthlyRemainingUsd, 248);
+  assertEquals(JSON.parse(JSON.stringify(snapshot)), snapshot);
+  assertThrows(() => assertMediaPerImportBudget(config, 0.02));
+});
+
 Deno.test("Google connector estimate includes Vertex and Vision plus optional Document AI", () => {
   assertEquals(estimateGoogleConnectorTestGrossUsd(false), 0.0075);
   assertEquals(estimateGoogleConnectorTestGrossUsd(true), 0.009);

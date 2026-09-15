@@ -113,8 +113,8 @@ your own words.
   discovery, local previews, and Google recognition overlap. Review one total
   gross ceiling and batch size before enabling it. Exact SHA-bound photo waves
   consume that ceiling conservatively; **Pause new batches** leaves confirmed
-  waves and the independent local import running. Daily/monthly/per-photo caps
-  remain enforced. See [streaming photo import](docs/MEDIA_KNOWLEDGE.md#streaming-photo-import).
+  waves and the independent local import running. Monthly/per-photo caps and
+  any enabled daily cap remain enforced. See [streaming photo import](docs/MEDIA_KNOWLEDGE.md#streaming-photo-import).
   Later syncs stat every path but reuse the previously verified SHA-256 and
   extracted metadata when owner, path, byte size, and modification time are
   unchanged; only new or changed files are read and hashed again.
@@ -134,7 +134,10 @@ your own words.
   Unplaced and can be assigned locally with audit history.
 - Google media billing supports a fail-closed 24-hour Free Trial confirmation
   or an explicit persistent paid-account acknowledgement bound to one project;
-  both retain the application monthly, daily, per-asset, and per-event limits.
+  both retain the application monthly, per-asset, per-event, and confirmed batch
+  limits. **Settings → Google Cloud → Daily limit** can explicitly disable the
+  daily stop (`dailyGrossLimitUsd: null`); daily usage is still recorded, and no
+  other ceiling is raised. Missing settings retain the guarded $0.10/day default.
 
 ### AI Chat
 

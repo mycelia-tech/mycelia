@@ -122,6 +122,43 @@ describe("GoogleCloudSettingsPage", () => {
     expect(screen.getByText("$0.0015")).toBeTruthy();
   });
 
+  it("saves an explicit disabled daily limit and reloads it without changing other caps", async () => {
+    let stored: any = structuredClone(emptyConfig);
+    mockCallResource.mockImplementation((resource, input) => {
+      if (resource === "config") {
+        if (input.action === "patch") stored = input.updates;
+        return Promise.resolve(stored);
+      }
+      return Promise.resolve({
+        ...status,
+        usage: {
+          ...status.usage,
+          dailyLimitUsd: stored.promoGuard.dailyGrossLimitUsd,
+          dailyRemainingUsd: stored.promoGuard.dailyGrossLimitUsd === null
+            ? null
+            : status.usage.dailyRemainingUsd,
+        },
+      });
+    });
+    const user = userEvent.setup();
+    render(<GoogleCloudSettingsPage />);
+    const toggle = await screen.findByRole("switch", { name: "Daily limit" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await user.click(toggle);
+    expect(screen.queryByLabelText("Daily stop, USD")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("$0.0075 / No daily limit");
+    expect(stored.promoGuard).toEqual({
+      ...emptyConfig.promoGuard,
+      dailyGrossLimitUsd: null,
+    });
+    expect(stored.eventAggregation).toEqual(emptyConfig.eventAggregation);
+
+    await user.click(screen.getByRole("switch", { name: "Daily limit" }));
+    expect((screen.getByLabelText("Daily stop, USD") as HTMLInputElement).value)
+      .toBe("0.1");
+  });
+
   it("persists local clustering and per-event provider limits", async () => {
     const user = userEvent.setup();
     render(<GoogleCloudSettingsPage />);

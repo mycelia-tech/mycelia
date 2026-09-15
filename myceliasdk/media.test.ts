@@ -56,6 +56,22 @@ Deno.test("media event aggregation defaults are bounded and opt-in ready", () =>
   });
 });
 
+Deno.test("only explicit null disables the daily stop without changing other caps", () => {
+  const parsed = zMediaKnowledgeConfig.parse({
+    promoGuard: { dailyGrossLimitUsd: null },
+  });
+  assertEquals(parsed.promoGuard.dailyGrossLimitUsd, null);
+  assertEquals(parsed.promoGuard.monthlyGrossLimitUsd, 1);
+  assertEquals(parsed.promoGuard.perImportGrossLimitUsd, 0.01);
+  for (const invalid of [0, -1, 51, "", "unlimited"]) {
+    assertThrows(() =>
+      zMediaKnowledgeConfig.parse({
+        promoGuard: { dailyGrossLimitUsd: invalid },
+      })
+    );
+  }
+});
+
 Deno.test("self-hosted media URLs cannot embed credentials or query secrets", () => {
   const profile = {
     id: "self-hosted-media",

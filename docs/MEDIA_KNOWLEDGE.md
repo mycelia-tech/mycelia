@@ -157,8 +157,9 @@ in Analysis and require a new explicit batch to retry.
 
 **Allocated / ceiling** counts confirmed wave ceilings, not actual billing or
 remaining promotional credit. Allocation survives restarts and is deliberately
-not refunded from lower actual usage. Daily/monthly/per-photo settings still
-apply; new waves wait for the next UTC budget window when necessary.
+not refunded from lower actual usage. Monthly/per-photo settings and any enabled
+daily stop still apply; new waves wait for the next UTC budget window when
+necessary.
 **Pause new batches** stops future waves; already confirmed waves finish and
 local import continues. **Review & resume** confirms a new total ceiling that
 includes prior allocation. Missing disks or a changed provider pause cloud
@@ -322,9 +323,14 @@ fails closed unless the credit balance and exact project were manually verified
 in the preceding 24 hours, and it stops 72 hours before the recorded expiry. In
 **Paid account** mode one project-bound confirmation permanently acknowledges
 that real charges are acceptable; the 24-hour balance and promotion-expiry
-checks are skipped. Both modes retain configurable monthly, daily, per-asset,
-and per-event gross list-price stops. The 900-photo rollout uses `$300/month`,
-`$50/day`, and `$0.01/photo`; every confirmed batch also stores its exact
+checks are skipped. Both modes retain configurable monthly, per-asset, and
+per-event gross list-price stops. **Settings → Google Cloud → Daily limit** can
+be switched off and saved to disable only the daily stop
+(`mediaKnowledge.promoGuard.dailyGrossLimitUsd: null`). Daily usage remains in
+the ledger; missing settings still default to `$0.10/day`, and turning the stop
+back on starts at that guarded default. Monthly and confirmed batch ceilings
+remain unchanged. The 900-photo rollout initially used `$300/month`, `$50/day`,
+and `$0.01/photo`; every confirmed batch also stores its exact
 SHA-bound maximum cost. A multi-file batch can therefore exceed one cent in
 total while each asset stays below its own stop.
 These guards reduce risk but cannot mathematically guarantee that a paid billing

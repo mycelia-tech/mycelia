@@ -127,7 +127,10 @@ async function reserveLedgerOnce(
     if (monthUsed + amount > config.promoGuard.monthlyGrossLimitUsd) {
       throw new Error("GCP_MONTHLY_BUDGET_BLOCKED");
     }
-    if (dayUsed + amount > config.promoGuard.dailyGrossLimitUsd) {
+    if (
+      config.promoGuard.dailyGrossLimitUsd !== null &&
+      dayUsed + amount > config.promoGuard.dailyGrossLimitUsd
+    ) {
       throw new Error("GCP_DAILY_BUDGET_BLOCKED");
     }
 

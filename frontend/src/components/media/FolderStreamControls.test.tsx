@@ -106,4 +106,29 @@ describe("folder streaming controls", () => {
     });
     expect(screen.getByText("$1.50 / $50.00 allocated")).toBeTruthy();
   });
+
+  it("shows an unlimited daily cap without changing the confirmed stream ceiling", async () => {
+    request.mockResolvedValue({
+      previewId: "receipt",
+      authorizedGrossUsd: 50,
+      allocatedGrossUsd: 0,
+      perAssetGrossUsd: 0.0075,
+      batchSize: 100,
+      dailyGrossLimitUsd: null,
+      monthlyGrossLimitUsd: 300,
+    });
+    const user = userEvent.setup();
+    render(
+      <FolderStreamControls
+        campaign={campaign}
+        status={status}
+        onChange={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Import + Google" }));
+    await user.click(screen.getByRole("button", { name: "Review cost" }));
+    expect(await screen.findByText("No daily limit / $300")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm stream · max $50.00" }))
+      .toBeTruthy();
+  });
 });

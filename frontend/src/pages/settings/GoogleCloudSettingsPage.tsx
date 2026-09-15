@@ -49,7 +49,7 @@ type MediaConfig = {
     promotionExpiresAt?: string;
     stopBeforeHours: number;
     monthlyGrossLimitUsd: number;
-    dailyGrossLimitUsd: number;
+    dailyGrossLimitUsd: number | null;
     perImportGrossLimitUsd: number;
     creditVerifiedAt?: string;
     creditVerifiedProjectId?: string;
@@ -101,9 +101,9 @@ type ConnectorStatus = {
     grossMonthUsd: number;
     grossTodayUsd: number;
     monthlyLimitUsd: number;
-    dailyLimitUsd: number;
+    dailyLimitUsd: number | null;
     monthlyRemainingUsd: number;
-    dailyRemainingUsd: number;
+    dailyRemainingUsd: number | null;
   };
   connectorTestEstimateUsd: {
     vertexAndVision: number;
@@ -569,8 +569,10 @@ export default function GoogleCloudSettingsPage() {
                     Today used / stop
                   </div>
                   <div className="font-medium">
-                    ${status.usage.grossTodayUsd.toFixed(4)}{" "}
-                    / ${status.usage.dailyLimitUsd.toFixed(2)}
+                    ${status.usage.grossTodayUsd.toFixed(4)} /{" "}
+                    {status.usage.dailyLimitUsd === null
+                      ? "No daily limit"
+                      : `$${status.usage.dailyLimitUsd.toFixed(2)}`}
                   </div>
                 </div>
                 <div>
@@ -626,20 +628,48 @@ export default function GoogleCloudSettingsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="google-cloud-daily-stop">Daily stop, USD</Label>
-              <Input
-                id="google-cloud-daily-stop"
-                type="number"
-                value={config.promoGuard.dailyGrossLimitUsd}
-                onChange={(event) =>
-                  setConfig({
-                    ...config,
-                    promoGuard: {
-                      ...config.promoGuard,
-                      dailyGrossLimitUsd: Number(event.target.value),
-                    },
-                  })}
-              />
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="google-cloud-daily-limit-enabled">
+                  Daily limit
+                </Label>
+                <Switch
+                  id="google-cloud-daily-limit-enabled"
+                  checked={config.promoGuard.dailyGrossLimitUsd !== null}
+                  onCheckedChange={(enabled) =>
+                    setConfig({
+                      ...config,
+                      promoGuard: {
+                        ...config.promoGuard,
+                        dailyGrossLimitUsd: enabled ? 0.1 : null,
+                      },
+                    })}
+                />
+              </div>
+              {config.promoGuard.dailyGrossLimitUsd === null
+                ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No daily limit. Monthly and batch limits still apply.
+                  </p>
+                )
+                : (
+                  <Input
+                    id="google-cloud-daily-stop"
+                    aria-label="Daily stop, USD"
+                    type="number"
+                    min="0.01"
+                    max="50"
+                    step="0.01"
+                    value={config.promoGuard.dailyGrossLimitUsd}
+                    onChange={(event) =>
+                      setConfig({
+                        ...config,
+                        promoGuard: {
+                          ...config.promoGuard,
+                          dailyGrossLimitUsd: Number(event.target.value),
+                        },
+                      })}
+                  />
+                )}
             </div>
             <div>
               <Label htmlFor="google-cloud-per-import-stop">
