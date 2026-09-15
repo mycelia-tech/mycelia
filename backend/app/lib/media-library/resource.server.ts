@@ -9,6 +9,7 @@ import { getServerConfig } from "@/lib/config/serverConfig.server.ts";
 import { enqueueJob, getQueue } from "@/lib/jobs/queue.ts";
 import { publishJobUpdate } from "@/lib/events/publisher.ts";
 import {
+  assertMediaScanSelection,
   createWebpPreview,
   inspectLocalMedia,
   listMediaSourceFolders,
@@ -3362,6 +3363,7 @@ export class MediaLibraryResource
       case "listMountedFolders":
         return { listing: await listMediaSourceFolders(input.relativePath) };
       case "startFolderScan":
+        assertMediaScanSelection(input.relativePath);
         return await startFolderCampaign(db, auth, input.relativePath);
       case "getFolderCampaign": {
         const campaign = await db.collection<any>("media_folder_campaigns")

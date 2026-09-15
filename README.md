@@ -99,7 +99,12 @@ your own words.
   exact preview and ceiling before confirmation. Unmatched event candidates
   remain visible as single photos instead of being silently omitted.
 - Large mounted folders use a visual folder picker and resumable scan → review →
-  confirm campaigns. The mounted root is selected by default and subfolders are
+  confirm campaigns. The local root is selected by default; separately configured
+  disks and aliases are excluded from that scan. The optional macOS
+  `docker-compose.media-disks.yml` overlay exposes **Connected disks** read-only,
+  with stable aliases preserving references when disks reconnect. See
+  [External photo libraries](docs/MEDIA_KNOWLEDGE.md#external-photo-libraries).
+  Subfolders are
   browsable without typing paths from a collapsed **Choose folder** control, so
   the current path and primary Scan action remain visible without consuming the
   page. One `mediaFolderImport` job reports live

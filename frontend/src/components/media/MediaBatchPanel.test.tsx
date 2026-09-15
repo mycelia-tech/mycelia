@@ -154,7 +154,7 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     renderPanel();
 
     expect(await screen.findByText("Folder sync")).toBeTruthy();
-    expect(screen.getByText("/media-source/")).toBeTruthy();
+    expect(screen.getByText("Local import folder")).toBeTruthy();
     expect(screen.queryByText("Mounted folders")).toBeNull();
     expect(
       screen.queryByRole("button", { name: /Process all with Google Cloud/i }),
@@ -173,6 +173,47 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     expect(screen.getByText(/pending 775/)).toBeTruthy();
     expect(screen.getByText(/ready 24/)).toBeTruthy();
     expect(screen.getByText(/reused SHA 24/)).toBeTruthy();
+  });
+
+  it("requires selecting a disk before scanning connected sources", async () => {
+    const user = userEvent.setup();
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listMountedFolders") {
+        return Promise.resolve({
+          listing: input.relativePath === "."
+            ? {
+              currentPath: ".",
+              folders: [{ name: "Connected disks", relativePath: "disks" }],
+            }
+            : {
+              currentPath: "disks",
+              parentPath: ".",
+              folders: [],
+              scanUnavailableReason:
+                "Choose a disk or a folder before scanning",
+            },
+        });
+      }
+      return Promise.resolve({ campaign: null });
+    });
+    renderPanel();
+    await user.click(
+      await screen.findByRole("button", { name: "Choose mounted folder" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Connected disks" }),
+    );
+    expect(await screen.findByText("Choose a disk or a folder before scanning"))
+      .toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Scan selected folder recursively" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      mockCallResource.mock.calls.some(([, input]) =>
+        input.action === "startFolderScan"
+      ),
+    ).toBe(false);
   });
 
   it("chooses a visible mounted subfolder without typing a path", async () => {

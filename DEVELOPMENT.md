@@ -237,6 +237,24 @@ WebP retrieval without queueing recognition. Add `docker-compose.media-gcp.yml`
 when testing ADC/GCP; keep it on every backend recreate so the credential mount
 is not dropped. Untouched upload previews expire after one hour, while an
 interrupted confirmation has a bounded seven-day idempotent recovery lease.
+
+For removable disks on macOS, append `docker-compose.media-disks.yml` after
+the primary media overlay. It mounts the stable `/Volumes` directory read-only,
+so individual disks are optional at startup. In **Media → Choose folder**, open
+**Connected disks**, refresh after connecting a disk, and select a disk or folder
+before scanning. First create an empty `disks` directory inside the local
+`MEDIA_SOURCE_HOST_PATH` folder for the nested mountpoint. The default
+local-folder scan excludes these separate sources.
+See [External photo libraries](docs/MEDIA_KNOWLEDGE.md#external-photo-libraries)
+for stable aliases that preserve existing original-file references.
+
+When switching from a direct disk mount, remove only its old overlay from the
+local `.env` `COMPOSE_FILE` (for example, `docker-compose.media-external.yml` or
+a local `docker-compose.media-local.yml`). Keep the primary media and credential
+overlays. Run `docker compose config --quiet`, then
+`docker compose up -d --no-deps backend` and `docker compose restart nginx`;
+verify `/readiness`. Do not create an empty replacement for a disconnected disk.
+
 Full setup and the provider-neutral
 visual-understanding/embedding contract, configurable gross-cost guards
 (24-hour Free Trial confirmation or persistent project-bound paid mode), and

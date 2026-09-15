@@ -111,7 +111,8 @@ confirm. Configure and start recognition later on `/media/analysis`.
 
 The mounted-folder browser exposes only directories below
 `MEDIA_SOURCE_HOST_PATH`, not arbitrary macOS paths. The root (`.`) is selected
-by default and scans the whole mount recursively; choose visible folders and
+by default and scans the local folder recursively, excluding separately configured
+disks and aliases; choose visible folders and
 breadcrumbs to narrow the scan, for example to `2026/photos`. Symlinks are not
 listed or followed. To change the real host folder, edit
 `MEDIA_SOURCE_HOST_PATH` in `.env.media.local`, recreate only `backend`, and
@@ -404,7 +405,46 @@ links remain local deterministic evidence and cannot be changed by the model.
 
 ### External photo libraries
 
-Keep the disk mounted at a stable host path. Set `MEDIA_SOURCE_EXTRA_HOST_PATH`
+On macOS, use `docker-compose.media-disks.yml` after your primary media overlay.
+It mounts the stable parent `/Volumes` at `/media-source/disks` read-only;
+individual external disks are not required for Mycelia to start. Set
+`MEDIA_DISKS_HOST_PATH` only if your disks have a different stable parent.
+Docker Desktop must allow access to that parent. This exposes its directories
+to the authenticated media browser; symlinks are never followed.
+Before the first start, create an empty `disks` directory inside your local
+`MEDIA_SOURCE_HOST_PATH` folder. This permanent mountpoint is required because
+the parent folder is read-only inside Docker. It does not stand in for any disk;
+do not put local files there, as the volumes mount hides that directory's contents.
+
+In **Media → Choose folder**, choose **Local import folder**, a subfolder, or
+**Connected disks → disk → folder**. Refresh after connecting a disk. Scanning
+the local root excludes other sources, and scanning the entire Connected disks
+container is disabled: select the disk or folder you intend to import. Nothing
+is imported merely by connecting a disk. **Scan** builds an inventory; review it
+and use **Confirm local import**. You can also use **Choose files** to upload
+selected photos or PDFs from any location your browser can access without a
+server mount. Managed uploads copy originals; folder sync keeps references.
+
+To retain references from an old direct mount, configure a stable logical alias
+in the uncommitted `.env`, for example:
+
+```dotenv
+MEDIA_SOURCE_ALIASES='{"icloud-backup":"disks/MyDisk/Source/iCloud_backup"}'
+```
+
+Alias names reserve top-level entries in the picker. Targets must be relative
+paths below the media root; absolute paths, traversal, and symlinks are rejected.
+Stored paths remain `icloud-backup/...`. An offline alias stays visible as
+unavailable, and reconnecting the disk makes it usable again. Keep disk and alias
+names stable. Remove the old individual-disk overlay from `COMPOSE_FILE`, retain
+the primary media and credential overlays, and append the disks overlay.
+Recreate only backend and restart nginx once after this configuration change;
+check `/readiness`. Later connections only require refreshing the folder list.
+If Docker Desktop has not exposed a newly connected volume, check its file
+sharing settings and recreate backend, then restart nginx.
+
+For a fixed library that is always available, the direct-mount option remains:
+keep the disk mounted at a stable host path. Set `MEDIA_SOURCE_EXTRA_HOST_PATH`
 to its photo folder in the uncommitted `.env`, and optionally set
 `MEDIA_SOURCE_EXTRA_NAME` (default `external-photos`). Append
 `docker-compose.media-external.yml` after the existing UAT Compose overlays.

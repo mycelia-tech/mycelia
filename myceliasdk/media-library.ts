@@ -130,6 +130,7 @@ export const zMediaFolderCampaignProgress = z.object({
 export const zMediaSourceFolderListing = z.object({
   currentPath: z.string().min(1),
   parentPath: z.string().min(1).optional(),
+  scanUnavailableReason: z.string().optional(),
   folders: z.array(z.object({
     name: z.string().min(1),
     relativePath: z.string().min(1),

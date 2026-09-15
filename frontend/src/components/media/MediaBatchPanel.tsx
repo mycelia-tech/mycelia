@@ -308,7 +308,7 @@ export function MediaBatchPanel({
                   </MediaHint>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  /media-source/{relativePath === "." ? "" : relativePath}
+                  {relativePath === "." ? "Local import folder" : relativePath}
                 </div>
               </div>
             </div>
@@ -331,7 +331,9 @@ export function MediaBatchPanel({
               <Button
                 onClick={startFolderScan}
                 disabled={busy || folderBrowserLoading ||
-                  Boolean(folderBrowserError)}
+                  Boolean(folderBrowserError) ||
+                  Boolean(folderListing.scanUnavailableReason)}
+                title={folderListing.scanUnavailableReason}
                 size="sm"
                 aria-label="Scan selected folder recursively"
               >
@@ -345,7 +347,9 @@ export function MediaBatchPanel({
 
           <CollapsibleContent className="mt-3 space-y-2 border-t pt-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-medium">Mounted folders</div>
+              <div className="text-sm font-medium">
+                Import source and folder
+              </div>
               <Button
                 size="icon"
                 variant="ghost"
@@ -362,6 +366,16 @@ export function MediaBatchPanel({
                 />
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              Choose a local folder or open Connected disks. After connecting a
+              disk, refresh this list. Only the selected folder is scanned;
+              local scans do not include other sources.
+            </p>
+            {folderListing.scanUnavailableReason && (
+              <p className="text-sm text-muted-foreground">
+                {folderListing.scanUnavailableReason}
+              </p>
+            )}
             <div
               className="flex flex-wrap items-center gap-1 text-sm"
               aria-label="Selected mounted folder"
@@ -373,7 +387,7 @@ export function MediaBatchPanel({
                 onClick={() => browseMountedFolder(".")}
                 disabled={folderBrowserLoading}
               >
-                <Folder className="mr-1 h-4 w-4" /> Root
+                <Folder className="mr-1 h-4 w-4" /> Local import folder
               </Button>
               {(folderListing.currentPath === "."
                 ? []
