@@ -57,6 +57,53 @@ Deno.test("folder and recognition campaigns use bounded work windows", () => {
   assertEquals(RECOGNITION_WINDOW, 16);
 });
 
+Deno.test("stream progress counts imported work while discovery total remains unknown", () => {
+  const progress = folderCampaignProgress({
+    status: "importing",
+    streaming: {},
+    inventoryInitialized: false,
+  }, {
+    total: 130,
+    unsupported: 30,
+    pending: 50,
+    ready: 25,
+    imported: 25,
+  });
+  assertEquals(progress.stage, "streaming");
+  assertEquals(progress.totalKnown, false);
+  assertEquals(progress.processed, 25);
+  assertEquals(progress.remaining, 75);
+});
+
+Deno.test("stream authorization requires explicit consent and bounded costs", () => {
+  assertEquals(
+    mediaLibraryRequestSchema.safeParse({
+      action: "confirmFolderStream",
+      previewId: String(new ObjectId()),
+    }).success,
+    false,
+  );
+  assertEquals(
+    mediaLibraryRequestSchema.safeParse({
+      action: "previewFolderStream",
+      campaignId: String(new ObjectId()),
+      profileId: "google",
+      maxGrossUsd: 301,
+    }).success,
+    false,
+  );
+  assertEquals(
+    mediaLibraryRequestSchema.safeParse({
+      action: "previewFolderStream",
+      campaignId: String(new ObjectId()),
+      profileId: "google",
+      maxGrossUsd: 50,
+      batchSize: 501,
+    }).success,
+    false,
+  );
+});
+
 Deno.test("folder scan progress separates checked ready files from pending work", () => {
   const raw = {
     total: 904,

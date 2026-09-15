@@ -23,7 +23,10 @@ import {
 import {
   assertMediaPerImportBudget,
   estimateMediaGrossUsd,
+  gcpUsageLedgerId,
+  summarizeGcpUsage,
 } from "@/lib/media/costs.ts";
+import { assertPromoGuard } from "@/lib/media/promo-guard.ts";
 import {
   type MediaKnowledgeConfig,
   type MediaRecognitionProfile,
@@ -37,6 +40,13 @@ import {
 } from "@myceliasdk/media-library.ts";
 import { mediaRecognitionAssetReservationId } from "./recognition-reservation-fence.server.ts";
 import { processMediaFolderInventory } from "./folder-inventory.server.ts";
+import {
+  authorizeFolderStream,
+  dispatchFolderStream,
+  runnableFolderStreams,
+  USD_MICROS,
+  usdMicros,
+} from "./folder-stream.server.ts";
 
 export const FOLDER_CHUNK_SIZE = 25;
 const MAX_RECOGNITION_BATCH_ASSETS = 20_000;
@@ -77,6 +87,23 @@ const processFolderCampaignSchema = z.object({
 
 const recognitionTasksSchema = z.array(zMediaRecognitionTask).min(1).max(4)
   .default(["visual-understanding", "ocr"]);
+const previewFolderStreamSchema = z.object({
+  action: z.literal("previewFolderStream"),
+  campaignId: z.string().refine(ObjectId.isValid),
+  profileId: z.string().min(1),
+  maxGrossUsd: z.number().finite().min(0.01).max(300),
+  batchSize: z.number().int().min(1).max(500).default(100),
+});
+const confirmFolderStreamSchema = z.object({
+  action: z.literal("confirmFolderStream"),
+  previewId: z.string().refine(ObjectId.isValid),
+  consent: z.literal(true),
+});
+const pauseFolderStreamSchema = z.object({
+  action: z.literal("pauseFolderStream"),
+  campaignId: z.string().refine(ObjectId.isValid),
+  confirm: z.literal(true),
+});
 const previewRecognitionBatchSchema = z.object({
   action: z.literal("previewRecognitionBatch"),
   profileId: z.string().min(1),
@@ -156,6 +183,9 @@ export const mediaLibraryRequestSchema = z.discriminatedUnion("action", [
   getActiveFolderCampaignSchema,
   confirmFolderCampaignSchema,
   processFolderCampaignSchema,
+  previewFolderStreamSchema,
+  confirmFolderStreamSchema,
+  pauseFolderStreamSchema,
   previewRecognitionBatchSchema,
   confirmRecognitionBatchSchema,
   getRecognitionBatchSchema,
@@ -748,6 +778,30 @@ export function folderCampaignProgress(
   campaign: any,
   rawCounts: Record<string, number>,
 ) {
+  if (campaign.streaming && campaign.status === "importing") {
+    const total = Math.max(
+      0,
+      (rawCounts.total ?? 0) - (rawCounts.unsupported ?? 0),
+    );
+    const remaining = (rawCounts.pending ?? 0) + (rawCounts.inspecting ?? 0) +
+      (rawCounts.ready ?? 0) + (rawCounts.importing ?? 0);
+    const processed = Math.max(0, total - remaining);
+    return {
+      stage: "streaming",
+      total,
+      processed,
+      remaining,
+      percent: total > 0 ? Math.min(100, processed / total * 100) : 0,
+      totalKnown: campaign.inventoryInitialized === true,
+      currentPath: campaign.inventoryCurrentPath ?? campaign.relativePath,
+      chunkSize: FOLDER_CHUNK_SIZE,
+      message:
+        "Discovering and importing locally; Google runs in separate batches",
+      nextStep:
+        "New photos appear as they are imported. Pause new Google batches independently.",
+      lastProgressAt: campaign.lastProgressAt ?? campaign.updatedAt,
+    };
+  }
   const status = String(campaign.status);
   const totalEntries = rawCounts.total ?? 0;
   const unsupported = rawCounts.unsupported ?? 0;
@@ -994,6 +1048,32 @@ async function recoverStaleRecognitionClaims(db: Db, batch: any) {
 }
 
 async function publicFolderCampaign(db: Db, campaign: any) {
+  const streamCounts = campaign.streaming
+    ? await db.collection("media_recognition_batches").aggregate([
+      { $match: { folderCampaignId: campaign._id, owner: campaign.owner } },
+      {
+        $group: {
+          _id: null,
+          ...Object.fromEntries(
+            [
+              "total",
+              "ready",
+              "failed",
+              "skipped",
+              "queued",
+              "processing",
+              "pending",
+              "cancelled",
+            ]
+              .map((
+                key,
+              ) => [key, { $sum: { $ifNull: [`$counts.${key}`, 0] } }]),
+          ),
+        },
+      },
+      { $project: { _id: 0 } },
+    ]).toArray()
+    : [];
   const rawCounts = await stateCounts(
     db,
     "media_folder_items",
@@ -1030,6 +1110,28 @@ async function publicFolderCampaign(db: Db, campaign: any) {
     createdAt: campaign.createdAt,
     updatedAt: campaign.updatedAt,
     completedAt: campaign.completedAt,
+    ...(campaign.streaming
+      ? {
+        streaming: {
+          state: campaign.streaming.state,
+          counts: streamCounts[0] ?? {},
+          profileName: campaign.streaming.profileSnapshot.name,
+          batchSize: campaign.streaming.batchSize,
+          authorizedGrossUsd: campaign.streaming.authorizedMicros / USD_MICROS,
+          allocatedGrossUsd: campaign.streaming.allocatedMicros / USD_MICROS,
+          lastBatchId: campaign.streaming.lastBatchId,
+          safeError: campaign.streaming.safeError,
+          nextCheckAt: campaign.streaming.nextCheckAt,
+          batches: await db.collection("media_recognition_batches").find({
+            folderCampaignId: campaign._id,
+            owner: campaign.owner,
+          }, {
+            projection: { _id: 1, status: 1, counts: 1, authorizedGrossUsd: 1 },
+          })
+            .sort({ createdAt: -1 }).limit(5).toArray(),
+        },
+      }
+      : {}),
   };
 }
 
@@ -1395,16 +1497,34 @@ async function processFolderCampaign(
   if (!campaign) return { success: true, idle: true };
   const config = await loadConfig();
   try {
-    if (!campaign.inventoryInitialized) {
-      const inventory = await processMediaFolderInventory(db, campaign);
-      return await folderWorkerResult(
+    let inventoryComplete = campaign.inventoryInitialized === true;
+    let discovered = 0;
+    if (!inventoryComplete) {
+      const inventory = await processMediaFolderInventory(
         db,
-        campaign._id,
-        inventory.processed,
-        true,
+        campaign,
+        undefined,
+        25,
       );
+      inventoryComplete = inventory.complete;
+      discovered = inventory.processed;
+      if (!campaign.streaming) {
+        return await folderWorkerResult(
+          db,
+          campaign._id,
+          inventory.processed,
+          true,
+        );
+      }
     }
-    if (campaign.status === "queued" || campaign.status === "scanning") {
+    let inspected = 0;
+    if (campaign.streaming) {
+      inspected = await inspectFolderChunk(db, campaign, config);
+    }
+    if (
+      !campaign.streaming &&
+      (campaign.status === "queued" || campaign.status === "scanning")
+    ) {
       const processed = await inspectFolderChunk(db, campaign, config);
       const lastProgressAt = new Date();
       const remaining = await db.collection("media_folder_items")
@@ -1460,7 +1580,7 @@ async function processFolderCampaign(
         $unset: { claimedAt: "" },
       },
     );
-    let processed = 0;
+    let processed = discovered + inspected;
     for (let index = 0; index < FOLDER_CHUNK_SIZE; index += 1) {
       const item = await items.findOneAndUpdate(
         { campaignId: campaign._id, state: "ready" },
@@ -1479,10 +1599,14 @@ async function processFolderCampaign(
     }
     const remaining = await items.countDocuments({
       campaignId: campaign._id,
-      state: { $in: ["ready", "importing"] },
+      state: {
+        $in: campaign.streaming
+          ? ["pending", "inspecting", "ready", "importing"]
+          : ["ready", "importing"],
+      },
     });
     const lastProgressAt = new Date();
-    if (remaining === 0) {
+    if (remaining === 0 && inventoryComplete) {
       const rawCounts = await stateCounts(
         db,
         "media_folder_items",
@@ -1514,7 +1638,7 @@ async function processFolderCampaign(
       db,
       campaign._id,
       processed,
-      remaining > 0,
+      remaining > 0 || !inventoryComplete,
     );
   } catch (error) {
     await campaigns.updateOne(
@@ -2570,6 +2694,12 @@ async function confirmRecognitionBatch(
     await db.collection("media_recognition_batches").insertOne({
       _id: batchId,
       previewId,
+      ...(preview.folderCampaignId
+        ? {
+          folderCampaignId: preview.folderCampaignId,
+          folderStreamReceiptId: preview.folderStreamReceiptId,
+        }
+        : {}),
       owner: auth.principal,
       status: "queued",
       materializationPending: true,
@@ -2634,11 +2764,111 @@ async function confirmRecognitionBatch(
   };
 }
 
+async function validateFolderStream(
+  campaign: any,
+  config: MediaKnowledgeConfig,
+) {
+  const stream = campaign.streaming;
+  const profile = selectProfile(config, stream.profileSnapshot.id);
+  if (
+    profile.providerType !== "google-cloud" ||
+    JSON.stringify(profile) !== JSON.stringify(stream.profileSnapshot)
+  ) {
+    throw new Error(
+      "Google profile changed; pause and review the stream configuration",
+    );
+  }
+  assertMediaPerImportBudget(config, stream.perAssetMicros / USD_MICROS);
+  assertPromoGuard(
+    config,
+    profile.projectId,
+    stream.perAssetMicros / USD_MICROS,
+  );
+  const source = await resolveMediaSourcePath(campaign.relativePath);
+  if (
+    source.realPath !== stream.sourceRealPath ||
+    !(await Deno.stat(source.realPath)).isDirectory
+  ) {
+    throw new Error("The authorized source folder changed or is unavailable");
+  }
+}
+
+async function dispatchReadyFolderStreams(db: Db) {
+  const campaigns = await db.collection<any>("media_folder_campaigns")
+    .find(runnableFolderStreams()).sort({ "streaming.lastCheckedAt": 1 }).limit(
+      4,
+    )
+    .toArray();
+  if (!campaigns.length) return;
+  const config = await loadConfig();
+  for (const campaign of campaigns) {
+    await dispatchFolderStream(db, campaign._id, {
+      validate: (current) => validateFolderStream(current, config),
+      eligibleQuery: recognitionEligibilityQuery,
+      capacity: async (current) => {
+        const now = new Date();
+        const usage = summarizeGcpUsage(
+          await db.collection<any>("gcp_usage_months").findOne({
+            _id: gcpUsageLedgerId(
+              current.streaming.profileSnapshot.projectId,
+              now.toISOString().slice(0, 7),
+            ),
+          }),
+          config,
+          now,
+        );
+        const perPhoto = current.streaming.perAssetMicros;
+        const photos = Math.floor(
+          Math.min(
+            usdMicros(usage.dailyRemainingUsd),
+            usdMicros(usage.monthlyRemainingUsd),
+          ) / perPhoto,
+        );
+        const monthlyBlocked = usdMicros(usage.monthlyRemainingUsd) < perPhoto;
+        return {
+          photos,
+          retryAt: monthlyBlocked
+            ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+            : new Date(
+              Date.UTC(
+                now.getUTCFullYear(),
+                now.getUTCMonth(),
+                now.getUTCDate() + 1,
+              ),
+            ),
+          reason: monthlyBlocked
+            ? "Waiting for the next monthly budget window (UTC)"
+            : "Waiting for the next daily budget window (UTC)",
+        };
+      },
+      prepare: (current, assetIds) =>
+        prepareRecognitionBatch(db, ownerAuth(current.owner), {
+          action: "previewRecognitionBatch",
+          profileId: current.streaming.profileSnapshot.id,
+          requestedTasks: current.streaming.requestedTasks,
+          selection: {
+            mode: "explicit",
+            assetIds,
+            inventoryFilter: "unprocessed",
+            placement: "all",
+          },
+        }),
+      confirm: (current, previewId) =>
+        confirmRecognitionBatch(db, ownerAuth(current.owner), {
+          action: "confirmRecognitionBatch",
+          previewId,
+          consent: true,
+        }),
+    });
+  }
+}
+
 export async function processRecognitionBatch(
   db: Db,
   requestedBatchId?: ObjectId,
   currentCoordinatorJobId?: ObjectId,
 ): Promise<Record<string, unknown>> {
+  await dispatchReadyFolderStreams(db);
   const batches = db.collection<any>("media_recognition_batches");
   let batch = requestedBatchId
     ? await batches.findOne({
@@ -2649,6 +2879,21 @@ export async function processRecognitionBatch(
       { sort: { updatedAt: 1 } },
     );
   if (!batch) {
+    const waiting = await db.collection("media_folder_campaigns").findOne(
+      runnableFolderStreams(),
+    );
+    if (waiting) {
+      return {
+        success: true,
+        processed: 0,
+        hasMore: true,
+        progress: {
+          stage: "waiting_for_photos",
+          message: "Waiting for locally imported photos",
+          campaignId: String(waiting._id),
+        },
+      };
+    }
     return recognitionWorkerResult(null, 0, false);
   }
   if (currentCoordinatorJobId) {
@@ -3378,9 +3623,18 @@ export class MediaLibraryResource
         const campaign = await db.collection<any>("media_folder_campaigns")
           .findOne({
             owner: auth.principal,
-            status: {
-              $in: ["queued", "scanning", "preview_ready", "importing"],
-            },
+            $or: [
+              {
+                status: {
+                  $in: ["queued", "scanning", "preview_ready", "importing"],
+                },
+              },
+              {
+                "streaming.state": {
+                  $in: ["running", "paused", "budget_exhausted"],
+                },
+              },
+            ],
           }, { sort: { createdAt: -1 } });
         return {
           campaign: campaign ? await publicFolderCampaign(db, campaign) : null,
@@ -3392,6 +3646,123 @@ export class MediaLibraryResource
           auth,
           new ObjectId(input.campaignId),
         );
+      case "previewFolderStream": {
+        const campaign = await db.collection<any>("media_folder_campaigns")
+          .findOne({
+            _id: new ObjectId(input.campaignId),
+            owner: auth.principal,
+          });
+        if (!campaign || campaign.status === "cancelled") {
+          throw new Error("Folder campaign is unavailable");
+        }
+        if (campaign.streaming?.state === "running") {
+          throw new Error("Pause new batches before changing the ceiling");
+        }
+        const config = await loadConfig();
+        const profile = selectProfile(config, input.profileId);
+        if (profile.providerType !== "google-cloud") {
+          throw new Error("Select a Google Cloud photo profile");
+        }
+        const requestedTasks: MediaRecognitionTask[] = [
+          "visual-understanding",
+          "ocr",
+        ];
+        const perAssetGrossUsd = estimateMediaGrossUsd(
+          "image",
+          1,
+          requestedTasks,
+          profile,
+        );
+        assertMediaPerImportBudget(config, perAssetGrossUsd);
+        assertPromoGuard(config, profile.projectId, perAssetGrossUsd);
+        const source = await resolveMediaSourcePath(campaign.relativePath);
+        if (!(await Deno.stat(source.realPath)).isDirectory) {
+          throw new Error("Source folder is unavailable");
+        }
+        const authorizedMicros = usdMicros(input.maxGrossUsd);
+        if (
+          authorizedMicros <
+            Math.max(
+              campaign.streaming?.allocatedMicros ?? 0,
+              usdMicros(perAssetGrossUsd),
+            )
+        ) {
+          throw new Error(
+            "The ceiling must cover already allocated batches and at least one photo",
+          );
+        }
+        const preview = {
+          _id: new ObjectId(),
+          campaignId: campaign._id,
+          owner: auth.principal,
+          relativePath: campaign.relativePath,
+          sourceRealPath: source.realPath,
+          profileSnapshot: profile,
+          requestedTasks,
+          perAssetMicros: usdMicros(perAssetGrossUsd),
+          authorizedMicros,
+          batchSize: input.batchSize,
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + PREVIEW_TTL_MS),
+        };
+        await db.collection("media_folder_stream_previews").insertOne(preview);
+        return {
+          previewId: String(preview._id),
+          relativePath: preview.relativePath,
+          profileName: profile.name,
+          projectId: profile.projectId,
+          location: profile.location,
+          requestedTasks,
+          perAssetGrossUsd,
+          authorizedGrossUsd: authorizedMicros / USD_MICROS,
+          allocatedGrossUsd: (campaign.streaming?.allocatedMicros ?? 0) /
+            USD_MICROS,
+          batchSize: input.batchSize,
+          dailyGrossLimitUsd: config.promoGuard.dailyGrossLimitUsd,
+          monthlyGrossLimitUsd: config.promoGuard.monthlyGrossLimitUsd,
+        };
+      }
+      case "confirmFolderStream": {
+        const preview = await db.collection<any>("media_folder_stream_previews")
+          .findOne({
+            _id: new ObjectId(input.previewId),
+            owner: auth.principal,
+          });
+        if (!preview) throw new Error("Stream authorization was not found");
+        await validateFolderStream({
+          relativePath: preview.relativePath,
+          streaming: preview,
+        }, await loadConfig());
+        const campaign = await authorizeFolderStream(
+          db,
+          auth.principal,
+          preview._id,
+        );
+        // Periodic signed coordinators recover enqueue failures without losing consent.
+        if (campaign.status === "importing") {
+          try {
+            await enqueueFolderWorker(campaign._id, auth);
+          } catch { /* watchdog retries */ }
+        }
+        return { campaign: await publicFolderCampaign(db, campaign) };
+      }
+      case "pauseFolderStream": {
+        const campaign = await db.collection<any>("media_folder_campaigns")
+          .findOneAndUpdate({
+            _id: new ObjectId(input.campaignId),
+            owner: auth.principal,
+            "streaming.state": "running",
+          }, {
+            $set: {
+              "streaming.state": "paused",
+              "streaming.pausedAt": new Date(),
+              "streaming.safeError":
+                "New batches paused; already confirmed batches finish. Local import continues.",
+            },
+          }, { returnDocument: "after" });
+        if (!campaign) throw new Error("Running folder stream was not found");
+        return { campaign: await publicFolderCampaign(db, campaign) };
+      }
       case "processFolderCampaign": {
         const job = await assertTrustedCoordinatorJob(
           db,

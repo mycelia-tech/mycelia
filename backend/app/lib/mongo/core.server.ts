@@ -12,10 +12,28 @@ import { env } from "#/env.ts";
 import { withObjectListCategories } from "@/lib/objects/list-categories.ts";
 
 let client: MongoClient | null = null;
+let changeStreamClient: MongoClient | null = null;
+
+// Long-polling cursors must never borrow the HTTP/GridFS pool.
+export const CHANGE_STREAM_POOL_SIZE = 4;
+export async function getChangeStreamDB(): Promise<Db> {
+  changeStreamClient ??= new MongoClient(env.MONGO_URL, {
+    maxPoolSize: CHANGE_STREAM_POOL_SIZE,
+    appName: "mycelia-change-streams",
+  });
+  await changeStreamClient.connect();
+  return changeStreamClient.db(env.DATABASE_NAME);
+}
+
+export async function closeChangeStreamDB(): Promise<void> {
+  const previous = changeStreamClient;
+  changeStreamClient = null;
+  await previous?.close();
+}
 
 // One shared, explicitly bounded application pool. GridFS and regular Mongo
 // resources use this client; the cap prevents a request burst from creating
-// unbounded sockets while leaving room for the collection change streams.
+// unbounded sockets. Change streams have their own isolated pool above.
 const MAX_MONGO_POOL_SIZE = 100;
 
 function createMongoClient(): MongoClient {

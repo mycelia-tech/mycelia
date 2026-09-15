@@ -24,6 +24,10 @@ Deno.test("transcription timeout uses the snapshotted base and sequence allowanc
   );
 });
 
+Deno.test("folder imports are not terminated by the generic 15-minute timeout", () => {
+  expect(getJobTimeoutMs("mediaFolderImport", {})).toBe(24 * 60 * 60 * 1000);
+});
+
 Deno.test("summarization timeout scales with batch size", () => {
   // Default batch of 25: 5 min base + 25 * 90s = 42.5 min
   expect(getJobTimeoutMs("summarization", {})).toBe(2_550_000);

@@ -92,3 +92,17 @@ Deno.test("media recognition watchdog binds recovery to the oldest open batch", 
     options: { returnDocument: "after" },
   });
 });
+
+Deno.test("media watchdog starts a stream coordinator before its first photo wave", async () => {
+  const mongo = (request: Record<string, unknown>) =>
+    Promise.resolve(
+      request.collection === "media_folder_campaigns"
+        ? [{ _id: "stream" }]
+        : [],
+    );
+  expect(await capability.hasPendingWork?.({ mongo, reason: "interval" })).toBe(
+    1,
+  );
+  expect(await capability.getTriggerJobData?.(undefined, "interval", { mongo }))
+    .toEqual({ type: "mediaRecognitionBatch" });
+});

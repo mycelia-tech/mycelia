@@ -147,6 +147,12 @@ imports and worker rebuilds may make ordinary queries slower, but they must not
 starve the watchdog or cause `[SELF-HEAL]` restarts from an application-pool
 `connection checkout` timeout.
 
+Mongo change notifications use a separate four-connection pool and two cursors:
+an Objects cursor preserving the selective lookup/catalog behavior, and a
+database cursor excluding Objects. They no longer allocate one long-poll cursor
+per collection from the application query pool. Startup logs
+`[ChangeStream] Started 2 isolated cursors (objects + database)`.
+
 When a change is not visible:
 
 1. Run `git status --short` and preserve unrelated work from parallel agents.
@@ -301,6 +307,32 @@ only for explicit diagnostics. Jobs launch/restart actions follow the worker
 catalog's `manualRun` capability. Generic cancel/clear actions leave folder
 imports, recognition batches, and paid per-photo work untouched; manage those
 campaigns on `/media` and `/media/analysis` instead.
+
+Optional **Import + Google** uses `previewFolderStream` → `confirmFolderStream`
+to authorize a source-scoped total gross ceiling (not a snapshot of all future
+photos). A running folder campaign can be upgraded without restarting discovery.
+The local coordinator overlaps bounded directory pages and 25-file inspection /
+preview steps. Its 24-hour job timeout replaces the generic 15-minute timeout;
+Mongo cursors/claims still recover if interrupted. Local-only scan → review →
+confirm is unchanged.
+
+The independent `mediaRecognitionBatch` coordinator dispatches one immutable
+wave per stream at a time, up to 500 photos (UI default 100), flushing a partial
+wave after 30 seconds or local completion. `0084_media_folder_streams` creates
+authorization TTL, runnable-stream, batch lookup and unique campaign/asset
+assignment indexes. The exact pending preview and integer-microdollar allocation
+are committed together before dispatch; crash recovery replays the receipt.
+Confirmed authorizations are retained; unconfirmed previews expire in one hour.
+Late duplicate files and failed photos are not automatically recharged by the
+same stream. Retry failures through a fresh explicit Analysis batch.
+
+`pauseFolderStream` stops **new waves**, not previously confirmed batches or local
+import. Resume reviews the **total** ceiling including already allocated waves;
+allocation is conservative, not actual spend, and unused wave estimates are not
+automatically refunded. Profile/source changes pause the stream. Daily/monthly
+budget exhaustion defers new waves to the next UTC window; per-photo ledger
+reservations remain the final race-safe limit. No Google request is authorized
+merely by starting a local scan.
 
 The Media workspace uses progressive disclosure: the folder tree is collapsed
 until **Choose folder** is activated, while durable campaign progress remains

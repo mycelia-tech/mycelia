@@ -138,6 +138,33 @@ separates imported, duplicate, unsupported, changed, and failed entries before
 or during confirmation. Originals remain read-only external references; only
 EXIF/GPS, stripped WebP previews, hashes, and derived data enter Mycelia.
 
+### Streaming photo import
+
+After **Scan** starts, select **Import + Google** on that folder campaign. This
+also works for a campaign already scanning or imported: no repeated inventory
+is required. Review the total dollar ceiling, photos per wave, project and
+location, then confirm once. The authorization includes newly discovered photos
+in this folder, not just the currently visible page. Discovery and local import
+continue while ready originals enter separate exact-SHA recognition batches.
+Original files are neither copied into Mongo nor modified.
+
+The default form proposes 100 photos per wave and a $50 total ceiling; neither
+is activated before confirmation. Google runs visual understanding/embedding
+and EU OCR, never global labels/objects. Ready, busy, ignored and already
+assigned photos are skipped. Same-byte duplicates share an asset and cannot
+create a second paid wave item in this stream. Per-photo failures remain visible
+in Analysis and require a new explicit batch to retry.
+
+**Allocated / ceiling** counts confirmed wave ceilings, not actual billing or
+remaining promotional credit. Allocation survives restarts and is deliberately
+not refunded from lower actual usage. Daily/monthly/per-photo settings still
+apply; new waves wait for the next UTC budget window when necessary.
+**Pause new batches** stops future waves; already confirmed waves finish and
+local import continues. **Review & resume** confirms a new total ceiling that
+includes prior allocation. Missing disks or a changed provider pause cloud
+dispatch; reconnect/review before resuming. Timeline/Map show imported photos
+as soon as local date/GPS is available, before Google finishes.
+
 ```bash
 docker compose \
   --env-file .env.media.local \

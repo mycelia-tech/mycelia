@@ -12,8 +12,14 @@ function inventoryId(campaignId: ObjectId, kind: string, path: string) {
 /** Resume directory discovery before the separate metadata/preview stages. */
 export async function processMediaFolderInventory(
   db: Db,
-  campaign: { _id: ObjectId; owner: string; relativePath: string },
+  campaign: {
+    _id: ObjectId;
+    owner: string;
+    relativePath: string;
+    streaming?: unknown;
+  },
   readPage = readMediaSourceDirectoryPage,
+  maxPages = 1,
 ): Promise<{ processed: number; complete: boolean }> {
   const directories = db.collection<any>("media_folder_directories");
   const now = new Date();
@@ -36,12 +42,15 @@ export async function processMediaFolderInventory(
   });
   const seed = directoryUpsert(campaign.relativePath).updateOne;
   await directories.updateOne(seed.filter, seed.update, { upsert: true });
-  const directory = await directories.findOne({
-    campaignId: campaign._id,
-    state: "pending",
-  }, { sort: { relativePath: 1 } });
+  let directory: any;
   let processed = 0;
-  if (directory) {
+  const started = Date.now();
+  for (let pageNumber = 0; pageNumber < Math.min(25, maxPages); pageNumber++) {
+    directory = await directories.findOne({
+      campaignId: campaign._id,
+      state: "pending",
+    }, { sort: { relativePath: 1 } });
+    if (!directory) break;
     const page = await readPage(
       directory.relativePath,
       directory.afterName,
@@ -98,7 +107,8 @@ export async function processMediaFolderInventory(
         updatedAt: now,
       },
     });
-    processed = Math.max(1, page.entries.length);
+    processed += Math.max(1, page.entries.length);
+    if (processed >= 1_000 || Date.now() - started >= 1_000) break;
   }
   const remaining = await directories.countDocuments({
     campaignId: campaign._id,
@@ -122,11 +132,19 @@ export async function processMediaFolderInventory(
         ? {
           inventoryInitialized: true,
           inventoryTruncated: false,
-          status: "scanning",
           scanStartedAt: now,
         }
         : {}),
     },
   });
+  if (complete) {
+    // A stream can be authorized while an older discovery request is in
+    // flight. Never overwrite its newer importing state with scanning.
+    await db.collection("media_folder_campaigns").updateOne({
+      _id: campaign._id,
+      status: { $in: ["queued", "scanning"] },
+      streaming: { $exists: false },
+    }, { $set: { status: "scanning" } });
+  }
   return { processed, complete };
 }

@@ -109,6 +109,12 @@ your own words.
   the current path and primary Scan action remain visible without consuming the
   page. One `mediaFolderImport` job reports live
   checked/total progress, speed and ETA while committing durable 25-file steps.
+  **Import + Google** optionally turns a folder campaign into a live stream:
+  discovery, local previews, and Google recognition overlap. Review one total
+  gross ceiling and batch size before enabling it. Exact SHA-bound photo waves
+  consume that ceiling conservatively; **Pause new batches** leaves confirmed
+  waves and the independent local import running. Daily/monthly/per-photo caps
+  remain enforced. See [streaming photo import](docs/MEDIA_KNOWLEDGE.md#streaming-photo-import).
   Later syncs stat every path but reuse the previously verified SHA-256 and
   extracted metadata when owner, path, byte size, and modification time are
   unchanged; only new or changed files are read and hashed again.

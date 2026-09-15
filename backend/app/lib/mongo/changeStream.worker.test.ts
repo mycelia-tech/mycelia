@@ -3,6 +3,7 @@ import {
   correctObjectListCategories,
   createObjectCatalogValidationQueue,
   createPerCollectionChangeDebouncer,
+  DATABASE_CHANGE_PIPELINE,
   getCollectionChangeStreamOptions,
   isObjectCatalogOnlyChange,
   loadObjectUpdateDocument,
@@ -10,6 +11,14 @@ import {
   shouldRefreshObjectDensity,
   shouldSuppressMongoChange,
 } from "./changeStream.worker.ts";
+import { CHANGE_STREAM_POOL_SIZE } from "./core.server.ts";
+
+Deno.test("database stream excludes objects and uses a bounded separate pool", () => {
+  expect(DATABASE_CHANGE_PIPELINE).toEqual([{
+    $match: { "ns.coll": { $ne: "objects" } },
+  }]);
+  expect(CHANGE_STREAM_POOL_SIZE).toBe(4);
+});
 
 Deno.test("Mongo update metadata exposes every changed field name once", () => {
   expect(normalizeChangedFields({

@@ -20,6 +20,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { MediaHint } from "@/components/media/MediaHint";
+import { FolderStreamControls } from "./FolderStreamControls";
 
 const FOLDER_CAMPAIGN_KEY = "mycelia.media.folder-campaign";
 
@@ -108,6 +109,7 @@ function campaignStageLabel(stage: string | undefined, status: string) {
     metadata_scan: "Scanning metadata",
     awaiting_confirmation: "Ready to review",
     creating_previews: "Importing locally",
+    streaming: "Importing + streaming",
     completed: "Finished",
     failed: "Failed",
     cancelled: "Cancelled",
@@ -117,6 +119,7 @@ function campaignStageLabel(stage: string | undefined, status: string) {
 
 export function MediaBatchPanel({
   onInventoryChanged,
+  status,
 }: {
   status: any;
   onInventoryChanged: () => void | Promise<void>;
@@ -204,10 +207,11 @@ export function MediaBatchPanel({
 
   useEffect(() => {
     const activeFolder = folderCampaign && [
-      "queued",
-      "scanning",
-      "importing",
-    ].includes(folderCampaign.status);
+          "queued",
+          "scanning",
+          "importing",
+        ].includes(folderCampaign.status) ||
+      folderCampaign?.streaming?.state === "running";
     if (!activeFolder) return;
     const timer = globalThis.setInterval(() => {
       void loadFolderCampaign(idOf(folderCampaign._id)).catch(() => {
@@ -304,7 +308,8 @@ export function MediaBatchPanel({
                   <MediaHint label="About folder sync">
                     Scans are local and recursive. Symlinks are ignored;
                     unchanged files reuse their verified SHA-256. Originals are
-                    mounted read-only and Google is not called.
+                    mounted read-only. Google runs only after a separate batch
+                    or stream confirmation.
                   </MediaHint>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
@@ -492,7 +497,11 @@ export function MediaBatchPanel({
                     <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <span>
                         {folderCampaign.progress.totalKnown === false
-                          ? `${folderCampaign.progress.processed} files discovered`
+                          ? `${
+                            folderCampaign.progress.stage === "streaming"
+                              ? folderCampaign.counts?.total ?? 0
+                              : folderCampaign.progress.processed
+                          } files discovered`
                           : `${folderCampaign.progress.processed} of ${folderCampaign.progress.total} ${
                             folderCampaign.progress.stage ===
                                 "creating_previews"
@@ -553,7 +562,8 @@ export function MediaBatchPanel({
                 {folderCampaign.safeError}
               </div>
             )}
-            {folderCampaign.status === "preview_ready" && (
+            {folderCampaign.status === "preview_ready" &&
+              !folderCampaign.streaming && (
               <Button
                 size="sm"
                 onClick={confirmFolderImport}
@@ -562,6 +572,11 @@ export function MediaBatchPanel({
                 Confirm local import
               </Button>
             )}
+            <FolderStreamControls
+              campaign={folderCampaign}
+              status={status}
+              onChange={setFolderCampaign}
+            />
           </div>
         )}
       </CardContent>

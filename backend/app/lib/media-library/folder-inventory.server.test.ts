@@ -6,6 +6,34 @@ import { processMediaFolderInventory } from "./folder-inventory.server.ts";
 import type { MediaDirectoryEntry } from "@/lib/media/local.server.ts";
 
 Deno.test(
+  "a stale inventory request cannot reset an authorized stream to scanning",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const campaign = {
+      _id: new ObjectId(),
+      owner: "owner",
+      relativePath: "archive",
+    };
+    await db.collection("media_folder_campaigns").insertOne({
+      ...campaign,
+      status: "importing",
+      streaming: { state: "running" },
+    });
+    await processMediaFolderInventory(
+      db,
+      campaign,
+      () => Promise.resolve({ entries: [] }),
+      25,
+    );
+    assertEquals(
+      (await db.collection("media_folder_campaigns").findOne({
+        _id: campaign._id,
+      }))?.status,
+      "importing",
+    );
+  }),
+);
+
+Deno.test(
   "large inventory resumes after a committed page and isolates owners",
   withFixtures(["Mongo"], async ({ db }: { db: Db }) => {
     await createIndexes(db);
