@@ -691,8 +691,8 @@ export default function GoogleCloudSettingsPage() {
             </div>
             <p className="text-xs text-muted-foreground md:col-span-4">
               This is a fail-closed application guard, not a Google billing
-              guarantee. Processing stops {config.promoGuard.stopBeforeHours}
-              {" "}
+              guarantee. Free-trial mode stops processing{" "}
+              {config.promoGuard.stopBeforeHours}{" "}
               hours before the configured promotion expiry. Defaults are
               $1/month, $0.10/day, and $0.01 per asset.
             </p>
@@ -880,9 +880,9 @@ export default function GoogleCloudSettingsPage() {
               </select>
               <p className="text-xs text-muted-foreground">
                 Paid mode permanently acknowledges real-charge risk for this
-                project. Mycelia's monthly, daily, per-asset, and per-event
-                gross limits still apply, but they cannot replace Google
-                Billing.
+                project. Mycelia's monthly, per-asset, per-event, and any
+                enabled daily gross limits still apply, but they cannot replace
+                Google Billing.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
