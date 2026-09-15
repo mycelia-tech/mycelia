@@ -468,7 +468,7 @@ export function MediaBatchPanel({
             <div className="flex flex-wrap items-center gap-2">
               <Badge>
                 {folderCampaign.progress?.waitingForRecovery
-                  ? "Waiting for recovery"
+                  ? "Waiting for progress"
                   : campaignStageLabel(
                     folderCampaign.progress?.stage,
                     folderCampaign.status,

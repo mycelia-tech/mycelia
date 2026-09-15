@@ -786,6 +786,11 @@ export function folderCampaignProgress(
     const remaining = (rawCounts.pending ?? 0) + (rawCounts.inspecting ?? 0) +
       (rawCounts.ready ?? 0) + (rawCounts.importing ?? 0);
     const processed = Math.max(0, total - remaining);
+    const lastProgressAt = campaign.lastProgressAt ?? campaign.updatedAt;
+    const waitingForRecovery = Boolean(
+      lastProgressAt &&
+        Date.now() - new Date(lastProgressAt).getTime() > 60_000,
+    );
     return {
       stage: "streaming",
       total,
@@ -795,11 +800,13 @@ export function folderCampaignProgress(
       totalKnown: campaign.inventoryInitialized === true,
       currentPath: campaign.inventoryCurrentPath ?? campaign.relativePath,
       chunkSize: FOLDER_CHUNK_SIZE,
-      message:
-        "Discovering and importing locally; Google runs in separate batches",
+      waitingForRecovery,
+      message: waitingForRecovery
+        ? "No recent local progress; waiting for the worker or automatic recovery"
+        : "Discovering and importing locally; Google runs in separate batches",
       nextStep:
-        "New photos appear as they are imported. Pause new Google batches independently.",
-      lastProgressAt: campaign.lastProgressAt ?? campaign.updatedAt,
+        "Recovery waits for existing queue/file leases (up to 10 minutes after restart). Google batches can be paused independently.",
+      lastProgressAt,
     };
   }
   const status = String(campaign.status);
@@ -858,15 +865,17 @@ export function folderCampaignProgress(
     ? Math.ceil(remaining / filesPerSecond)
     : undefined;
   const lastProgressAt = campaign.lastProgressAt ?? campaign.updatedAt;
-  const waitingForRecovery = stage === "metadata_scan" && remaining > 0 &&
+  const waitingForRecovery = (stage === "inventory" ||
+    (["metadata_scan", "creating_previews"].includes(stage) &&
+      remaining > 0)) &&
     lastProgressAt &&
     Date.now() - new Date(lastProgressAt).getTime() > 60_000;
   const copy = waitingForRecovery
     ? {
       message:
-        "Waiting for an interrupted local file step to become safe to resume",
+        "No recent local progress; waiting for the worker or automatic recovery",
       nextStep:
-        "No action is required; the watchdog will release the stale claim automatically",
+        "Recovery waits for existing queue/file leases (up to 10 minutes after restart); no rescan is needed",
     }
     : stage === "inventory"
     ? {

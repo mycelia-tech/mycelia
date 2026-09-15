@@ -73,6 +73,13 @@ Deno.test("stream progress counts imported work while discovery total remains un
   assertEquals(progress.totalKnown, false);
   assertEquals(progress.processed, 25);
   assertEquals(progress.remaining, 75);
+  const waiting = folderCampaignProgress({
+    status: "importing",
+    streaming: {},
+    updatedAt: new Date(Date.now() - 120_000),
+  }, { total: 10, pending: 10 });
+  assertEquals(waiting.waitingForRecovery, true);
+  assertEquals(waiting.totalKnown, false);
 });
 
 Deno.test("stream authorization requires explicit consent and bounded costs", () => {

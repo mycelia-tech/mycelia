@@ -165,6 +165,11 @@ includes prior allocation. Missing disks or a changed provider pause cloud
 dispatch; reconnect/review before resuming. Timeline/Map show imported photos
 as soon as local date/GPS is available, before Google finishes.
 
+After a backend restart, the old BullMQ lease may need up to 10 minutes to
+expire before the coordinator resumes. The Media panel marks a lack of recent
+progress instead of suggesting that discovery is still advancing. Do not start
+a duplicate scan: the existing directory cursor and file claims are durable.
+
 ```bash
 docker compose \
   --env-file .env.media.local \
