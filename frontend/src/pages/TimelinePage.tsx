@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { MultiTrackTimeline } from "@/components/timeline/MultiTrackTimeline";
 import { TimelineHeader } from "@/components/timeline/TimelineHeader";
 import { SelectedObjectsPanel } from "@/components/timeline/SelectedObjectsPanel";
@@ -20,6 +21,11 @@ import { getTimelinePresetRange, type TimelinePreset } from "@/lib/timeZones";
 import { getAudioFocusRange } from "@/lib/audioTimeline";
 import { TimelineRecoveryStatus } from "@/components/timeline/TimelineRecoveryStatus";
 import { combineTimelineDataRanges } from "@/lib/timelineRangeBounds";
+import {
+  getPhotoTimelineFocusRange,
+  type PhotoTimelineFocus,
+  photoTimelineFocusFromAssetDetail,
+} from "@/lib/photoTimelineDeepLink";
 
 const TimelinePage = () => {
   const location = useLocation();
@@ -38,6 +44,8 @@ const TimelinePage = () => {
 
   const timeline = useTimeline();
   const { zoomTo } = timeline;
+  const zoomToRef = useRef(zoomTo);
+  zoomToRef.current = zoomTo;
   const { start: timelineStart, end: timelineEnd, setRange } =
     useTimelineRange();
   const fetchTimeZones = useTimelineTimeZoneStore((state) =>
@@ -45,6 +53,45 @@ const TimelinePage = () => {
   );
   const { resolveTimeZone } = useTimelineTimeZone();
   const hasTimeSelection = !!(timeSelection.start && timeSelection.end);
+  const [focusedPhoto, setFocusedPhoto] = useState<PhotoTimelineFocus>();
+  const photoAssetId = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("photoAssetId");
+    return value?.trim() || undefined;
+  }, [location.search]);
+  const setTrackVisible = useTrackVisibilityStore((state) =>
+    state.setTrackVisible
+  );
+
+  useEffect(() => {
+    if (photoAssetId) setTrackVisible("photos", true);
+  }, [photoAssetId, setTrackVisible]);
+
+  useEffect(() => {
+    if (!photoAssetId) {
+      setFocusedPhoto(undefined);
+      return;
+    }
+    let current = true;
+    setFocusedPhoto(undefined);
+    api.callResource("media", { action: "getAsset", assetId: photoAssetId })
+      .then((result) => {
+        if (!current) return;
+        const focus = photoTimelineFocusFromAssetDetail(result, photoAssetId);
+        setFocusedPhoto(focus);
+        if (focus.capturedAt) {
+          const range = getPhotoTimelineFocusRange(focus.capturedAt);
+          zoomToRef.current(range.start, range.end);
+        }
+      })
+      .catch(() => {
+        if (current) {
+          toast.error("Photo could not be opened on the Timeline");
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [photoAssetId]);
 
   useEffect(() => {
     const timeout = globalThis.setTimeout(() => {
@@ -153,6 +200,24 @@ const TimelinePage = () => {
     }
   }, [zoomTo]);
 
+  const handleFocusedPhotoDismiss = useCallback(() => {
+    setFocusedPhoto(undefined);
+    const params = new URLSearchParams(location.search);
+    params.delete("photoAssetId");
+    params.set("start", timelineStart.getTime().toString());
+    params.set("end", timelineEnd.getTime().toString());
+    navigate({
+      pathname: location.pathname,
+      search: params.toString() ? `?${params.toString()}` : "",
+    }, { replace: true });
+  }, [
+    location.pathname,
+    location.search,
+    navigate,
+    timelineEnd,
+    timelineStart,
+  ]);
+
   const handleTimeRangeSelect = (range: string) => {
     const now = new Date();
     const supported = [
@@ -196,7 +261,11 @@ const TimelinePage = () => {
           <TimelineRecoveryStatus />
 
           <div className="border rounded-lg p-2">
-            <MultiTrackTimeline timeline={timeline} />
+            <MultiTrackTimeline
+              timeline={timeline}
+              focusedPhoto={focusedPhoto}
+              onFocusedPhotoDismiss={handleFocusedPhotoDismiss}
+            />
           </div>
 
           <LocationSelectionPanel

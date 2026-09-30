@@ -1,0 +1,16 @@
+# Optional macOS disk browser. Mount the stable parent, never an individual disk.
+# Append after the overlay that mounts the local import folder at /media-source.
+# Create an empty "disks" directory in MEDIA_SOURCE_HOST_PATH first: the parent
+# mount is read-only, so Docker cannot create this nested mountpoint itself.
+services:
+  backend:
+    environment:
+      MEDIA_SOURCE_DISKS_DIR: disks
+      MEDIA_SOURCE_ALIASES: "${MEDIA_SOURCE_ALIASES:-}"
+    volumes:
+      - type: bind
+        source: ${MEDIA_DISKS_HOST_PATH:-/Volumes}
+        target: /media-source/disks
+        read_only: true
+        bind:
+          create_host_path: false

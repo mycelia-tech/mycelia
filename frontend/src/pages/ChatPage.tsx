@@ -54,6 +54,7 @@ import {
   chatStatusLabel,
   DEFAULT_CHAT_TOOL_POLICY,
   hasRenderableAssistantOutput,
+  isChatRunActive,
   isNearBottom,
   type MemoryChatMessage,
   type MemoryChatSummary,
@@ -277,6 +278,7 @@ export default function ChatPage() {
     DEFAULT_CHAT_TOOL_POLICY,
   );
   const [toolCatalog, setToolCatalog] = useState<ChatToolCatalogEntry[]>([]);
+  const [savingToolPolicy, setSavingToolPolicy] = useState(false);
   const [resolvedAliases, setResolvedAliases] = useState<
     Record<string, string>
   >({});
@@ -289,6 +291,7 @@ export default function ChatPage() {
   const localDraftNavigationRef = useRef<string | undefined>(undefined);
   const selectedModelRef = useRef("");
   const latestRequestRef = useRef<ChatMessageMetadata>({});
+  const toolPolicySaveRef = useRef<Promise<void>>(Promise.resolve());
   const focusedDeepLinkRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -531,6 +534,7 @@ export default function ChatPage() {
     if (
       !text || chat.status === "submitted" || chat.status === "streaming"
     ) return;
+    await toolPolicySaveRef.current;
     const messageId = new ObjectId().toString();
     setInput("");
     setPendingMessage({ id: messageId, text });
@@ -733,22 +737,28 @@ export default function ChatPage() {
       toolMode: policy.mode,
       enabledTools: policy.enabledTools,
     });
-    try {
-      await callResource("chat", {
-        action: "setPreferences",
-        chatId: routeChatId,
-        preferences: { toolPolicy: policy },
-      });
-    } catch (error) {
-      setToolPolicy(previous);
-      chatList.update(routeChatId, {
-        toolMode: previous.mode,
-        enabledTools: previous.enabledTools,
-      });
-      toast.error("Could not save tool selection", {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
+    setSavingToolPolicy(true);
+    const save = (async () => {
+      try {
+        await callResource("chat", {
+          action: "setPreferences",
+          chatId: routeChatId,
+          preferences: { toolPolicy: policy },
+        });
+      } catch (error) {
+        setToolPolicy(previous);
+        chatList.update(routeChatId, {
+          toolMode: previous.mode,
+          enabledTools: previous.enabledTools,
+        });
+        toast.error("Could not save tool selection", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+    toolPolicySaveRef.current = save;
+    await save;
+    if (toolPolicySaveRef.current === save) setSavingToolPolicy(false);
   };
 
   const toggleMessagePin = async (message: MemoryChatMessage) => {
@@ -841,6 +851,7 @@ export default function ChatPage() {
     message.role === "assistant"
   );
   const needsApproval = messageNeedsApproval(latestAssistant);
+  const persistedRunActive = isChatRunActive(selectedChat?.lastRun?.state);
   const status = chatStatusLabel(
     chat.status,
     selectedChat?.lastRun,
@@ -858,8 +869,9 @@ export default function ChatPage() {
     next.delete("messageId");
     setSearchParams(next, { replace: true });
   };
-  const controlsDisabled = creatingDraft || chat.status === "submitted" ||
-    chat.status === "streaming" || needsApproval ||
+  const controlsDisabled = creatingDraft || savingToolPolicy ||
+    chat.status === "submitted" || chat.status === "streaming" ||
+    persistedRunActive || needsApproval ||
     Boolean(selectedChat?.archivedAt);
   const resolvedModel = resolvedAliases[selectedModel] || selectedModel ||
     "Configured chat default";
@@ -1169,6 +1181,10 @@ export default function ChatPage() {
             ref={textareaRef}
             placeholder={needsApproval
               ? "Approve or deny the pending tool first"
+              : savingToolPolicy
+              ? "Saving tool selection…"
+              : persistedRunActive
+              ? "Wait for the active response to finish"
               : selectedChat?.archivedAt
               ? "Restore this chat to continue"
               : "Type a message…"}

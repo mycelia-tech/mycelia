@@ -27,7 +27,7 @@ type Props = {
       id: string;
       name: string;
       enabled: boolean;
-      providerType: "google-cloud" | "self-hosted";
+      providerType: "google-cloud" | "self-hosted" | "openai-compatible";
     }>;
     eventAggregation?: {
       maxGapMinutes?: number;
@@ -79,7 +79,9 @@ export function MediaEventsPanel({
   const enabledProfiles = useMemo(
     () =>
       status?.enabled
-        ? (status.profiles ?? []).filter((profile) => profile.enabled)
+        ? (status.profiles ?? []).filter((profile) =>
+          profile.enabled && profile.providerType !== "openai-compatible"
+        )
         : [],
     [status?.enabled, status?.profiles],
   );

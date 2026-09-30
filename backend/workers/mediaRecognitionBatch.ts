@@ -80,6 +80,22 @@ async function oldestOpenRecognitionBatch(mongo: MongoCall) {
   return Array.isArray(rows) ? rows[0] : undefined;
 }
 
+async function hasRunnableFolderStream(mongo: MongoCall) {
+  const rows = await mongo({
+    action: "find",
+    collection: "media_folder_campaigns",
+    query: {
+      "streaming.state": "running",
+      $or: [
+        { "streaming.nextCheckAt": { $exists: false } },
+        { "streaming.nextCheckAt": { $lte: new Date() } },
+      ],
+    },
+    options: { projection: { _id: 1 }, limit: 1 },
+  });
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 async function claimOpenRecognitionBatch(mongo: MongoCall) {
   const batch = await oldestOpenRecognitionBatch(mongo);
   if (!batch?._id) return undefined;
@@ -127,11 +143,17 @@ const capability: JobCapability = {
     interval: 30,
   },
   hasPendingWork: async ({ mongo }) => {
-    return await oldestOpenRecognitionBatch(mongo) ? 1 : 0;
+    return await oldestOpenRecognitionBatch(mongo) ||
+        await hasRunnableFolderStream(mongo)
+      ? 1
+      : 0;
   },
   getTriggerJobData: async (_payload, _reason, { mongo }) => {
     const batch = await claimOpenRecognitionBatch(mongo);
     if (!batch?._id) {
+      if (await hasRunnableFolderStream(mongo)) {
+        return { type: "mediaRecognitionBatch" };
+      }
       throw new Error("Recognition batch coordinator enqueue was claimed");
     }
     return {

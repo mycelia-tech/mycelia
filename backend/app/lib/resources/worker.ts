@@ -64,6 +64,11 @@ import {
   WORKER_CATALOG_SNAPSHOT_ID,
 } from "@/lib/jobs/jobs-dashboard-snapshots.ts";
 
+import {
+  buildSummaryRerunPipeline,
+  ReprocessModelArtifactsSchema,
+} from "@/lib/jobs/summary-rerun.ts";
+
 const STALE_JOB_AGE_MS = 15 * 60 * 1000;
 
 const WORKER_SPECIFIC_IDLE_TYPES = [
@@ -209,6 +214,51 @@ const LOGICAL_CAMPAIGN_JOB_TYPES = [
   "mediaFolderImport",
   "mediaRecognitionBatch",
 ] as const;
+const DEFAULT_JOBS_LIST_LIMIT = 200;
+const JOBS_LIST_MAX_TIME_MS = 5_000;
+
+// Keep the list payload bounded to fields that the Jobs UI actually renders.
+// In particular, logical campaign grouping must not retain every complete job
+// document in memory through `$$ROOT`.
+const JOB_LIST_PROJECTION = {
+  _id: 1,
+  type: 1,
+  data: 1,
+  state: 1,
+  progress: 1,
+  result: 1,
+  trigger: 1,
+  createdAt: 1,
+  finishedAt: 1,
+  startedAt: 1,
+  failedReason: 1,
+  restartInfo: 1,
+  restartedFromJobId: 1,
+  restartJobId: 1,
+  updatedAt: 1,
+  dismissedAt: 1,
+  archivedAt: 1,
+} as const;
+
+const COMPACT_JOB_EXPRESSION = {
+  _id: "$_id",
+  type: "$type",
+  data: "$data",
+  state: "$state",
+  progress: "$progress",
+  result: "$result",
+  trigger: "$trigger",
+  createdAt: "$createdAt",
+  finishedAt: "$finishedAt",
+  startedAt: "$startedAt",
+  failedReason: "$failedReason",
+  restartInfo: "$restartInfo",
+  restartedFromJobId: "$restartedFromJobId",
+  restartJobId: "$restartJobId",
+  updatedAt: "$updatedAt",
+  dismissedAt: "$dismissedAt",
+  archivedAt: "$archivedAt",
+} as const;
 
 export function defaultVisibleJobTypes(types: Iterable<string>): string[] {
   return [...types].filter((type) => !DEFAULT_HIDDEN_JOB_TYPES.has(type));
@@ -220,63 +270,95 @@ export function logicalJobListPipeline(
   limit: number,
 ) {
   return [
-    // Exclude internal worker types before grouping/limit so a large child-job
-    // history cannot crowd its logical batch out of the result window.
-    { $match: candidateQuery },
+    // Ordinary jobs are already one logical row each. Filter them before the
+    // indexed recent-first scan, then cap the branch before merging campaigns.
+    // This avoids sorting/grouping the complete jobs history.
     {
-      $set: {
-        _jobsLogicalId: {
-          $cond: [
-            { $in: ["$type", LOGICAL_CAMPAIGN_JOB_TYPES] },
-            {
-              $ifNull: [
-                "$data.campaignId",
-                {
-                  $ifNull: [
-                    "$progress.campaignId",
-                    {
-                      $ifNull: [
-                        "$result.campaignId",
-                        {
-                          $ifNull: [
-                            "$data.batchId",
-                            {
-                              $ifNull: [
-                                "$progress.batchId",
-                                {
-                                  $ifNull: [
-                                    "$result.batchId",
-                                    { $toString: "$_id" },
-                                  ],
-                                },
-                              ],
-                            },
-                          ],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-            { $toString: "$_id" },
-          ],
-        },
+      $match: {
+        $and: [
+          candidateQuery,
+          visibleQuery,
+          { type: { $nin: LOGICAL_CAMPAIGN_JOB_TYPES } },
+        ],
       },
     },
     { $sort: { createdAt: -1, _id: -1 } },
+    { $limit: limit },
+    { $project: JOB_LIST_PROJECTION },
     {
-      $group: {
-        _id: { type: "$type", logicalId: "$_jobsLogicalId" },
-        job: { $first: "$$ROOT" },
+      $unionWith: {
+        coll: "jobs",
+        pipeline: [
+          // Only these durable campaign types need logical grouping. Their
+          // latest attempt determines lifecycle/view membership, so that
+          // filter intentionally remains after the compact group.
+          {
+            $match: {
+              $and: [
+                candidateQuery,
+                { type: { $in: LOGICAL_CAMPAIGN_JOB_TYPES } },
+              ],
+            },
+          },
+          {
+            $set: {
+              _jobsLogicalId: {
+                $ifNull: [
+                  "$data.campaignId",
+                  {
+                    $ifNull: [
+                      "$progress.campaignId",
+                      {
+                        $ifNull: [
+                          "$result.campaignId",
+                          {
+                            $ifNull: [
+                              "$data.batchId",
+                              {
+                                $ifNull: [
+                                  "$progress.batchId",
+                                  {
+                                    $ifNull: [
+                                      "$result.batchId",
+                                      { $toString: "$_id" },
+                                    ],
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              ...JOB_LIST_PROJECTION,
+              _jobsLogicalId: 1,
+            },
+          },
+          {
+            $group: {
+              _id: { type: "$type", logicalId: "$_jobsLogicalId" },
+              job: {
+                $top: {
+                  sortBy: { createdAt: -1, _id: -1 },
+                  output: COMPACT_JOB_EXPRESSION,
+                },
+              },
+            },
+          },
+          { $replaceRoot: { newRoot: "$job" } },
+          { $match: visibleQuery },
+          { $sort: { createdAt: -1, _id: -1 } },
+          { $limit: limit },
+        ],
       },
     },
-    { $replaceRoot: { newRoot: "$job" } },
-    { $project: { _jobsLogicalId: 0 } },
-    // Lifecycle and dismissal belong to the latest logical attempt. Applying
-    // them before grouping lets an old failed recovery attempt leak into the
-    // Failed view after the same campaign has already completed successfully.
-    { $match: visibleQuery },
     { $sort: { createdAt: -1, _id: -1 } },
     { $limit: limit },
   ];
@@ -519,20 +601,11 @@ const ModelArtifactsSchema = z.object({
   action: z.literal("model_artifacts"),
   artifactTypes: z.array(ModelArtifactTypeSchema).optional(),
   model: z.string().optional(),
+  start: z.string().datetime({ offset: true }).optional(),
+  end: z.string().datetime({ offset: true }).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
   limit: z.number().int().min(1).max(500).default(100),
-});
-
-const ReprocessModelArtifactsSchema = z.object({
-  action: z.literal("reprocess_model_artifacts"),
-  artifactType: z.literal("summary"),
-  sourceModel: z.string().min(1),
-  targetModel: z.string().min(1),
-  // Pin rerun jobs to one provider profile (no cross-provider failover).
-  targetProviderProfileId: z.string().min(1).optional(),
-  artifactIds: z.array(z.string()).max(100).optional(),
-  limit: z.number().int().min(1).max(100).default(25),
 });
 
 const RequestSchema = z.union([
@@ -1462,6 +1535,8 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
     const generatedAtMatch: Record<string, Date> = {};
     if (input.from) generatedAtMatch.$gte = new Date(`${input.from}T00:00:00`);
     if (input.to) generatedAtMatch.$lte = new Date(`${input.to}T23:59:59.999`);
+    if (input.start) generatedAtMatch.$gte = new Date(input.start);
+    if (input.end) generatedAtMatch.$lt = new Date(input.end);
 
     const facetFor = (
       base: Record<string, unknown>[],
@@ -1764,80 +1839,10 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
     await assertJobServicesHealthy("summarization", true);
 
     const mongo = await getMongoResource(auth);
-    const selectedObjectIds = (input.artifactIds ?? [])
-      .map((id) => id.split(":", 1)[0])
-      .filter((id) => ObjectId.isValid(id));
     const objects = await mongo({
       action: "aggregate",
       collection: "objects",
-      pipeline: [
-        {
-          $match: {
-            isConversation: true,
-            ...(selectedObjectIds.length
-              ? {
-                _id: { $in: selectedObjectIds.map((id) => new ObjectId(id)) },
-              }
-              : {}),
-            $expr: {
-              $anyElementTrue: {
-                $map: {
-                  input: { $ifNull: ["$summaries", []] },
-                  as: "summary",
-                  in: {
-                    $eq: [
-                      {
-                        $ifNull: [
-                          "$$summary.resolvedModel",
-                          {
-                            $ifNull: [
-                              "$$summary.modelName",
-                              "$$summary.model",
-                            ],
-                          },
-                        ],
-                      },
-                      input.sourceModel,
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-        {
-          $match: {
-            $expr: {
-              $not: [{
-                $anyElementTrue: {
-                  $map: {
-                    input: { $ifNull: ["$summaries", []] },
-                    as: "summary",
-                    in: {
-                      $eq: [
-                        {
-                          $ifNull: [
-                            "$$summary.resolvedModel",
-                            {
-                              $ifNull: [
-                                "$$summary.modelName",
-                                "$$summary.model",
-                              ],
-                            },
-                          ],
-                        },
-                        input.targetModel,
-                      ],
-                    },
-                  },
-                },
-              }],
-            },
-          },
-        },
-        { $limit: input.limit },
-        { $project: { _id: 1 } },
-      ],
+      pipeline: buildSummaryRerunPipeline(input),
     }) as Array<{ _id: ObjectId }>;
 
     const objectIds = objects.map((object) => object._id.toString());
@@ -1850,6 +1855,9 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
           state: { $in: ["waiting", "active", "delayed", "paused"] },
           "data.objectId": { $in: objectIds },
           "data.model": input.targetModel,
+          ...(input.targetProviderProfileId
+            ? { "data.providerProfileId": input.targetProviderProfileId }
+            : {}),
         },
         options: { projection: { "data.objectId": 1 } },
       }) as any[]
@@ -1873,7 +1881,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       }, {
         trigger: {
           type: "manual",
-          reason: `model_quality_rerun:${input.sourceModel}`,
+          reason: `model_quality_rerun:${input.sourceModel ?? "all"}`,
         },
       }, serverAuth);
       queued.push({ objectId, jobId: job.id! });
@@ -1885,6 +1893,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       sourceModel: input.sourceModel,
       targetModel: input.targetModel,
       matched: objectIds.length,
+      nextCursor: objectIds.length === input.limit ? objectIds.at(-1) : null,
       queued,
       skippedAlreadyQueued: objectIds.length - queued.length,
       mode: "append_summary_version",
@@ -3643,7 +3652,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
     const queryStatuses = input.statuses ||
       ["active", "waiting", "delayed", "failed", "cancelled", "completed"];
 
-    const totalLimit = input.limit || 100;
+    const totalLimit = input.limit ?? DEFAULT_JOBS_LIST_LIMIT;
     const idleAutoQuery = getIdleAutoJobQuery();
     const viewQuery = input.view === "idle_auto"
       ? idleAutoQuery
@@ -3676,6 +3685,13 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
         archivedAt: { $exists: false },
         ...viewQuery,
       }, totalLimit),
+      options: {
+        // A malformed or unexpectedly unselective list query must not consume
+        // Mongo resources indefinitely. Campaign grouping may spill, but the
+        // ordinary recent-jobs branch is index/limit bounded.
+        allowDiskUse: true,
+        maxTimeMS: JOBS_LIST_MAX_TIME_MS,
+      },
     });
 
     // QueueEvents can be missed while the backend reloads, leaving a small

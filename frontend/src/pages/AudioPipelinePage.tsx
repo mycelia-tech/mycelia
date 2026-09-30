@@ -43,6 +43,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ServiceHealthBanner } from "@/components/ServiceHealthBanner";
+import { AudioOperationsCard } from "@/components/AudioOperationsCard";
 import { VoiceIdentityStatusCard } from "@/components/VoiceIdentityStatusCard";
 import { useActionDialog } from "@/components/ActionDialogProvider";
 import {
@@ -934,7 +935,7 @@ export default function AudioPipelinePage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Audio Pipeline</h1>
           <p className="text-muted-foreground">
-            Live speaker processing with manual corpus-wide transcript stats
+            Source imports, voice activity, transcription and speaker processing
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -954,6 +955,7 @@ export default function AudioPipelinePage() {
       </div>
 
       <ServiceHealthBanner />
+      <AudioOperationsCard onCalculate={refetch} calculating={isFetching} />
 
       <Card
         className={pipelineHealth === "idle" || pipelineHealth === "loading"

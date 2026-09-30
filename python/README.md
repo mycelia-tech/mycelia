@@ -49,7 +49,82 @@ bash scripts/install-ingestion-service.sh
 It runs discovery and ingestion automatically and exposes the authenticated
 `POST /jobs/ingestion` endpoint used by Jobs -> Ingestion -> Run now. Use
 `daemon.py` directly only for a foreground session or recovery, and do not run
-both ingestion processes simultaneously.
+both ingestion processes simultaneously. The installer waits up to 90 seconds
+for `/readiness`, independently of the first ingestion batch, and
+the service adds the standard Homebrew binary paths required for `ffmpeg` and
+`ffprobe` when running under launchd.
+
+`GET http://127.0.0.1:8001/health` reports per-source discovery state and
+`lastCycle.ingestion` counts (`attempted`, `succeeded`, `failed`, `remaining`,
+and unresolved `cached_errors`). A
+configured Apple staging database that is missing or cannot be queried makes
+the service `degraded`; it is no longer reported as an empty successful scan.
+The response also reports `appleVoiceMemosMode`. Upload failures and cached
+errors within this daemon's source scope also make health `degraded`; pending
+work alone does not. Cached failures require an explicit retry. `/readiness`
+reports application startup completion with service `mycelia-host-ingestion`
+and includes the current health details. Installation can succeed while health
+is `starting` or `degraded`; the installer prints that state separately.
+Invalid batch or interval settings fail application startup before readiness.
+Readiness requests have a total transfer deadline; interrupted or malformed
+responses are retried within the installer's 90-second budget.
+
+The recommended macOS background mode is verified staging:
+
+```bash
+# Read-only preview
+bash scripts/refresh-voice-memos-staging.sh
+
+# Interactive archive refresh, full verification, and atomic publication
+bash scripts/refresh-voice-memos-staging.sh --apply
+```
+
+Configure `.env` with `MYCELIA_APPLE_VOICEMEMOS_MODE=staged`, the local
+`~/Library/mycelia/voice-memos-staging/audio-original` directory, the published
+`CloudRecordings.snapshot.db` beside it, and a timezone-aware
+`MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE` cutoff. The refresh copies and verifies
+only that bounded audio set from the external archive. The LaunchAgent reads
+only local ordinary paths; do not grant Full Disk Access to its `uv` executable.
+New Voice Memos enter staging only after the interactive refresh command runs.
+Incremental publication reuses audio only after size and hash verification.
+Required free space covers audio needing copying, a temporary SQLite snapshot,
+and a 1 GiB reserve, including full replacement-file sizes.
+Existing audio symlinks need full copy space and are replaced with verified
+regular files. Symlinked staging directories are rejected so publication
+cannot write through them to an external location.
+
+Apple identity lookup is paginated, so catalogs larger than 1,000 records stay
+deduplicated. A unique pending UUID can move to a readable configured copy
+without creating another source. Its cached error remains until explicit
+retry; completed sources stay unchanged. Ambiguous matches and unreadable
+replacement paths appear as discovery warnings. Multiple catalog paths for
+one UUID are also ambiguous; neither insertion nor path repair runs for that
+UUID until the catalog is reconciled.
+
+For custom archives, export `MYCELIA_VOICE_MEMOS_ARCHIVE_ROOT` and set the
+archive tool's effective `ARCHIVE_TARGET` to the same directory. The wrapper
+uses the tool's config loader before each archive command and rejects
+mismatched resolved paths. The tool reads `ICLOUD_ARCHIVE_CONFIG` or its own
+`config.env`; that config can override an exported `ARCHIVE_TARGET`.
+
+Apple backup recovery supports separate paths and a bounded date range:
+
+```bash
+MYCELIA_APPLE_VOICEMEMOS_ROOT=/path/to/audio-original \
+MYCELIA_APPLE_VOICEMEMOS_DB=/path/to/CloudRecordings.snapshot.db \
+MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE=2026-08-24T00:00:00+04:00 \
+MYCELIA_APPLE_VOICEMEMOS_MODE=staged \
+uv run --env-file ../.env daemon.py --once
+```
+
+The cutoff must include a UTC offset. Metadata comes from the Apple database,
+and deduplication uses the full `ZUNIQUEID`, not the absolute audio path. Stop
+the LaunchAgent for this separate foreground command. In normal staged
+operation, publishing a replacement snapshot is atomic and the service can stay
+running.
+
+Chunk ingestion uses unordered, idempotent `bulkWrite` batches of 50. Retrying
+an interrupted source safely reuses the existing `(original_id, index)` chunks.
 
 The normal daemon does **not** run voice activity detection. VAD normally runs
 as a backend job in `python-worker`; use `daemon.py --vad-only` only as a direct

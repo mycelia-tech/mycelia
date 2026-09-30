@@ -1,4 +1,8 @@
-import { getRootDB } from "./core.server.ts";
+import {
+  closeChangeStreamDB,
+  getChangeStreamDB,
+  getRootDB,
+} from "./core.server.ts";
 import { publishEvent } from "@/lib/events/publisher.ts";
 import type { ChangeStreamDocument } from "mongodb";
 import { debounce } from "@std/async/debounce";
@@ -56,6 +60,12 @@ export function getCollectionChangeStreamOptions(
   // know whether this is the derived, compact catalog-only update.
   return collectionName === "objects" ? {} : { fullDocument: "updateLookup" };
 }
+
+// Keep Objects' selective hydration semantics; all other collections (including
+// newly created ones) share one database cursor, not one socket per collection.
+export const DATABASE_CHANGE_PIPELINE = [
+  { $match: { "ns.coll": { $ne: "objects" } } },
+];
 
 const OBJECT_CATALOG_CORRECTOR_PROJECTION = {
   _listCategories: 1,
@@ -376,7 +386,7 @@ export async function startChangeStreamWorker(): Promise<void> {
 
   try {
     const db = await getRootDB();
-    const collections = await db.listCollections().toArray();
+    const watchDb = await getChangeStreamDB();
     const objectCatalogValidation = createObjectCatalogValidationQueue(db, {
       onError: async (error) => {
         await markObjectListCatalogNotReady(db, error);
@@ -389,21 +399,22 @@ export async function startChangeStreamWorker(): Promise<void> {
 
     const changeStreams: Array<{ stop: () => Promise<void> }> = [];
 
-    for (const collectionInfo of collections) {
-      const collectionName = collectionInfo.name;
-
-      if (collectionName.startsWith("system.")) {
-        continue;
-      }
-
+    for (const scope of ["objects", "database"] as const) {
       try {
-        const collection = db.collection(collectionName);
-        const changeStream = collection.watch(
-          [],
-          getCollectionChangeStreamOptions(collectionName),
-        );
+        const changeStream = scope === "objects"
+          ? watchDb.collection("objects").watch(
+            [],
+            getCollectionChangeStreamOptions("objects"),
+          )
+          : watchDb.watch(DATABASE_CHANGE_PIPELINE, {
+            fullDocument: "updateLookup",
+          });
 
         changeStream.on("change", async (change: ChangeStreamDocument) => {
+          const collectionName = "ns" in change && "coll" in change.ns
+            ? change.ns.coll
+            : undefined;
+          if (!collectionName || collectionName.startsWith("system.")) return;
           try {
             const operationType = change.operationType;
             let documentId: string;
@@ -540,7 +551,7 @@ export async function startChangeStreamWorker(): Promise<void> {
 
         changeStream.on("error", (error: Error) => {
           console.error(
-            `[ChangeStream] Error watching ${collectionName}:`,
+            `[ChangeStream] Error watching ${scope}:`,
             error,
           );
         });
@@ -552,9 +563,12 @@ export async function startChangeStreamWorker(): Promise<void> {
         });
       } catch (error) {
         console.error(
-          `[ChangeStream] Failed to watch ${collectionName}:`,
+          `[ChangeStream] Failed to watch ${scope}:`,
           error,
         );
+        await Promise.all(changeStreams.map((cs) => cs.stop()));
+        await closeChangeStreamDB();
+        throw error;
       }
     }
 
@@ -563,6 +577,7 @@ export async function startChangeStreamWorker(): Promise<void> {
         console.log("[ChangeStream] Stopping change stream worker...");
         await Promise.all(changeStreams.map((cs) => cs.stop()));
         await objectCatalogValidation.flushNow();
+        await closeChangeStreamDB();
         changeStreamWorker = null;
         console.log("[ChangeStream] Change stream worker stopped");
       },
@@ -571,7 +586,7 @@ export async function startChangeStreamWorker(): Promise<void> {
     await recoverObjectDensityPending(db);
 
     console.log(
-      `[ChangeStream] Started watching ${changeStreams.length} collection(s)`,
+      `[ChangeStream] Started ${changeStreams.length} isolated cursors (objects + database)`,
     );
   } catch (error) {
     console.error("[ChangeStream] Failed to start worker:", error);

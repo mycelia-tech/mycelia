@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { MediaResultPanel } from "@/components/media/MediaResultPanel";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
+  ArrowUpDown,
+  Clock3,
   Eye,
   FileImage,
+  LayoutGrid,
+  List,
   Loader2,
+  MapPin,
   RefreshCw,
   Search,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiClient, callResource } from "@/lib/api";
@@ -26,21 +34,63 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { AuthenticatedMediaImage } from "@/components/media/AuthenticatedMediaImage";
 import { LazyAuthenticatedMediaImage } from "@/components/media/LazyAuthenticatedMediaImage";
 import { MediaEventsPanel } from "@/components/media/MediaEventsPanel";
 import { MediaBatchPanel } from "@/components/media/MediaBatchPanel";
 import { MediaSectionNav } from "@/components/media/MediaSectionNav";
+import { MediaHint } from "@/components/media/MediaHint";
 
 const MAX_MANAGED_UPLOAD_FILES = 50;
 const MAX_MANAGED_UPLOAD_TOTAL_BYTES = 48_000_000;
+const DESCRIPTION_REQUESTABLE_STATUSES = new Set([
+  "staged",
+  "failed",
+  "budget_blocked",
+  "recognition_disabled",
+]);
 
 type InventoryFilter =
   | "all"
   | "unprocessed"
   | "processing"
   | "ready"
-  | "errors";
+  | "errors"
+  | "ignored";
+type MediaSortBy =
+  | "capturedAt"
+  | "createdAt"
+  | "fileName"
+  | "status"
+  | "byteLength"
+  | "updatedAt";
+const MEDIA_SORTS = new Set<MediaSortBy>([
+  "capturedAt",
+  "createdAt",
+  "fileName",
+  "status",
+  "byteLength",
+  "updatedAt",
+]);
+
+type BoundOriginalDeletionPreview = {
+  assetId: string;
+  preview: any;
+};
+
+type OriginalDeletionOperation = {
+  assetId: string;
+  generation: number;
+  action: "prepare" | "confirm" | "cancel";
+};
 
 function mediaMetadataSummary(asset: any) {
   const metadata = asset?.metadata ?? {};
@@ -187,6 +237,7 @@ function MediaPlacementEditor({
 
 export default function MediaPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [status, setStatus] = useState<any>();
   const [assets, setAssets] = useState<any[]>([]);
   const [assetTotal, setAssetTotal] = useState(0);
@@ -197,9 +248,18 @@ export default function MediaPage() {
   const [inventoryFilter, setInventoryFilter] = useState<InventoryFilter>(
     "all",
   );
-  const [selectedEventAssetIds, setSelectedEventAssetIds] = useState<string[]>(
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(
     [],
   );
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+  const viewMode = searchParams.get("view") === "table" ? "table" : "grid";
+  const requestedSort = searchParams.get("sort") as MediaSortBy | null;
+  const sortBy: MediaSortBy = requestedSort && MEDIA_SORTS.has(requestedSort)
+    ? requestedSort
+    : "createdAt";
+  const sortDirection = searchParams.get("direction") === "asc"
+    ? "asc"
+    : "desc";
   const [preview, setPreview] = useState<any>();
   const [busy, setBusy] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(true);
@@ -209,11 +269,29 @@ export default function MediaPage() {
   const [results, setResults] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>();
   const [detailReloadVersion, setDetailReloadVersion] = useState(0);
-  const [deletionPreview, setDeletionPreview] = useState<any>();
+  const [deletionPreview, setDeletionPreview] = useState<
+    BoundOriginalDeletionPreview | undefined
+  >();
+  const [originalDeletionOperation, setOriginalDeletionOperation] = useState<
+    OriginalDeletionOperation | undefined
+  >();
+  const [
+    releasingOriginalDeletionAssetIds,
+    setReleasingOriginalDeletionAssetIds,
+  ] = useState<Set<string>>(() => new Set());
+  const [storagePanelOpen, setStoragePanelOpen] = useState(false);
   const inventoryRequestGeneration = useRef(0);
   const inventoryRequestActive = useRef(false);
   const nextCursorRef = useRef<string | undefined>(undefined);
   const loadedAssetCountRef = useRef(0);
+  const selectedAssetIdRef = useRef("");
+  const originalDeletionRequestGeneration = useRef(0);
+  const deletionPreviewRef = useRef<
+    BoundOriginalDeletionPreview | undefined
+  >(undefined);
+  const originalDeletionReleasePromises = useRef(
+    new Map<string, Promise<boolean>>(),
+  );
 
   const load = useCallback(async (
     options: { append?: boolean; silent?: boolean } = {},
@@ -235,6 +313,8 @@ export default function MediaPage() {
           limit,
           inventoryFilter: backendFilter,
           placement: placementFilter,
+          sortBy,
+          sortDirection,
           ...(pageCursor ? { cursor: pageCursor } : {}),
         });
       const loadRefreshedPrefix = async () => {
@@ -295,13 +375,14 @@ export default function MediaPage() {
         setInventoryRefreshing(false);
       }
     }
-  }, [inventoryFilter, placementFilter]);
+  }, [inventoryFilter, placementFilter, sortBy, sortDirection]);
 
   useEffect(() => {
     nextCursorRef.current = undefined;
     loadedAssetCountRef.current = 0;
     setNextCursor(undefined);
-    setSelectedEventAssetIds([]);
+    setSelectedAssetIds([]);
+    setAllMatchingSelected(false);
     void load();
   }, [load]);
 
@@ -335,7 +416,96 @@ export default function MediaPage() {
     [status],
   );
   const filteredAssets = assets;
+  const selectedCount = allMatchingSelected
+    ? assetTotal
+    : selectedAssetIds.length;
+  const selectedImageIds = selectedAssetIds.filter((id) =>
+    assets.some((asset) => String(asset._id) === id && asset.kind === "image")
+  );
+  const backendInventoryFilter = inventoryFilter === "errors"
+    ? "needs_attention"
+    : inventoryFilter;
+
+  const updateLibraryParams = (changes: Record<string, string>) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      for (const [key, value] of Object.entries(changes)) {
+        if (!value) next.delete(key);
+        else next.set(key, value);
+      }
+      return next;
+    }, { replace: true });
+  };
+
+  const openSelectedForProcessing = () => {
+    if (selectedCount === 0) return;
+    const next = new URLSearchParams();
+    next.set("view", "table");
+    if (backendInventoryFilter !== "all") {
+      next.set("status", backendInventoryFilter);
+    }
+    if (placementFilter !== "all") next.set("placement", placementFilter);
+    if (allMatchingSelected) next.set("selection", "all");
+    else next.set("assetIds", selectedImageIds.join(","));
+    navigate(`/media/analysis?${next.toString()}`);
+  };
+
+  const setSelectedIgnored = async (ignored: boolean) => {
+    if (selectedCount === 0) return;
+    if (
+      !globalThis.confirm(
+        ignored
+          ? `Ignore ${selectedCount} selected photo(s) for future analysis? Originals, previews, and existing results stay unchanged.`
+          : `Return ${selectedCount} selected photo(s) to normal processing selection?`,
+      )
+    ) return;
+    setBusy(true);
+    try {
+      const result = await callResource("media-library", {
+        action: "setRecognitionIgnored",
+        selection: allMatchingSelected
+          ? {
+            mode: "all_matching",
+            inventoryFilter: backendInventoryFilter,
+            placement: placementFilter,
+          }
+          : {
+            mode: "explicit",
+            inventoryFilter: backendInventoryFilter,
+            placement: placementFilter,
+            assetIds: selectedImageIds,
+          },
+        ignored,
+        confirm: true,
+      });
+      toast.success(
+        `${ignored ? "Ignored" : "Returned"} ${
+          Number(result.updated ?? 0)
+        } photo(s)`,
+      );
+      setSelectedAssetIds([]);
+      setAllMatchingSelected(false);
+      await load();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Selection update failed",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
   const selectedAssetId = searchParams.get("assetId") ?? "";
+  selectedAssetIdRef.current = selectedAssetId;
+  deletionPreviewRef.current = deletionPreview;
+  const currentDeletionPreview = deletionPreview?.assetId === selectedAssetId
+    ? deletionPreview.preview
+    : undefined;
+  const currentOriginalDeletionBusy =
+    originalDeletionOperation?.assetId === selectedAssetId;
+  const currentOriginalDeletionReleasePending =
+    releasingOriginalDeletionAssetIds.has(selectedAssetId);
+  const storageActionsBusy = busy || currentOriginalDeletionBusy ||
+    currentOriginalDeletionReleasePending;
   const recognitionRuns = Array.isArray(detail?.runs) ? detail.runs : [];
   const activeRecognitionRun = detail?.asset?.currentRunId
     ? recognitionRuns.find((run: any) =>
@@ -355,6 +525,38 @@ export default function MediaPage() {
         : displayedProviderType === "self-hosted"
         ? "Self-hosted provider"
         : "Unknown provider");
+  const recognitionReservation = detail?.recognitionReservation;
+  const reservationState = String(
+    recognitionReservation?.state ??
+      recognitionReservation?.reservationState ??
+      "",
+  );
+  const reservationItemState = String(
+    recognitionReservation?.itemState ??
+      recognitionReservation?.item?.state ??
+      "",
+  );
+  const reservationBatchStatus = String(
+    recognitionReservation?.batchStatus ??
+      recognitionReservation?.batch?.status ??
+      "",
+  );
+  const storageMutationLocked = Boolean(
+    recognitionReservation &&
+      recognitionReservation.active !== false &&
+      (
+        recognitionReservation.active === true ||
+        ["preparing", "active"].includes(reservationState) ||
+        ["pending", "claiming", "queued", "processing"].includes(
+          reservationItemState,
+        ) ||
+        ["queued", "running", "cancelling"].includes(
+          reservationBatchStatus,
+        ) ||
+        (!reservationState && !reservationItemState &&
+          !reservationBatchStatus)
+      ),
+  ) || ["queued", "processing"].includes(String(detail?.asset?.status ?? ""));
 
   const analyzeUploads = async (files: File[]) => {
     if (files.length === 0 || busy || Boolean(preview)) return;
@@ -438,7 +640,79 @@ export default function MediaPage() {
     }
   };
 
+  const releaseOriginalDeletionPreview = useCallback(
+    async (boundPreview: BoundOriginalDeletionPreview): Promise<boolean> => {
+      const assetId = boundPreview.assetId;
+      const deletionPreviewId = String(
+        boundPreview.preview?.deletionPreviewId ?? "",
+      );
+      if (!deletionPreviewId) return true;
+      const releaseKey = `${assetId}:${deletionPreviewId}`;
+      const existing = originalDeletionReleasePromises.current.get(
+        releaseKey,
+      );
+      if (existing) return await existing;
+
+      setReleasingOriginalDeletionAssetIds((current) => {
+        const next = new Set(current);
+        next.add(assetId);
+        return next;
+      });
+      const release = (async () => {
+        try {
+          await callResource("media", {
+            action: "cancelOriginalDeletionPreview",
+            deletionPreviewId,
+          });
+          if (
+            deletionPreviewRef.current?.assetId === assetId &&
+            String(
+                deletionPreviewRef.current.preview?.deletionPreviewId,
+              ) === deletionPreviewId
+          ) {
+            deletionPreviewRef.current = undefined;
+          }
+          setDeletionPreview((current) =>
+            current?.assetId === assetId &&
+              String(current.preview?.deletionPreviewId) === deletionPreviewId
+              ? undefined
+              : current
+          );
+          return true;
+        } catch (error) {
+          const message = error instanceof Error
+            ? error.message
+            : "Failed to release the original deletion review";
+          toast.error(
+            `${message}. The reservation is bounded and will expire automatically within 10 minutes.`,
+          );
+          return false;
+        } finally {
+          originalDeletionReleasePromises.current.delete(releaseKey);
+          setReleasingOriginalDeletionAssetIds((current) => {
+            const stillReleasing = [...originalDeletionReleasePromises.current
+              .keys()].some((key) => key.startsWith(`${assetId}:`));
+            if (stillReleasing) return current;
+            const next = new Set(current);
+            next.delete(assetId);
+            return next;
+          });
+        }
+      })();
+      originalDeletionReleasePromises.current.set(releaseKey, release);
+      return await release;
+    },
+    [],
+  );
+
   const openAsset = (assetId: string) => {
+    if (selectedAssetIdRef.current !== assetId) {
+      const currentPreview = deletionPreviewRef.current;
+      if (currentPreview) void releaseOriginalDeletionPreview(currentPreview);
+      originalDeletionRequestGeneration.current += 1;
+      selectedAssetIdRef.current = assetId;
+      setDeletionPreview(undefined);
+    }
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set("assetId", assetId);
@@ -447,9 +721,21 @@ export default function MediaPage() {
   };
 
   useEffect(() => {
+    return () => {
+      const currentPreview = deletionPreviewRef.current;
+      if (currentPreview?.assetId === selectedAssetId) {
+        void releaseOriginalDeletionPreview(currentPreview);
+      }
+    };
+  }, [releaseOriginalDeletionPreview, selectedAssetId]);
+
+  useEffect(() => {
+    const currentPreview = deletionPreviewRef.current;
+    if (currentPreview) void releaseOriginalDeletionPreview(currentPreview);
+    originalDeletionRequestGeneration.current += 1;
+    setDeletionPreview(undefined);
     if (!selectedAssetId) {
       setDetail(undefined);
-      setDeletionPreview(undefined);
       return;
     }
     let current = true;
@@ -458,7 +744,6 @@ export default function MediaPage() {
         ? existing
         : undefined
     );
-    setDeletionPreview(undefined);
     callResource("media", {
       action: "getAsset",
       assetId: selectedAssetId,
@@ -474,30 +759,51 @@ export default function MediaPage() {
     return () => {
       current = false;
     };
-  }, [detailReloadVersion, selectedAssetId]);
+  }, [detailReloadVersion, releaseOriginalDeletionPreview, selectedAssetId]);
+
+  useEffect(() => {
+    setStoragePanelOpen(false);
+  }, [selectedAssetId]);
 
   const closeAsset = useCallback(() => {
+    const currentPreview = deletionPreviewRef.current;
+    if (currentPreview) void releaseOriginalDeletionPreview(currentPreview);
+    originalDeletionRequestGeneration.current += 1;
+    selectedAssetIdRef.current = "";
+    setDeletionPreview(undefined);
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.delete("assetId");
       return next;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [releaseOriginalDeletionPreview, setSearchParams]);
 
   const deleteDerived = async (
-    target: "previews" | "analysis" | "source_reference",
+    target:
+      | "previews"
+      | "analysis"
+      | "source_reference"
+      | "asset_record",
   ) => {
     if (!selectedAssetId) return;
-    const label = target === "previews"
-      ? "stored previews"
+    if (currentOriginalDeletionBusy) {
+      toast.error("Another storage change is already in progress");
+      return;
+    }
+    if (storageMutationLocked) {
+      toast.error(
+        "Storage changes are locked while this asset belongs to an active recognition batch",
+      );
+      return;
+    }
+    const confirmation = target === "previews"
+      ? "Delete the Mycelia WebP previews? The original will not be touched. This asset will no longer have a viewable photo preview or be eligible for photo analysis."
       : target === "analysis"
-      ? "derived visual/OCR analysis"
-      : "the stored original-file reference";
-    if (
-      !globalThis.confirm(
-        `Delete ${label}? The referenced original will not be touched.`,
-      )
-    ) return;
+      ? "Reset the derived visual/OCR analysis? The original and Mycelia previews will be retained."
+      : target === "asset_record"
+      ? "Remove this item, its previews, and its analysis from Mycelia? The original file in the mounted folder will NOT be deleted. A later folder sync can import it again."
+      : "Forget the mounted original reference? The mounted file will not be deleted. Mycelia previews will be retained, but this asset cannot be reanalyzed.";
+    if (!globalThis.confirm(confirmation)) return;
     setBusy(true);
     try {
       await callResource("media", {
@@ -507,15 +813,24 @@ export default function MediaPage() {
         confirm: true,
       });
       toast.success(
-        target === "source_reference"
-          ? "Forgot the stored reference; the original file was not touched"
-          : `Deleted ${label}; original file and reference were not touched`,
+        target === "asset_record"
+          ? "Removed from Mycelia; the mounted original was not touched"
+          : target === "source_reference"
+          ? "Forgot the mounted reference; the original file was not touched"
+          : target === "previews"
+          ? "Deleted Mycelia previews; the original file and reference were not touched"
+          : "Reset derived analysis; the original and previews were not touched",
       );
+      if (target === "asset_record") closeAsset();
       await load();
-      setDetailReloadVersion((current) => current + 1);
+      if (target !== "asset_record") {
+        setDetailReloadVersion((current) => current + 1);
+      }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : `Failed to delete ${label}`,
+        error instanceof Error
+          ? error.message
+          : "The requested storage change failed",
       );
     } finally {
       setBusy(false);
@@ -524,139 +839,256 @@ export default function MediaPage() {
 
   const prepareOriginalDeletion = async () => {
     if (!selectedAssetId) return;
-    setBusy(true);
+    if (currentOriginalDeletionBusy) return;
+    if (
+      [...originalDeletionReleasePromises.current.keys()].some((key) =>
+        key.startsWith(`${selectedAssetId}:`)
+      )
+    ) {
+      toast.error("The previous deletion review is still being released");
+      return;
+    }
+    if (storageMutationLocked) {
+      toast.error(
+        "Storage changes are locked while this asset belongs to an active recognition batch",
+      );
+      return;
+    }
+    const assetId = selectedAssetId;
+    const generation = ++originalDeletionRequestGeneration.current;
+    setDeletionPreview(undefined);
+    setOriginalDeletionOperation({ assetId, generation, action: "prepare" });
     try {
       const result = await callResource("media", {
         action: "previewOriginalDeletion",
-        assetId: selectedAssetId,
+        assetId,
       });
-      setDeletionPreview(result);
+      const boundPreview = { assetId, preview: result };
+      if (
+        generation !== originalDeletionRequestGeneration.current ||
+        selectedAssetIdRef.current !== assetId
+      ) {
+        await releaseOriginalDeletionPreview(boundPreview);
+        return;
+      }
+      if (result.assetId && String(result.assetId) !== assetId) {
+        await releaseOriginalDeletionPreview(boundPreview);
+        throw new Error(
+          "Original deletion preview did not match the selected asset",
+        );
+      }
+      setDeletionPreview(boundPreview);
       if (!result.canDelete) {
         toast.error(
           result.blockers?.join("; ") ?? "Original cannot be deleted",
         );
       }
     } catch (error) {
+      if (
+        generation !== originalDeletionRequestGeneration.current ||
+        selectedAssetIdRef.current !== assetId
+      ) return;
       toast.error(
         error instanceof Error ? error.message : "Deletion preview failed",
       );
     } finally {
-      setBusy(false);
+      setOriginalDeletionOperation((current) =>
+        current?.generation === generation ? undefined : current
+      );
     }
   };
 
   const confirmOriginalDeletion = async () => {
-    if (!deletionPreview?.canDelete) return;
-    setBusy(true);
+    const boundPreview = deletionPreview;
+    if (
+      !boundPreview?.preview?.canDelete ||
+      boundPreview.assetId !== selectedAssetId ||
+      selectedAssetIdRef.current !== boundPreview.assetId
+    ) return;
+    if (storageMutationLocked) {
+      toast.error(
+        "Storage changes are locked while this asset belongs to an active recognition batch",
+      );
+      return;
+    }
+    const assetId = boundPreview.assetId;
+    const deletionPreviewId = String(
+      boundPreview.preview.deletionPreviewId,
+    );
+    const generation = ++originalDeletionRequestGeneration.current;
+    setOriginalDeletionOperation({ assetId, generation, action: "confirm" });
     try {
       await callResource("media", {
         action: "confirmOriginalDeletion",
-        deletionPreviewId: String(deletionPreview.deletionPreviewId),
+        deletionPreviewId,
         confirm: true,
       });
       toast.success(
         "Managed original deleted; preview, metadata, analysis, and search data were retained",
       );
-      setDeletionPreview(undefined);
+      if (
+        deletionPreviewRef.current?.assetId === assetId &&
+        String(deletionPreviewRef.current.preview?.deletionPreviewId) ===
+          deletionPreviewId
+      ) {
+        deletionPreviewRef.current = undefined;
+      }
+      setDeletionPreview((current) =>
+        current?.assetId === assetId &&
+          String(current.preview?.deletionPreviewId) === deletionPreviewId
+          ? undefined
+          : current
+      );
       await load();
-      setDetailReloadVersion((current) => current + 1);
+      if (selectedAssetIdRef.current === assetId) {
+        setDetailReloadVersion((current) => current + 1);
+      }
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Original deletion failed",
       );
     } finally {
-      setBusy(false);
+      setOriginalDeletionOperation((current) =>
+        current?.generation === generation ? undefined : current
+      );
     }
   };
 
+  const cancelOriginalDeletionPreview = async () => {
+    const boundPreview = deletionPreview;
+    if (
+      !boundPreview?.preview?.deletionPreviewId ||
+      boundPreview.assetId !== selectedAssetId ||
+      selectedAssetIdRef.current !== boundPreview.assetId
+    ) return;
+    const assetId = boundPreview.assetId;
+    const generation = ++originalDeletionRequestGeneration.current;
+    setOriginalDeletionOperation({ assetId, generation, action: "cancel" });
+    try {
+      if (await releaseOriginalDeletionPreview(boundPreview)) {
+        toast.success("Managed original deletion review cancelled");
+      }
+    } finally {
+      setOriginalDeletionOperation((current) =>
+        current?.generation === generation ? undefined : current
+      );
+    }
+  };
+
+  const detailIsPhoto = detail?.asset?.kind === "image";
+  const detailHasRecognitionSource =
+    (detail?.asset?.storageMode === "managed_original" &&
+      Boolean(detail.asset.managedOriginal?.fileId)) ||
+    (detail?.asset?.storageMode === "external_reference" &&
+      Boolean(detail.asset.source?.relativePath));
+  const detailCanRequestDescription = detailIsPhoto &&
+    detailHasRecognitionSource &&
+    !detail?.visual?.visualUnderstanding &&
+    DESCRIPTION_REQUESTABLE_STATUSES.has(detail.asset.status);
+  const detailStorageDescription = detail?.asset?.storageMode ===
+      "external_reference"
+    ? detail.asset.source?.relativePath ?? "mounted original"
+    : detail?.asset?.storageMode === "managed_original"
+    ? "Mycelia-managed original"
+    : "no retained original";
+  const detailAnalysisHref = detail?.asset
+    ? `/media/analysis?assetId=${detail.asset._id}${
+      detailCanRequestDescription ? "&select=1" : ""
+    }`
+    : "";
+
   return (
-    <div className="container mx-auto space-y-6 p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-3xl font-bold">
-            <FileImage /> Media Library
+    <div className="container mx-auto space-y-4 p-4">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+            <FileImage className="h-6 w-6" /> Media
           </h1>
-          <p className="text-muted-foreground">
-            Local originals by reference; compact previews, visual meaning,
-            semantic search, metadata, and provider provenance in Mycelia.
-          </p>
+          <MediaSectionNav />
         </div>
         <Button
-          className="self-start sm:self-auto"
-          variant="outline"
+          size="icon"
+          variant="ghost"
+          aria-label="Refresh media library"
+          title="Refresh"
           onClick={() => void load()}
         >
-          <RefreshCw className="mr-2 h-4 w-4" />Refresh
+          <RefreshCw
+            className={`h-4 w-4 ${inventoryRefreshing ? "animate-spin" : ""}`}
+          />
         </Button>
-      </div>
-
-      <MediaSectionNav />
+      </header>
 
       {!status?.enabled && (
-        <Card className="border-amber-500/50">
-          <CardContent className="p-4">
-            Recognition is disabled. Local managed uploads, previews, EXIF/GPS,
-            deduplication, and metadata-only imports remain available. Enable a
-            provider in Settings → Google Cloud only when you want recognition.
-          </CardContent>
-        </Card>
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
+          <span>Recognition is off. Local import and metadata still work.</span>
+          <MediaHint label="About disabled recognition">
+            Enable a provider in Settings → Photo analysis when you want visual
+            descriptions or OCR. Import, previews, EXIF/GPS, and deduplication
+            remain local.
+          </MediaHint>
+        </div>
       )}
 
-      <MediaBatchPanel
-        status={status}
-        onInventoryChanged={() => load({ silent: true })}
-      />
+      <div className="grid gap-3 lg:grid-cols-2">
+        <MediaBatchPanel
+          status={status}
+          onInventoryChanged={() => load({ silent: true })}
+        />
 
-      <Card>
-        <CardHeader>
-          <div>
-            <CardTitle>Upload from this computer</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Import locally first, then choose what to process on the Analysis
-              page.
-            </p>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div
-            aria-disabled={busy || Boolean(preview)}
-            className={`rounded-md border-2 border-dashed p-6 text-center ${
-              busy || Boolean(preview) ? "cursor-not-allowed opacity-60" : ""
-            }`}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              if (busy || Boolean(preview)) return;
-              void analyzeUploads(Array.from(event.dataTransfer.files));
-            }}
-          >
-            <Upload className="mx-auto mb-2 h-6 w-6" />
-            <div className="font-medium">Drop photos or PDFs here</div>
-            <p className="mb-3 text-sm text-muted-foreground">
-              JPEG, PNG, WebP, or PDF. Mycelia checks the real file type,
-              deduplicates by SHA-256, and creates metadata-free WebP previews.
-              Up to 50 files and 48 MB total; 20 MB per image, 32 MB per PDF,
-              and 15 pages per PDF.
-            </p>
-            <label>
-              <span className="inline-flex h-10 cursor-pointer items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">
-                Choose files
-              </span>
-              <input
-                className="sr-only"
-                type="file"
-                multiple
-                accept="image/jpeg,image/png,image/webp,application/pdf"
-                disabled={busy || Boolean(preview)}
-                onChange={(event) => {
-                  void analyzeUploads(Array.from(event.target.files ?? []));
-                  event.currentTarget.value = "";
-                }}
-              />
-            </label>
-          </div>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardContent className="p-0">
+            <div
+              aria-disabled={busy || Boolean(preview)}
+              className={`flex min-h-20 items-center justify-between gap-3 rounded-lg border border-dashed p-3 ${
+                busy || Boolean(preview) ? "cursor-not-allowed opacity-60" : ""
+              }`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (busy || Boolean(preview)) return;
+                void analyzeUploads(Array.from(event.dataTransfer.files));
+              }}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="rounded-md bg-muted p-2">
+                  <Upload className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1 font-medium">
+                    Upload files
+                    <MediaHint label="Upload limits and privacy">
+                      JPEG, PNG, WebP, or PDF. Up to 50 files and 48 MB total;
+                      20 MB per image, 32 MB per PDF, and 15 pages per PDF.
+                      Files are validated and deduplicated locally before any
+                      optional analysis.
+                    </MediaHint>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Drop photos or PDFs here
+                  </div>
+                </div>
+              </div>
+              <label>
+                <span className="inline-flex h-9 cursor-pointer items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground">
+                  Choose files
+                </span>
+                <input
+                  className="sr-only"
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  disabled={busy || Boolean(preview)}
+                  onChange={(event) => {
+                    void analyzeUploads(Array.from(event.target.files ?? []));
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {preview && (
         <Card className="border-primary">
@@ -712,14 +1144,14 @@ export default function MediaPage() {
                 </div>
               ))}
             </div>
-            <div className="rounded-md bg-muted p-3 text-sm">
-              <ShieldCheck className="mr-2 inline h-4 w-4" />
-              {preview.storageMode === "managed_original"
-                ? "Upload analysis writes originals into staging in the separate media_originals store. An untouched preview expires after one hour; confirmation makes files canonical, and an interrupted confirmation has a bounded seven-day recovery lease. You can later delete each original through a second preview-and-confirm step while retaining WebP previews, metadata, analysis, and search data."
-                : "Confirmation stores checked external references and compact previews. The referenced source files are never copied or deleted."}
-              {" "}
-              No recognition provider is called by this import. Use Photo
-              Analysis after the files appear in the library.
+            <div className="flex items-center gap-2 rounded-md bg-muted p-3 text-sm">
+              <ShieldCheck className="h-4 w-4 shrink-0" />
+              <span>Local import only. No recognition provider is called.</span>
+              <MediaHint label="About local import storage">
+                {preview.storageMode === "managed_original"
+                  ? "Originals are staged in Mycelia, then made canonical after confirmation. Previews, metadata, and analysis can be retained if a managed original is deleted later."
+                  : "Checked references and compact previews are stored. Referenced source files are never copied or deleted."}
+              </MediaHint>
             </div>
             <Button onClick={confirm} disabled={busy}>
               {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -730,30 +1162,33 @@ export default function MediaPage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Semantic photo search</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            {searchProfile
-              ? searchProfile.providerType === "google-cloud"
-                ? `The search text is sent to the active provider ${searchProfile.name} only when you run a search and you have owned semantic media. Mycelia reserves at most $0.0004 gross list price per query.`
-                : `The search text is sent to the active provider ${searchProfile.name} only when you run a search and you have owned semantic media; it stays on your self-hosted endpoint.`
-              : "No enabled active recognition provider is configured, so search uses only stored OCR text and labels."}
-          </p>
-          <div className="flex gap-2">
+        <CardContent className="space-y-3 p-3">
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void search();
+            }}
+          >
+            <Search className="ml-1 h-4 w-4 shrink-0 text-muted-foreground" />
             <Input
               aria-label="Semantic photo search"
               value={query}
               maxLength={512}
               onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && search()}
-              placeholder="Фотографии с людьми у моря…"
+              placeholder="Search photos by meaning, OCR, or label…"
             />
-            <Button aria-label="Search media" onClick={search}>
+            <MediaHint label="About semantic search">
+              {searchProfile
+                ? searchProfile.providerType === "google-cloud"
+                  ? `Search text is sent to ${searchProfile.name} only when you submit it. The gross reservation is capped at $0.0004 per query.`
+                  : `Search text is sent only to your active self-hosted provider ${searchProfile.name}.`
+                : "Without an active recognition provider, search uses stored OCR text and labels."}
+            </MediaHint>
+            <Button type="submit" size="icon" aria-label="Search media">
               <Search className="h-4 w-4" />
             </Button>
-          </div>
+          </form>
           {results.length > 0 && (
             <div className="grid gap-3 md:grid-cols-2">
               {results.map((result, index) => (
@@ -793,12 +1228,16 @@ export default function MediaPage() {
       </Card>
 
       <Card id="media-inventory">
-        <CardHeader className="gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Photo library</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Showing {assets.length} of {assetTotal} imported item(s).
-            </p>
+        <CardHeader className="flex-row items-center justify-between space-y-0 p-3">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base">Library</CardTitle>
+            <span className="text-xs text-muted-foreground">
+              {assets.length} of {assetTotal}
+            </span>
+            <MediaHint label="About photo placement">
+              Photos with reliable EXIF time or GPS also appear on Timeline and
+              Map. Missing values are left unplaced rather than guessed.
+            </MediaHint>
           </div>
           <div
             className="flex items-center gap-2 text-xs text-muted-foreground"
@@ -812,55 +1251,57 @@ export default function MediaPage() {
               : lastUpdatedAt
               ? `Updated ${lastUpdatedAt.toLocaleTimeString()}`
               : "Ready"}
+            <div className="inline-flex rounded-md border p-0.5">
+              <Button
+                type="button"
+                size="icon"
+                className="h-8 w-8"
+                variant={viewMode === "grid" ? "secondary" : "ghost"}
+                aria-label="Grid view"
+                aria-pressed={viewMode === "grid"}
+                onClick={() => updateLibraryParams({ view: "" })}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                className="h-8 w-8"
+                variant={viewMode === "table" ? "secondary" : "ghost"}
+                aria-label="Table view"
+                aria-pressed={viewMode === "table"}
+                onClick={() => updateLibraryParams({ view: "table" })}
+              >
+                <List className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs text-muted-foreground">
-                Individual photos also appear on the Photos track and Photos map
-                layer when they have reliable EXIF time/GPS. Photo events remain
-                separate explicitly published Objects on the{" "}
-                <a className="underline" href="/timeline">
-                  Timeline
-                </a>.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {([
-                ["all", "All"],
-                ["unprocessed", "Unprocessed"],
-                ["processing", "Queued / processing"],
-                ["ready", "Ready"],
-                ["errors", "Needs attention"],
-              ] as Array<[InventoryFilter, string]>).map(([value, label]) => (
-                <Button
-                  key={value}
-                  type="button"
-                  size="sm"
-                  variant={inventoryFilter === value ? "default" : "outline"}
-                  aria-pressed={inventoryFilter === value}
-                  onClick={() => setInventoryFilter(value)}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {([
-              ["all", "All placement"],
-              ["missing_time", "Missing time"],
-              ["missing_location", "Missing location"],
-            ] as const).map(([value, label]) => (
-              <Button
-                key={value}
-                type="button"
-                size="sm"
-                variant={placementFilter === value ? "default" : "outline"}
-                aria-pressed={placementFilter === value}
-                onClick={() => {
+        <CardContent className="space-y-3 p-3 pt-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label="Processing status"
+                title="Processing status"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={inventoryFilter}
+                onChange={(event) =>
+                  setInventoryFilter(event.target.value as InventoryFilter)}
+              >
+                <option value="all">All statuses</option>
+                <option value="unprocessed">Unprocessed</option>
+                <option value="processing">Queued / processing</option>
+                <option value="ready">Ready</option>
+                <option value="errors">Needs attention</option>
+                <option value="ignored">Ignored</option>
+              </select>
+              <select
+                aria-label="Photo placement"
+                title="Photo placement"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={placementFilter}
+                onChange={(event) => {
+                  const value = event.target.value as typeof placementFilter;
                   setPlacementFilter(value);
                   setSearchParams((current) => {
                     const next = new URLSearchParams(current);
@@ -870,24 +1311,120 @@ export default function MediaPage() {
                   }, { replace: true });
                 }}
               >
-                {label}
+                <option value="all">Any placement</option>
+                <option value="missing_time">Missing time</option>
+                <option value="missing_location">Missing location</option>
+              </select>
+              <select
+                id="media-sort"
+                aria-label="Sort photos"
+                title="Sort photos"
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={sortBy}
+                onChange={(event) =>
+                  updateLibraryParams({ sort: event.target.value })}
+              >
+                <option value="createdAt">Imported</option>
+                <option value="capturedAt">Captured</option>
+                <option value="fileName">Filename</option>
+                <option value="status">Status</option>
+                <option value="byteLength">File size</option>
+                <option value="updatedAt">Last changed</option>
+              </select>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9"
+                aria-label={`Sort ${
+                  sortDirection === "asc" ? "descending" : "ascending"
+                }`}
+                title={sortDirection === "asc"
+                  ? "Ascending; click for descending"
+                  : "Descending; click for ascending"}
+                onClick={() =>
+                  updateLibraryParams({
+                    direction: sortDirection === "asc" ? "desc" : "asc",
+                  })}
+              >
+                <ArrowUpDown className="h-4 w-4" />
               </Button>
-            ))}
-          </div>
-
-          {selectedEventAssetIds.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 p-3">
-              <span className="text-sm font-medium">
-                {selectedEventAssetIds.length}{" "}
-                photo(s) selected for event grouping
-              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => setSelectedEventAssetIds([])}
+                aria-label={`Select loaded (${
+                  assets.filter((asset) => asset.kind === "image").length
+                })`}
+                disabled={assets.every((asset) => asset.kind !== "image")}
+                onClick={() => {
+                  setAllMatchingSelected(false);
+                  setSelectedAssetIds(
+                    assets.filter((asset) => asset.kind === "image").map((
+                      asset,
+                    ) => String(asset._id)),
+                  );
+                }}
               >
-                Clear selection
+                Page ({assets.filter((asset) => asset.kind === "image").length})
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label={`Select all matching (${assetTotal})`}
+                disabled={assetTotal === 0}
+                onClick={() => {
+                  setSelectedAssetIds([]);
+                  setAllMatchingSelected(true);
+                }}
+              >
+                All results ({assetTotal})
+              </Button>
+            </div>
+          </div>
+
+          {(selectedAssetIds.length > 0 || allMatchingSelected) && (
+            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-background/95 p-2 shadow-sm backdrop-blur">
+              <span className="text-sm font-medium">
+                {allMatchingSelected ? assetTotal : selectedAssetIds.length}
+                {" selected"}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                onClick={openSelectedForProcessing}
+                disabled={busy || selectedImageIds.length === 0 &&
+                    !allMatchingSelected}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Process selection
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label={inventoryFilter === "ignored"
+                  ? "Return to processing"
+                  : "Ignore for processing"}
+                onClick={() =>
+                  void setSelectedIgnored(inventoryFilter !== "ignored")}
+                disabled={busy}
+              >
+                {inventoryFilter === "ignored" ? "Return" : "Ignore"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSelectedAssetIds([]);
+                  setAllMatchingSelected(false);
+                }}
+              >
+                Clear
               </Button>
             </div>
           )}
@@ -895,7 +1432,7 @@ export default function MediaPage() {
           {inventoryLoading && filteredAssets.length === 0
             ? (
               <div
-                className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
                 aria-label="Loading media"
               >
                 {Array.from(
@@ -906,7 +1443,7 @@ export default function MediaPage() {
                       className="overflow-hidden rounded-xl border"
                     >
                       <Skeleton className="aspect-[4/3] w-full rounded-none" />
-                      <div className="space-y-2 p-4">
+                      <div className="space-y-2 p-3">
                         <Skeleton className="h-4 w-3/4" />
                         <Skeleton className="h-3 w-1/2" />
                       </div>
@@ -921,35 +1458,40 @@ export default function MediaPage() {
                 No media matches these filters.
               </div>
             )
-            : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            : viewMode === "grid"
+            ? (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {filteredAssets.map((asset) => {
                   const id = String(asset._id);
                   const metadata = mediaMetadataSummary(asset);
-                  const selectedForEvent = selectedEventAssetIds.includes(id);
+                  const selectedForEvent = allMatchingSelected ||
+                    selectedAssetIds.includes(id);
                   return (
                     <article
                       key={id}
-                      className={`group relative overflow-hidden rounded-xl border bg-card shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                      className={`group relative overflow-hidden rounded-lg border bg-card transition hover:border-primary/40 hover:shadow-sm ${
                         selectedForEvent ? "ring-2 ring-primary" : ""
                       }`}
                     >
                       {asset.kind === "image" && (
                         <label
                           htmlFor={`event-select-${id}`}
-                          className="absolute left-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-background/90 shadow-sm backdrop-blur"
+                          className="absolute left-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-md bg-background/90 shadow-sm backdrop-blur"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <Checkbox
                             id={`event-select-${id}`}
-                            aria-label={`Select ${asset.fileName} for photo event`}
+                            aria-label={`Select ${asset.fileName}`}
                             checked={selectedForEvent}
-                            onCheckedChange={(checked) =>
-                              setSelectedEventAssetIds((current) =>
+                            disabled={allMatchingSelected}
+                            onCheckedChange={(checked) => {
+                              setAllMatchingSelected(false);
+                              setSelectedAssetIds((current) =>
                                 checked
                                   ? [...new Set([...current, id])]
                                   : current.filter((entry) => entry !== id)
-                              )}
+                              );
+                            }}
                           />
                         </label>
                       )}
@@ -965,13 +1507,13 @@ export default function MediaPage() {
                           containerClassName="aspect-[4/3] overflow-hidden bg-muted"
                           className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
                         />
-                        <div className="space-y-3 p-4">
+                        <div className="space-y-2 p-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="truncate font-medium">
                                 {asset.fileName}
                               </div>
-                              <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                              <div className="line-clamp-1 text-xs text-muted-foreground">
                                 {metadata.captured}
                               </div>
                             </div>
@@ -983,26 +1525,162 @@ export default function MediaPage() {
                                 : "secondary"}
                               className="shrink-0"
                             >
-                              {asset.status}
+                              {asset.recognitionIgnoredAt
+                                ? "ignored"
+                                : asset.status}
                             </Badge>
                           </div>
-                          <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
+                          <p className="line-clamp-1 text-sm text-muted-foreground">
                             {asset.inventory?.shortCaption ??
                               (asset.safeError
                                 ? asset.safeError
                                 : "No visual description yet")}
                           </p>
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <div className="text-xs text-muted-foreground">
                             <span>{asset.kind} · {metadata.dimensions}</span>
-                            <span className="inline-flex items-center font-medium text-foreground">
-                              <Eye className="mr-1 h-3.5 w-3.5" />Details
-                            </span>
                           </div>
                         </div>
                       </button>
                     </article>
                   );
                 })}
+              </div>
+            )
+            : (
+              <div className="overflow-x-auto rounded-md border">
+                <Table className="text-sm">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10">
+                        <span className="sr-only">Select</span>
+                      </TableHead>
+                      {([
+                        ["fileName", "Photo"],
+                        ["capturedAt", "Captured"],
+                        ["status", "Status"],
+                        ["byteLength", "Size"],
+                      ] as Array<[MediaSortBy, string]>).map(([key, label]) => (
+                        <TableHead key={key}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="-ml-3"
+                            onClick={() =>
+                              updateLibraryParams({
+                                sort: key,
+                                direction: sortBy === key &&
+                                    sortDirection === "asc"
+                                  ? "desc"
+                                  : "asc",
+                              })}
+                          >
+                            {label}
+                            <ArrowUpDown className="ml-2 h-3.5 w-3.5" />
+                          </Button>
+                        </TableHead>
+                      ))}
+                      <TableHead>Source / result</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredAssets.map((asset) => {
+                      const id = String(asset._id);
+                      const metadata = mediaMetadataSummary(asset);
+                      const selected = allMatchingSelected ||
+                        selectedAssetIds.includes(id);
+                      return (
+                        <TableRow
+                          key={id}
+                          data-state={selected ? "selected" : undefined}
+                        >
+                          <TableCell className="py-2">
+                            {asset.kind === "image" && (
+                              <Checkbox
+                                aria-label={`Select ${asset.fileName}`}
+                                checked={selected}
+                                disabled={allMatchingSelected}
+                                onCheckedChange={(checked) => {
+                                  setAllMatchingSelected(false);
+                                  setSelectedAssetIds((current) =>
+                                    checked
+                                      ? [...new Set([...current, id])]
+                                      : current.filter((entry) => entry !== id)
+                                  );
+                                }}
+                              />
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <button
+                              type="button"
+                              className="flex min-w-[210px] items-center gap-2 text-left"
+                              onClick={() => openAsset(id)}
+                            >
+                              <LazyAuthenticatedMediaImage
+                                path={asset.thumbnailUrl}
+                                alt={asset.fileName}
+                                containerClassName="h-10 w-10 shrink-0 overflow-hidden rounded border bg-muted"
+                                className="h-full w-full object-cover"
+                              />
+                              <div className="min-w-0">
+                                <div className="max-w-[240px] truncate font-medium">
+                                  {asset.fileName}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {asset.kind} · {metadata.dimensions}
+                                </div>
+                              </div>
+                            </button>
+                          </TableCell>
+                          <TableCell className="min-w-[165px] py-2 text-xs">
+                            {metadata.captured}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <Badge
+                              variant={asset.status === "ready"
+                                ? "default"
+                                : asset.safeError
+                                ? "destructive"
+                                : "secondary"}
+                            >
+                              {asset.recognitionIgnoredAt
+                                ? "ignored"
+                                : asset.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-2 text-xs">
+                            {(Number(asset.byteLength ?? 0) / 1_000_000)
+                              .toFixed(2)} MB
+                          </TableCell>
+                          <TableCell className="max-w-[340px] py-2">
+                            <div className="truncate text-xs text-muted-foreground">
+                              {asset.source?.relativePath ?? asset.storageMode}
+                            </div>
+                            <div className="line-clamp-1 text-sm">
+                              {asset.inventory?.shortCaption ??
+                                asset.safeError ?? "No description yet"}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2 text-right">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              aria-label={`Open details for ${asset.fileName}`}
+                              title="Open details"
+                              onClick={() => openAsset(id)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
             )}
 
@@ -1025,10 +1703,11 @@ export default function MediaPage() {
 
       <MediaEventsPanel
         status={status}
-        candidateAssetIds={selectedEventAssetIds.filter((id) =>
-          assets.some((asset) =>
-            String(asset._id) === id && asset.kind === "image"
-          )
+        candidateAssetIds={(allMatchingSelected ? [] : selectedAssetIds).filter(
+          (id) =>
+            assets.some((asset) =>
+              String(asset._id) === id && asset.kind === "image"
+            ),
         )}
         onOpenAsset={openAsset}
       />
@@ -1048,17 +1727,19 @@ export default function MediaPage() {
                     {detail.asset.fileName}
                   </DialogTitle>
                   <DialogDescription className="truncate">
-                    {detail.asset.storageMode} ·{" "}
-                    {detail.asset.source?.relativePath ?? "managed copy"}
+                    {detail.asset.storageMode} · {detailStorageDescription}
                   </DialogDescription>
                 </div>
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Close details"
+                  title="Close"
                   onClick={closeAsset}
                 >
-                  Close details
+                  <X className="h-4 w-4" />
                 </Button>
               </div>
             </DialogHeader>
@@ -1090,7 +1771,7 @@ export default function MediaPage() {
                     </div>
                   )}
                   <div
-                    className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm"
+                    className="space-y-2 rounded-md border bg-muted/30 p-3 text-sm"
                     aria-label="Provider analysis status"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1114,150 +1795,350 @@ export default function MediaPage() {
                     {activeRecognitionRun
                       ? (
                         <>
-                          <div>
-                            Active result from{" "}
-                            <span className="font-medium">
-                              {displayedProviderName}
-                            </span>
-                            .
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {activeRecognitionRun.provenance?.service ??
-                              "Service not reported"} ·{" "}
-                            {activeRecognitionRun.provenance?.location ??
-                              "location not reported"}
-                            {activeRecognitionRun.provenance?.modelVersion
-                              ? " · " +
-                                activeRecognitionRun.provenance.modelVersion
-                              : ""}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Visual description:{" "}
+                          <div className="text-muted-foreground">
+                            {displayedProviderName} · description{" "}
                             {detail.visual?.visualUnderstanding
                               ? "available"
-                              : "not available"} · OCR pages:{" "}
-                            {detail.pages?.length ?? 0} · annotations:{" "}
-                            {detail.annotations?.length ?? 0}
+                              : "not available"} · OCR{" "}
+                            {detail.pages?.length ?? 0}
                           </div>
+                          <details className="text-xs text-muted-foreground">
+                            <summary className="cursor-pointer font-medium text-foreground">
+                              Technical provenance
+                            </summary>
+                            <div className="mt-2">
+                              {activeRecognitionRun.provenance?.service ??
+                                "Service not reported"} ·{" "}
+                              {activeRecognitionRun.provenance?.location ??
+                                "location not reported"}
+                              {activeRecognitionRun.provenance?.modelVersion
+                                ? " · " +
+                                  activeRecognitionRun.provenance.modelVersion
+                                : ""} · annotations{" "}
+                              {detail.annotations?.length ?? 0}
+                            </div>
+                          </details>
                         </>
                       )
                       : detail.asset.status === "queued" ||
                           detail.asset.status === "processing"
                       ? (
-                        <div>
-                          Provider analysis is{" "}
-                          {detail.asset.status}. No active result is stored yet.
+                        <div className="text-muted-foreground">
+                          {detail.asset.status}. No result yet.
                         </div>
                       )
                       : latestRecognitionRun
                       ? (
-                        <div>
-                          No active provider result is attached to this photo.
-                          The latest historical attempt used{" "}
-                          <span className="font-medium">
-                            {displayedProviderName}
-                          </span>{" "}
-                          and ended as {latestRecognitionRun.state}.
+                        <div className="text-muted-foreground">
+                          Latest attempt: {displayedProviderName} ·{" "}
+                          {latestRecognitionRun.state}
                         </div>
                       )
                       : (
-                        <div>
-                          No stored Google Cloud or self-hosted analysis run or
-                          result exists for this photo. Only the local preview
-                          and EXIF/GPS metadata are stored.
+                        <div className="text-muted-foreground">
+                          Local preview and metadata only.
                         </div>
                       )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button asChild>
-                      <Link to={`/media/analysis?assetId=${detail.asset._id}`}>
-                        Open in Photo analysis
+                      <Link to={detailAnalysisHref}>
+                        {detailCanRequestDescription
+                          ? <Sparkles className="mr-2 h-4 w-4" />
+                          : <Eye className="mr-2 h-4 w-4" />}
+                        {!detailIsPhoto
+                          ? "Open in Analysis"
+                          : detailCanRequestDescription
+                          ? "Get description"
+                          : "Open in Photo analysis"}
                       </Link>
                     </Button>
+                    {detailIsPhoto && (
+                      <>
+                        <Button asChild variant="outline">
+                          <Link to={`/map?photoAssetId=${detail.asset._id}`}>
+                            <MapPin className="mr-2 h-4 w-4" />
+                            Show on Map
+                          </Link>
+                        </Button>
+                        <Button asChild variant="outline">
+                          <Link
+                            to={`/timeline?photoAssetId=${detail.asset._id}`}
+                          >
+                            <Clock3 className="mr-2 h-4 w-4" />
+                            Show on Timeline
+                          </Link>
+                        </Button>
+                      </>
+                    )}
                     <Button
+                      type="button"
                       variant="outline"
-                      onClick={() => deleteDerived("analysis")}
-                      disabled={busy || !(detail.runs?.length > 0)}
+                      aria-expanded={storagePanelOpen}
+                      aria-controls="media-storage-controls"
+                      onClick={() => setStoragePanelOpen((open) => !open)}
                     >
-                      <Trash2 className="mr-2 h-4 w-4" />Delete derived analysis
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                      Storage & deletion…
                     </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => deleteDerived("previews")}
-                      disabled={busy ||
-                        !(detail.asset.previewUrl || detail.asset.thumbnailUrl)}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />Delete previews
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => deleteDerived("source_reference")}
-                      disabled={busy || !detail.asset.source}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />Forget original
-                      reference
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      onClick={prepareOriginalDeletion}
-                      disabled={busy ||
-                        detail.asset.storageMode !== "managed_original"}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />Review original
-                      deletion
-                    </Button>
+                    {storageMutationLocked && (
+                      <Badge variant="secondary">Locked by active batch</Badge>
+                    )}
                   </div>
                   {detail.asset.storageMode === "preview_only" && (
                     <div className="rounded border border-amber-500/40 p-3 text-sm">
-                      The managed original was deleted. Compact previews,
-                      metadata, analysis, and search data remain available.
+                      {detail.asset.sourceReferenceForgottenAt &&
+                          detail.asset.originalDeletionReceipt
+                        ? (
+                          <>
+                            The Mycelia-managed original was deleted, and the
+                            mounted original reference was later forgotten. The
+                            mounted file was not deleted. Compact previews,
+                            metadata, analysis, and search data remain.
+                          </>
+                        )
+                        : detail.asset.sourceReferenceForgottenAt
+                        ? (
+                          <>
+                            The mounted original reference was forgotten. The
+                            mounted file was not deleted. Compact previews,
+                            metadata, analysis, and search data remain.
+                          </>
+                        )
+                        : detail.asset.originalDeletionReceipt
+                        ? (
+                          <>
+                            The Mycelia-managed original was permanently
+                            deleted. Compact previews, metadata, analysis, and
+                            search data remain.
+                          </>
+                        )
+                        : (
+                          <>
+                            No original is retained or referenced by Mycelia.
+                            Compact previews, metadata, analysis, and search
+                            data may still remain.
+                          </>
+                        )}
                     </div>
                   )}
-                  {deletionPreview && (
-                    <div className="space-y-3 rounded border border-destructive/50 p-3 text-sm">
-                      <div className="font-medium">
-                        Original deletion preview
-                      </div>
+                  {storagePanelOpen && (
+                    <div
+                      id="media-storage-controls"
+                      aria-label="Storage and deletion controls"
+                      className="space-y-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm"
+                    >
                       <div>
-                        Original size: {(
-                          Number(deletionPreview.byteLength ?? 0) / 1_000_000
-                        ).toFixed(2)} MB · preview{" "}
-                        {deletionPreview.previewReady ? "ready" : "missing"}
-                        {" "}
-                        · analysis{" "}
-                        {deletionPreview.analysisReady ? "ready" : "missing"}
+                        <div className="font-semibold">Storage & deletion</div>
+                        <p className="mt-1 text-muted-foreground">
+                          Mounted originals remain read-only. You can remove the
+                          complete Mycelia library item, or use advanced
+                          layer-specific controls for Mycelia-managed files.
+                        </p>
                       </div>
-                      {deletionPreview.blockers?.length > 0 && (
-                        <ul className="list-disc pl-5 text-destructive">
-                          {deletionPreview.blockers.map((blocker: string) => (
-                            <li key={blocker}>{blocker}</li>
-                          ))}
-                        </ul>
+                      {storageMutationLocked && (
+                        <div
+                          role="status"
+                          className="rounded-md border border-primary/40 bg-primary/5 p-3"
+                        >
+                          <div className="font-medium">
+                            Storage changes are temporarily locked
+                          </div>
+                          <p className="mt-1 text-muted-foreground">
+                            This asset is reserved, queued, or processing in an
+                            active recognition batch. Storage cannot change
+                            until the item finishes or new provider calls are
+                            stopped.
+                            {(reservationBatchStatus || reservationItemState ||
+                              reservationState) && (
+                              <>
+                                {" "}Current state: {[
+                                  reservationBatchStatus,
+                                  reservationItemState || reservationState,
+                                ].filter(Boolean).join(" · ")}.
+                              </>
+                            )}
+                          </p>
+                          <Link
+                            className="mt-2 inline-flex font-medium text-primary underline-offset-4 hover:underline"
+                            to="/media/analysis"
+                          >
+                            View active batch and stop new calls
+                          </Link>
+                        </div>
                       )}
-                      {deletionPreview.canDelete && (
-                        <>
+
+                      {["external_reference", "preview_only"].includes(
+                        detail.asset.storageMode,
+                      ) && (
+                        <div className="space-y-2 rounded-md border bg-background p-3">
+                          <div className="font-medium">Remove from Mycelia</div>
+                          <p className="text-muted-foreground">
+                            Removes this library item, Mycelia WebP previews,
+                            and analysis results. The original file in the
+                            mounted folder is never deleted. If it is still
+                            present, a later folder sync can import it again.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={() => deleteDerived("asset_record")}
+                            disabled={storageActionsBusy ||
+                              storageMutationLocked}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Remove from Mycelia
+                          </Button>
+                        </div>
+                      )}
+
+                      {detail.asset.storageMode === "managed_original" && (
+                        <div className="space-y-2 rounded-md border bg-background p-3">
+                          <div className="font-medium">
+                            Mycelia-managed original
+                          </div>
+                          <p className="text-muted-foreground">
+                            This original is stored inside Mycelia. Deletion
+                            remains a separate preview-and-confirm operation and
+                            retains WebP previews, metadata, provider results,
+                            and search data.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={prepareOriginalDeletion}
+                            disabled={storageActionsBusy ||
+                              storageMutationLocked}
+                          >
+                            {currentOriginalDeletionBusy &&
+                              originalDeletionOperation?.action ===
+                                "prepare" &&
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Review managed original deletion
+                          </Button>
+                        </div>
+                      )}
+
+                      {detail.asset.storageMode === "managed_original" && (
+                        <div className="space-y-2 rounded-md border bg-background p-3">
+                          <div className="font-medium">
+                            Mycelia WebP previews
+                          </div>
+                          <p className="text-muted-foreground">
+                            Deleting previews removes only compact WebP files
+                            stored by Mycelia. It never deletes an original or
+                            its reference. Without previews, this item cannot be
+                            viewed in the gallery{detailIsPhoto
+                              ? " or sent for photo analysis"
+                              : ""}.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => deleteDerived("previews")}
+                            disabled={storageActionsBusy ||
+                              storageMutationLocked ||
+                              !(detail.asset.previewUrl ||
+                                detail.asset.thumbnailUrl)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Mycelia previews
+                          </Button>
+                        </div>
+                      )}
+
+                      {currentDeletionPreview && (
+                        <div className="space-y-3 rounded border border-destructive/50 bg-background p-3">
+                          <div className="font-medium">
+                            Original deletion preview
+                          </div>
                           <div>
-                            This permanently deletes only the managed original.
-                            WebP previews, local metadata, provider results, and
-                            search indexes are retained.
+                            Original size: {(
+                              Number(currentDeletionPreview.byteLength ?? 0) /
+                              1_000_000
+                            ).toFixed(2)} MB · preview{" "}
+                            {currentDeletionPreview.previewReady
+                              ? "ready"
+                              : "missing"} · analysis{" "}
+                            {currentDeletionPreview.analysisReady
+                              ? "ready"
+                              : "missing"}
                           </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="destructive"
-                              onClick={confirmOriginalDeletion}
-                              disabled={busy}
-                            >
-                              Permanently delete managed original
-                            </Button>
-                            <Button
-                              variant="outline"
-                              onClick={() => setDeletionPreview(undefined)}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        </>
+                          {currentDeletionPreview.blockers?.length > 0 && (
+                            <ul className="list-disc pl-5 text-destructive">
+                              {currentDeletionPreview.blockers.map(
+                                (blocker: string) => (
+                                  <li key={blocker}>{blocker}</li>
+                                ),
+                              )}
+                            </ul>
+                          )}
+                          {currentDeletionPreview.canDelete && (
+                            <>
+                              <div>
+                                This permanently deletes only the managed
+                                original. WebP previews, local metadata,
+                                provider results, and search indexes are
+                                retained.
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  variant="destructive"
+                                  onClick={confirmOriginalDeletion}
+                                  disabled={storageActionsBusy ||
+                                    storageMutationLocked}
+                                >
+                                  {currentOriginalDeletionBusy &&
+                                    originalDeletionOperation?.action ===
+                                      "confirm" &&
+                                    (
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    )}
+                                  Permanently delete managed original
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={cancelOriginalDeletionPreview}
+                                  disabled={storageActionsBusy}
+                                >
+                                  {currentOriginalDeletionBusy &&
+                                    originalDeletionOperation?.action ===
+                                      "cancel" &&
+                                    (
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    )}
+                                  Cancel original deletion review
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
+
+                      <details className="rounded-md border bg-background p-3">
+                        <summary className="cursor-pointer font-medium">
+                          Advanced: reset provider analysis
+                        </summary>
+                        <div className="mt-3 space-y-2">
+                          <p className="text-muted-foreground">
+                            Resetting analysis removes derived visual/OCR data
+                            and marks historical runs deleted. It retains the
+                            original, its reference, and Mycelia previews.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => deleteDerived("analysis")}
+                            disabled={storageActionsBusy ||
+                              storageMutationLocked ||
+                              !(detail.runs?.length > 0)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Reset derived analysis
+                          </Button>
+                        </div>
+                      </details>
                     </div>
                   )}
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -1294,179 +2175,7 @@ export default function MediaPage() {
                 }}
               />
 
-              {detail.visual?.visualUnderstanding && (
-                <div className="space-y-4 rounded-md border border-primary/30 p-4">
-                  <div>
-                    <div className="text-lg font-semibold">
-                      {detail.visual.visualUnderstanding.shortCaption}
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm">
-                      {detail.visual.visualUnderstanding.description}
-                    </p>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <div className="rounded bg-muted p-3 text-sm">
-                      <div className="font-medium">Scene</div>
-                      <div>
-                        {detail.visual.visualUnderstanding.scene.summary}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {detail.visual.visualUnderstanding.scene.environment} ·
-                        {" "}
-                        {detail.visual.visualUnderstanding.scene.placeType} ·
-                        {" "}
-                        {detail.visual.visualUnderstanding.scene.timeOfDay}
-                      </div>
-                    </div>
-                    <div className="rounded bg-muted p-3 text-sm">
-                      <div className="font-medium">People</div>
-                      <div>
-                        Visible count:{" "}
-                        {detail.visual.visualUnderstanding.peopleCount}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        No identity inference
-                      </div>
-                    </div>
-                    <div className="rounded bg-muted p-3 text-sm">
-                      <div className="font-medium">Possible event</div>
-                      <div>
-                        {detail.visual.visualUnderstanding.possibleEvent ??
-                          "Not confidently identified"}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Overall confidence {Math.round(
-                          Number(detail.visual.visualUnderstanding.confidence) *
-                            100,
-                        )}%
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-2 font-medium">Objects</div>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.visual.visualUnderstanding.objects.map(
-                        (item: any, index: number) => (
-                          <Badge
-                            key={`${item.name}-${index}`}
-                            variant="secondary"
-                          >
-                            {item.name}
-                            {item.count ? ` ×${item.count}` : ""}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-2 font-medium">Activities</div>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.visual.visualUnderstanding.activities.map(
-                        (item: any, index: number) => (
-                          <Badge
-                            key={`${item.description}-${index}`}
-                            variant="outline"
-                          >
-                            {item.description}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-2 font-medium">Keywords</div>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.visual.visualUnderstanding.keywords.map(
-                        (keyword: string) => (
-                          <Badge key={keyword}>{keyword}</Badge>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  {detail.visual.visualUnderstanding.warnings?.length > 0 && (
-                    <div className="rounded border border-amber-500/40 p-3 text-sm">
-                      {detail.visual.visualUnderstanding.warnings.join(" · ")}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {detail.pages?.length > 0 && (
-                <div className="space-y-3">
-                  <div className="font-medium">OCR text</div>
-                  {detail.pages.map((page: any) => (
-                    <div key={page._id} className="rounded-md border p-3">
-                      <Badge variant="outline">Page {page.pageNumber}</Badge>
-                      <pre className="mt-2 max-h-72 whitespace-pre-wrap overflow-auto text-sm">
-                      {page.text || "No text detected"}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {detail.annotations?.length > 0 && (
-                <div className="space-y-2">
-                  <div className="font-medium">Annotations</div>
-                  <div className="flex flex-wrap gap-2">
-                    {detail.annotations.map((annotation: any) => (
-                      <Badge key={annotation._id} variant="secondary">
-                        {annotation.type}: {annotation.label}
-                        {Number.isFinite(annotation.confidence)
-                          ? ` ${Math.round(annotation.confidence * 100)}%`
-                          : ""}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {detail.runs?.length > 0 && (
-                <div className="space-y-2">
-                  <div className="font-medium">Recognition provenance</div>
-                  {detail.runs.map((run: any) => (
-                    <div
-                      key={run._id}
-                      className="rounded-md border p-3 text-sm"
-                    >
-                      <div className="flex flex-wrap gap-2">
-                        <Badge
-                          variant={run.state === "ready"
-                            ? "default"
-                            : "secondary"}
-                        >
-                          {run.state}
-                        </Badge>
-                        <span>
-                          {run.providerSnapshot?.name ?? "Unknown provider"}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-muted-foreground">
-                        {run.provenance?.service ?? "pending"} ·{" "}
-                        {run.provenance?.location ??
-                          "pending"}
-                        {run.provenance?.modelVersion
-                          ? ` · ${run.provenance.modelVersion}`
-                          : ""}
-                      </div>
-                      {run.usage && (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          input/output/reasoning/embedding tokens:{" "}
-                          {run.usage.inputTokens ??
-                            0}/{run.usage.outputTokens ??
-                            0}/
-                          {run.usage.reasoningTokens ?? 0}/
-                          {run.usage.embeddingTokens ?? 0} · OCR units:{" "}
-                          {run.usage.ocrUnits ?? 0}{" "}
-                          · estimated list price: ${Number(
-                            run.usage.grossListPriceUsd ?? 0,
-                          ).toFixed(4)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              <MediaResultPanel detail={detail} />
             </div>
           </DialogContent>
         )}

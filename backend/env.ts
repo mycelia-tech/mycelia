@@ -73,5 +73,7 @@ export const env = {
   // Optional media import root. The dedicated media Compose overlay mounts a
   // host folder read-only here; the base stack leaves the feature unavailable.
   MEDIA_SOURCE_ROOT: Deno.env.get("MEDIA_SOURCE_ROOT") || "",
+  MEDIA_SOURCE_DISKS_DIR: Deno.env.get("MEDIA_SOURCE_DISKS_DIR") || "",
+  MEDIA_SOURCE_ALIASES: Deno.env.get("MEDIA_SOURCE_ALIASES") || "{}",
   MEDIA_SELF_HOSTED_API_KEY: Deno.env.get("MEDIA_SELF_HOSTED_API_KEY") || "",
 };

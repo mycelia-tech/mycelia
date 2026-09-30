@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.15";
 import {
   type MediaRecognitionProfile,
   zMediaKnowledgeConfig,
+  zMediaRecognitionProfile,
 } from "@myceliasdk/media.ts";
 import {
   assertMediaItemsWithinPerImportBudget,
@@ -11,6 +12,22 @@ import {
   gcpUsageLedgerId,
   summarizeGcpUsage,
 } from "./costs.ts";
+
+Deno.test("general vision rejects PDF analysis before preview or enqueue", () => {
+  const profile = zMediaRecognitionProfile.parse({
+    id: "photo",
+    name: "Photos",
+    providerType: "openai-compatible",
+    enabled: true,
+    connectionId: "local",
+    model: "vision",
+  });
+  assertThrows(
+    () => estimateMediaGrossUsd("pdf", 1, ["ocr"], profile),
+    Error,
+    "photos only",
+  );
+});
 
 Deno.test("a multi-file import is guarded per asset, not by batch total", () => {
   const config = zMediaKnowledgeConfig.parse({});
@@ -121,6 +138,28 @@ Deno.test("Google spend ledger is shared by every Mycelia principal using a proj
     gcpUsageLedgerId("mycelia-media-260821", "2026-08"),
     "mycelia-media-260821:2026-08",
   );
+});
+
+Deno.test("disabled daily stop retains usage and JSON-safe unlimited values", () => {
+  const config = zMediaKnowledgeConfig.parse({
+    promoGuard: { dailyGrossLimitUsd: null, monthlyGrossLimitUsd: 300 },
+  });
+  const snapshot = summarizeGcpUsage(
+    {
+      grossCommittedUsd: 51,
+      grossReservedUsd: 1,
+      days: { "2026-08-21": { grossUsd: 52 } },
+    },
+    config,
+    new Date("2026-08-21T12:00:00.000Z"),
+  );
+
+  assertEquals(snapshot.grossTodayUsd, 52);
+  assertEquals(snapshot.dailyLimitUsd, null);
+  assertEquals(snapshot.dailyRemainingUsd, null);
+  assertEquals(snapshot.monthlyRemainingUsd, 248);
+  assertEquals(JSON.parse(JSON.stringify(snapshot)), snapshot);
+  assertThrows(() => assertMediaPerImportBudget(config, 0.02));
 });
 
 Deno.test("Google connector estimate includes Vertex and Vision plus optional Document AI", () => {

@@ -24,10 +24,10 @@ import {
   activeToolsForPolicy,
   chatToolFilter,
   createChatTools,
-  listChatTools,
   normalizeChatToolPolicy,
 } from "@/lib/chat/tools.server.ts";
 import {
+  chatToolPoliciesEqual,
   chatToolPolicyFromDocument,
   provisionalChatTitle,
 } from "@/lib/chat/resource.server.ts";
@@ -230,6 +230,21 @@ export async function apiChatHandler(req: Request, res: Response) {
   // Built before message conversion because convertToModelMessages needs the
   // tool set to map tool parts (incl. approval responses) correctly.
   const tools = createChatTools(auth);
+  let submittedToolPolicy: ChatToolPolicy | undefined;
+  try {
+    if (req.body?.toolPolicy !== undefined) {
+      submittedToolPolicy = normalizeChatToolPolicy(
+        req.body.toolPolicy,
+        Object.keys(tools),
+      );
+    }
+  } catch (error) {
+    res.status(400).json({
+      error: getErrorMessage(error),
+      requestId,
+    });
+    return;
+  }
 
   // Validate and convert UIMessages (useChat wire format) into ModelMessages.
   // This preserves tool-approval requests/responses so streamText can execute
@@ -284,11 +299,8 @@ export async function apiChatHandler(req: Request, res: Response) {
     isNewChat = true;
     const newChatId = new ObjectId();
     const now = new Date();
-    const catalog = listChatTools(auth);
-    const requestedPolicy = normalizeChatToolPolicy(
-      req.body?.toolPolicy,
-      catalog.map((tool) => tool.name),
-    );
+    const requestedPolicy = submittedToolPolicy ??
+      normalizeChatToolPolicy(undefined, Object.keys(tools));
     chatDocument = {
       _id: newChatId,
       userId: auth.principal,
@@ -350,6 +362,25 @@ export async function apiChatHandler(req: Request, res: Response) {
         ? chatDocument.providerProfileId
         : undefined)
       : selectedProviderProfileId ?? undefined;
+    const storedToolPolicy = chatToolPolicyFromDocument(chatDocument);
+    const requestedPolicy = submittedToolPolicy ?? storedToolPolicy;
+    const toolPolicyChanged = !chatToolPoliciesEqual(
+      storedToolPolicy,
+      requestedPolicy,
+    );
+    if (
+      toolPolicyChanged && chatDocument.lastRun?.state &&
+      ["submitted", "streaming", "needs_approval"].includes(
+        chatDocument.lastRun.state,
+      )
+    ) {
+      res.status(409).json({
+        error: "Tool selection cannot change while a response is active",
+        chatId: activeChatId,
+        requestId,
+      });
+      return;
+    }
     const pinChanged = selectedProviderProfileId !== undefined &&
       (selectedProviderProfileId ?? undefined) !==
         (typeof chatDocument.providerProfileId === "string"
@@ -357,7 +388,7 @@ export async function apiChatHandler(req: Request, res: Response) {
           : undefined);
     if (
       (selectedChatModel && selectedChatModel !== chatDocument.model) ||
-      pinChanged
+      pinChanged || toolPolicyChanged
     ) {
       await mongo({
         action: "updateOne",
@@ -373,6 +404,12 @@ export async function apiChatHandler(req: Request, res: Response) {
             ...(selectedProviderProfileId
               ? { providerProfileId: selectedProviderProfileId }
               : {}),
+            ...(toolPolicyChanged
+              ? {
+                toolMode: requestedPolicy.mode,
+                enabledTools: requestedPolicy.enabledTools,
+              }
+              : {}),
           },
           ...(selectedProviderProfileId === null
             ? { $unset: { providerProfileId: "" } }
@@ -385,6 +422,12 @@ export async function apiChatHandler(req: Request, res: Response) {
         providerProfileId: selectedProviderProfileId === null
           ? undefined
           : selectedProviderProfileId ?? chatDocument.providerProfileId,
+        ...(toolPolicyChanged
+          ? {
+            toolMode: requestedPolicy.mode,
+            enabledTools: requestedPolicy.enabledTools,
+          }
+          : {}),
       };
     }
   }

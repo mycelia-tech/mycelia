@@ -1,8 +1,63 @@
 import { expect } from "@std/expect";
 import { ObjectId } from "bson";
 import type { Auth } from "@/lib/auth/core.server.ts";
+import { logicalJobListPipeline } from "@/lib/resources/worker.ts";
 import { withFixtures } from "@/tests/fixtures.server.ts";
 import "./fixtures.ts";
+
+Deno.test("jobs list pipeline bounds ordinary jobs before campaign grouping", () => {
+  const candidateQuery = {
+    type: { $in: ["transcription", "mediaFolderImport"] },
+  };
+  const visibleQuery = {
+    state: { $in: ["completed"] },
+    dismissedAt: { $exists: false },
+  };
+  const pipeline = logicalJobListPipeline(
+    candidateQuery,
+    visibleQuery,
+    200,
+  ) as any[];
+
+  expect(pipeline[0]).toEqual({
+    $match: {
+      $and: [
+        candidateQuery,
+        visibleQuery,
+        {
+          type: {
+            $nin: ["mediaFolderImport", "mediaRecognitionBatch"],
+          },
+        },
+      ],
+    },
+  });
+  const unionIndex = pipeline.findIndex((stage) => stage.$unionWith);
+  expect(unionIndex).toBeGreaterThan(0);
+  expect(pipeline.slice(0, unionIndex).some((stage) => stage.$group)).toBe(
+    false,
+  );
+  expect(pipeline.slice(0, unionIndex).some((stage) => stage.$limit === 200))
+    .toBe(true);
+
+  const campaignPipeline = pipeline[unionIndex].$unionWith.pipeline as any[];
+  const groupIndex = campaignPipeline.findIndex((stage) => stage.$group);
+  const lifecycleIndex = campaignPipeline.findIndex((stage) =>
+    stage.$match === visibleQuery
+  );
+  expect(groupIndex).toBeGreaterThan(0);
+  expect(lifecycleIndex).toBeGreaterThan(groupIndex);
+  expect(campaignPipeline.slice(0, groupIndex).some((stage) => stage.$project))
+    .toBe(true);
+  expect(campaignPipeline[groupIndex].$group.job.$top.output).toEqual(
+    expect.objectContaining({
+      _id: "$_id",
+      type: "$type",
+      createdAt: "$createdAt",
+    }),
+  );
+  expect(JSON.stringify(pipeline)).not.toContain("$$ROOT");
+});
 
 Deno.test(
   "jobs list separates automatic no-op checks before applying the limit",

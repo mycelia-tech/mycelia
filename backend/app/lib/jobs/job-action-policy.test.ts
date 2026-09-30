@@ -37,6 +37,7 @@ Deno.test("generic cancel and clear reject domain media before side effects", ()
 
 Deno.test("generic manual actions use catalog manualRun as an allow-list", () => {
   expect(canRunWorkerFromJobs("transcription")).toBe(true);
+  expect(canRunWorkerFromJobs("ingestion")).toBe(true);
   expect(canRunWorkerFromJobs("mediaFolderImport")).toBe(false);
   expect(canRunWorkerFromJobs("mediaRecognitionBatch")).toBe(false);
   expect(canRunWorkerFromJobs("mediaRecognition")).toBe(false);

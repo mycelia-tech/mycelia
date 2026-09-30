@@ -45,6 +45,7 @@ interface TrackVisibilityState {
   objectsLayoutMode: ObjectsLayoutMode;
   visibleObjectCategories: ObjectCategory[];
   toggleTrack: (id: TrackId) => void;
+  setTrackVisible: (id: TrackId, visible: boolean) => void;
   setTrackHeight: (id: TrackId, height: number) => void;
   showAll: () => void;
   hideAll: () => void;
@@ -74,6 +75,18 @@ export const useTrackVisibilityStore = create<TrackVisibilityState>()(
               visibleTracks: [...state.visibleTracks, id],
             };
           }
+        });
+      },
+
+      setTrackVisible: (id, visible) => {
+        set((state) => {
+          const isCurrentlyVisible = state.visibleTracks.includes(id);
+          if (isCurrentlyVisible === visible) return state;
+          return {
+            visibleTracks: visible
+              ? [...state.visibleTracks, id]
+              : state.visibleTracks.filter((trackId) => trackId !== id),
+          };
         });
       },
 

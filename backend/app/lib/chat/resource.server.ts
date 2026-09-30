@@ -125,6 +125,17 @@ export function chatToolPolicyFromDocument(chat: any): ChatToolPolicy {
   };
 }
 
+export function chatToolPoliciesEqual(
+  left: ChatToolPolicy,
+  right: ChatToolPolicy,
+): boolean {
+  if (left.mode !== right.mode) return false;
+  if (left.mode !== "custom") return true;
+  if (left.enabledTools.length !== right.enabledTools.length) return false;
+  const enabled = new Set(left.enabledTools);
+  return right.enabledTools.every((name) => enabled.has(name));
+}
+
 export function chatDocumentToSummary(chat: any): ChatSummary {
   const policy = chatToolPolicyFromDocument(chat);
   const lastReadAt = chat.lastReadAt ? new Date(chat.lastReadAt) : undefined;
@@ -456,8 +467,21 @@ export class ChatResource implements Resource<ChatResourceRequest, any> {
     }
 
     if (input.action === "setPreferences") {
+      let requestedToolPolicy: ChatToolPolicy | undefined;
+      let toolPolicyChanged = false;
+      if (input.preferences.toolPolicy) {
+        const catalog = listChatTools(auth);
+        requestedToolPolicy = normalizeChatToolPolicy(
+          input.preferences.toolPolicy,
+          catalog.map((tool) => tool.name),
+        );
+        toolPolicyChanged = !chatToolPoliciesEqual(
+          chatToolPolicyFromDocument(chat),
+          requestedToolPolicy,
+        );
+      }
       if (
-        input.preferences.toolPolicy &&
+        toolPolicyChanged &&
         chat.lastRun?.state &&
         TOOL_POLICY_LOCK_STATES.includes(chat.lastRun.state)
       ) {
@@ -473,14 +497,9 @@ export class ChatResource implements Resource<ChatResourceRequest, any> {
       } else if (input.preferences.providerProfileId) {
         set.providerProfileId = input.preferences.providerProfileId;
       }
-      if (input.preferences.toolPolicy) {
-        const catalog = listChatTools(auth);
-        const policy = normalizeChatToolPolicy(
-          input.preferences.toolPolicy,
-          catalog.map((tool) => tool.name),
-        );
-        set.toolMode = policy.mode;
-        set.enabledTools = policy.enabledTools;
+      if (requestedToolPolicy && toolPolicyChanged) {
+        set.toolMode = requestedToolPolicy.mode;
+        set.enabledTools = requestedToolPolicy.enabledTools;
       }
       if (Object.keys(set).length || Object.keys(unset).length) {
         await mongo({

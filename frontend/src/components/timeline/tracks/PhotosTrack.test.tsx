@@ -16,6 +16,7 @@ import {
   photoDensityBucketEnd,
   PhotosTrack,
 } from "./PhotosTrack";
+import type { PhotoTimelineFocus } from "@/lib/photoTimelineDeepLink";
 
 vi.mock("@/lib/api", () => ({ callResource: vi.fn() }));
 vi.mock("@/components/media/AuthenticatedMediaImage", () => ({
@@ -50,7 +51,10 @@ const mockCallResource = vi.mocked(api.callResource);
 const START = new Date("2026-08-01T00:00:00.000Z");
 const END = new Date("2026-08-03T00:00:00.000Z");
 
-function renderTrack() {
+function renderTrack(options: {
+  focusedPhoto?: PhotoTimelineFocus;
+  onFocusedPhotoDismiss?: () => void;
+} = {}) {
   const scale = scaleTime().domain([START, END]).range([0, 600]);
   return render(
     <MemoryRouter>
@@ -59,6 +63,8 @@ function renderTrack() {
         transform={zoomIdentity}
         width={600}
         height={48}
+        focusedPhoto={options.focusedPhoto}
+        onFocusedPhotoDismiss={options.onFocusedPhotoDismiss}
       />
     </MemoryRouter>,
   );
@@ -246,6 +252,40 @@ describe("PhotosTrack", () => {
       .toBeNull();
     expect(screen.getByRole("button", { name: "Open photo new.jpg" }))
       .toBeTruthy();
+  });
+
+  it("opens a deep-linked unplaced photo without inventing a capture time", async () => {
+    mockCallResource.mockResolvedValue({
+      mode: "items",
+      total: 0,
+      unplacedTimeCount: 1,
+      items: [],
+    });
+    const onFocusedPhotoDismiss = vi.fn();
+
+    renderTrack({
+      focusedPhoto: {
+        item: {
+          assetId: "unplaced-photo",
+          fileName: "unplaced.jpg",
+          status: "staged",
+          capturedAt: null,
+          shortCaption: "A photo without EXIF time",
+        },
+      },
+      onFocusedPhotoDismiss,
+    });
+
+    const sheet = await screen.findByRole("complementary", {
+      name: "unplaced.jpg",
+    });
+    expect(within(sheet).getByText("unplaced.jpg")).toBeTruthy();
+    expect(within(sheet).getByText(/Missing capture time/)).toBeTruthy();
+    expect(within(sheet).getByText(/cannot appear on the Timeline/))
+      .toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close photo list" }));
+    expect(onFocusedPhotoDismiss).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,10 +1,11 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildJobsListRequest,
   getJobsListView,
   resolveJobEventState,
+  scheduleJobsQueryRefresh,
   shouldIncludeJobEvent,
   shouldRefreshJobsViews,
   withJobsListView,
@@ -32,16 +33,18 @@ describe("jobs list views", () => {
     expect(buildJobsListRequest("idle_auto", ["transcription"])).toMatchObject({
       action: "list",
       view: "idle_auto",
-      limit: 1000,
+      limit: 200,
       types: ["transcription"],
     });
     expect(buildJobsListRequest("operational")).not.toHaveProperty("types");
   });
 
-  it("refreshes all views when a completed job can change membership", () => {
+  it("refreshes lifecycle transitions but not progress-only events", () => {
     expect(shouldRefreshJobsViews("job.completed")).toBe(true);
+    expect(shouldRefreshJobsViews("job.active")).toBe(true);
+    expect(shouldRefreshJobsViews("job.state")).toBe(true);
     expect(shouldRefreshJobsViews("job.progress")).toBe(false);
-    expect(shouldRefreshJobsViews("job.failed")).toBe(false);
+    expect(shouldRefreshJobsViews("job.failed")).toBe(true);
   });
 
   it("supports a compact active-only request for the global status badge", () => {
@@ -60,7 +63,7 @@ describe("jobs list views", () => {
     })).toMatchObject({
       types: ["diarization"],
       providerProfileId: "gpu-legacy",
-      limit: 1000,
+      limit: 200,
     });
   });
 
@@ -97,5 +100,64 @@ describe("jobs list views", () => {
     expect(
       shouldIncludeJobEvent("mediaRecognition", ["transcription"]),
     ).toBe(false);
+  });
+
+  it("coalesces lifecycle refreshes and targets only active exact views", () => {
+    vi.useFakeTimers();
+    try {
+      const invalidateQueries = vi.fn();
+      const client = { invalidateQueries };
+      const operational = ["jobs", "operational", "all-types"];
+      const idle = ["jobs", "idle_auto", "all-types"];
+
+      scheduleJobsQueryRefresh(client, operational);
+      scheduleJobsQueryRefresh(client, operational);
+      scheduleJobsQueryRefresh(client, idle);
+
+      vi.advanceTimersByTime(199);
+      expect(invalidateQueries).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+
+      expect(invalidateQueries).toHaveBeenCalledTimes(3);
+      expect(invalidateQueries).toHaveBeenNthCalledWith(1, {
+        queryKey: ["jobs"],
+        refetchType: "none",
+      });
+      expect(invalidateQueries).toHaveBeenNthCalledWith(2, {
+        queryKey: operational,
+        exact: true,
+        refetchType: "active",
+      });
+      expect(invalidateQueries).toHaveBeenNthCalledWith(3, {
+        queryKey: idle,
+        exact: true,
+        refetchType: "active",
+      });
+    } finally {
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes a continuous lifecycle stream within the maximum wait", () => {
+    vi.useFakeTimers();
+    try {
+      const invalidateQueries = vi.fn();
+      const client = { invalidateQueries };
+      const queryKey = ["jobs", "operational"];
+
+      scheduleJobsQueryRefresh(client, queryKey);
+      for (let index = 0; index < 6; index++) {
+        vi.advanceTimersByTime(150);
+        scheduleJobsQueryRefresh(client, queryKey);
+      }
+      expect(invalidateQueries).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(100);
+      expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
   });
 });

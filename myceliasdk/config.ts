@@ -25,6 +25,7 @@ export const zModelAliasMap = z.object({
 });
 
 export const zLlmProviderProfile = z.object({
+  photoOnly: z.boolean().optional(),
   id: z.string().min(1),
   name: z.string().min(1),
   baseUrl: z.string().url(),
@@ -231,6 +232,11 @@ export const zServerConfig = z.object({
   transcriptionProfiles: zTranscriptionProfilesConfig.optional().nullable(),
   diarizationProfiles: zDiarizationProfilesConfig.optional().nullable(),
   mediaKnowledge: zMediaKnowledgeConfig.optional().nullable(),
+  externalServices: z.object({
+    google: z.object({ enabled: z.boolean().default(false) }).default({
+      enabled: false,
+    }),
+  }).default({ google: { enabled: false } }),
   // Deprecated: kept for backward compatibility
   inference: zInferenceProviderConfig.optional().nullable(),
   features: z.object({

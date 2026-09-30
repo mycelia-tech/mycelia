@@ -12,6 +12,35 @@ import { env } from "#/env.ts";
 import { withObjectListCategories } from "@/lib/objects/list-categories.ts";
 
 let client: MongoClient | null = null;
+let changeStreamClient: MongoClient | null = null;
+
+// Long-polling cursors must never borrow the HTTP/GridFS pool.
+export const CHANGE_STREAM_POOL_SIZE = 4;
+export async function getChangeStreamDB(): Promise<Db> {
+  changeStreamClient ??= new MongoClient(env.MONGO_URL, {
+    maxPoolSize: CHANGE_STREAM_POOL_SIZE,
+    appName: "mycelia-change-streams",
+  });
+  await changeStreamClient.connect();
+  return changeStreamClient.db(env.DATABASE_NAME);
+}
+
+export async function closeChangeStreamDB(): Promise<void> {
+  const previous = changeStreamClient;
+  changeStreamClient = null;
+  await previous?.close();
+}
+
+// One shared, explicitly bounded application pool. GridFS and regular Mongo
+// resources use this client; the cap prevents a request burst from creating
+// unbounded sockets. Change streams have their own isolated pool above.
+const MAX_MONGO_POOL_SIZE = 100;
+
+function createMongoClient(): MongoClient {
+  return new MongoClient(env.MONGO_URL, {
+    maxPoolSize: MAX_MONGO_POOL_SIZE,
+  });
+}
 
 interface CursorEntry {
   cursor: any;
@@ -54,7 +83,7 @@ async function connectWithRetry(): Promise<void> {
 
   connectingPromise = (async () => {
     if (!client) {
-      client = new MongoClient(env.MONGO_URL);
+      client = createMongoClient();
     }
 
     let lastError: Error | null = null;
@@ -77,7 +106,7 @@ async function connectWithRetry(): Promise<void> {
           try {
             await client.close();
           } catch { /* ignore */ }
-          client = new MongoClient(env.MONGO_URL);
+          client = createMongoClient();
         }
       }
     }

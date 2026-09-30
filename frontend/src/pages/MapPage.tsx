@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMap } from "react-leaflet";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -106,6 +106,9 @@ function FlyTo({ target }: { target: [number, number] | null }) {
 
 const MapPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusedPhotoAssetId = searchParams.get("photoAssetId")?.trim() ||
+    undefined;
   const { start, end, setRange } = useTimelineRange();
   const { data: status } = useLocationStatus();
   const [showConversations, setShowConversations] = useState(false);
@@ -139,6 +142,14 @@ const MapPage = () => {
   >(null);
   const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null);
   const [downloadingGeonames, setDownloadingGeonames] = useState(false);
+
+  const closeFocusedPhoto = useCallback(() => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("photoAssetId");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const rangeMs = end.getTime() - start.getTime();
   const { data: segmentsData, isLoading } = useLocationSegments(start, end, {
@@ -337,7 +348,10 @@ const MapPage = () => {
           <Switch
             id="show-photos"
             checked={showPhotos}
-            onCheckedChange={setShowPhotos}
+            onCheckedChange={(checked) => {
+              setShowPhotos(checked);
+              if (!checked && focusedPhotoAssetId) closeFocusedPhoto();
+            }}
           />
           <Label
             htmlFor="show-photos"
@@ -473,13 +487,20 @@ const MapPage = () => {
           <div className="isolate min-h-0 flex-1 overflow-hidden rounded-lg border">
             <LocationMap
               segments={segments}
+              fitToSegments={!focusedPhotoAssetId}
               extraBoundsPoints={sourceBoundsPoints}
               selectedSegmentId={selectedSegment
                 ? String(selectedSegment._id)
                 : null}
               onSegmentClick={handleSegmentClick}
             >
-              {showPhotos && <PhotoClustersLayer onStats={setPhotoStats} />}
+              {showPhotos && (
+                <PhotoClustersLayer
+                  onStats={setPhotoStats}
+                  focusedAssetId={focusedPhotoAssetId}
+                  onFocusedAssetClose={closeFocusedPhoto}
+                />
+              )}
               {showConversations && (
                 <ConversationClustersLayer
                   groups={conversationsData?.groups ?? []}

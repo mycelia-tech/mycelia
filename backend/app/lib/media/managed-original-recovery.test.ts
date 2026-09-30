@@ -5,6 +5,9 @@ import { Auth } from "@/lib/auth/core.server.ts";
 import type { MediaRecognitionProfile } from "@myceliasdk/media.ts";
 import {
   availableMediaOriginalStorage,
+  cancelManagedOriginalDeletionPreview,
+  claimMediaAssetForRecognitionProcessing,
+  claimMediaAssetForRecognitionQueue,
   cleanupExpiredStagedOriginals,
   cleanupExpiredStagedPreviews,
   confirmedMediaImportJobId,
@@ -18,6 +21,12 @@ import {
   storageModeAfterManagedOriginalDeletion,
   storageModeAfterSourceReferenceDeletion,
 } from "./resource.server.ts";
+import {
+  beginManagedOriginalDeletionConfirmation,
+  claimMediaDeletionReservation,
+  claimMediaDerivedDeletionState,
+  releaseMediaDeletionReservation,
+} from "@/lib/media-library/recognition-reservation-fence.server.ts";
 
 const selfHostedProfile: MediaRecognitionProfile = {
   id: "self-hosted-media",
@@ -800,5 +809,432 @@ Deno.test(
     );
     const asset = await db.collection("media_assets").findOne({ _id: assetId });
     assertEquals(asset?.originalDeletionPending, undefined);
+  }),
+);
+
+Deno.test(
+  "managed-original deletion preview cancel is owner-scoped, idempotent, and loses to confirmation",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const owner = "original-preview-cancel-owner";
+    const otherOwner = "original-preview-cancel-other";
+    const assetId = new ObjectId();
+    const deletionPreviewId = new ObjectId();
+    const claimId = `managed-original:${deletionPreviewId}`;
+    await db.collection("media_original_deletion_previews").insertOne({
+      _id: deletionPreviewId,
+      owner,
+      assetId,
+      reservationClaimId: claimId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await claimMediaDeletionReservation(db, {
+      owner,
+      assetId,
+      target: "managed_original",
+      claimId,
+      deletionPreviewId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    assertEquals(
+      await cancelManagedOriginalDeletionPreview(
+        db,
+        otherOwner,
+        deletionPreviewId,
+      ),
+      { success: true },
+    );
+    assertEquals(
+      await db.collection("media_original_deletion_previews").countDocuments({
+        _id: deletionPreviewId,
+        owner,
+      }),
+      1,
+    );
+    assertEquals(
+      await cancelManagedOriginalDeletionPreview(
+        db,
+        owner,
+        deletionPreviewId,
+      ),
+      { success: true },
+    );
+    assertEquals(
+      await db.collection("media_original_deletion_previews").countDocuments({
+        _id: deletionPreviewId,
+      }),
+      0,
+    );
+    assertEquals(
+      await db.collection("media_recognition_asset_reservations")
+        .countDocuments({ owner, assetId }),
+      0,
+    );
+    assertEquals(
+      await cancelManagedOriginalDeletionPreview(
+        db,
+        owner,
+        deletionPreviewId,
+      ),
+      { success: true },
+    );
+
+    const confirmingPreviewId = new ObjectId();
+    const confirmingClaimId = `managed-original:${confirmingPreviewId}`;
+    await db.collection("media_original_deletion_previews").insertOne({
+      _id: confirmingPreviewId,
+      owner,
+      assetId,
+      reservationClaimId: confirmingClaimId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await claimMediaDeletionReservation(db, {
+      owner,
+      assetId,
+      target: "managed_original",
+      claimId: confirmingClaimId,
+      deletionPreviewId: confirmingPreviewId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await beginManagedOriginalDeletionConfirmation(db, {
+      owner,
+      assetId,
+      claimId: confirmingClaimId,
+      deletionPreviewId: confirmingPreviewId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await assertRejects(
+      () =>
+        cancelManagedOriginalDeletionPreview(db, owner, confirmingPreviewId),
+      Error,
+      "confirmation already started",
+    );
+    assertEquals(
+      await db.collection("media_original_deletion_previews").countDocuments({
+        _id: confirmingPreviewId,
+        owner,
+      }),
+      1,
+    );
+
+    const recoveredPreviewId = new ObjectId();
+    const recoveredAssetId = new ObjectId();
+    await Promise.all([
+      db.collection("media_original_deletion_previews").insertOne({
+        _id: recoveredPreviewId,
+        owner,
+        assetId: recoveredAssetId,
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+      db.collection("media_assets").insertOne({
+        _id: recoveredAssetId,
+        owner,
+        originalDeletionPending: { previewId: recoveredPreviewId },
+      }),
+    ]);
+    await assertRejects(
+      () => cancelManagedOriginalDeletionPreview(db, owner, recoveredPreviewId),
+      Error,
+      "confirmation already started",
+    );
+    assertEquals(
+      await db.collection("media_original_deletion_previews").countDocuments({
+        _id: recoveredPreviewId,
+        owner,
+      }),
+      1,
+    );
+  }),
+);
+
+Deno.test(
+  "missing-reservation original confirm and cancel still linearize",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const owner = "missing-reservation-confirm-cancel-owner";
+    const assetId = new ObjectId();
+    const originalId = new ObjectId();
+    const previewFileId = new ObjectId();
+    const deletionPreviewId = new ObjectId();
+    const runId = "missing-reservation-confirm-cancel-run";
+    const sha256 = "c".repeat(64);
+    const now = new Date();
+    await Promise.all([
+      storeCanonicalFile(db, "media_originals", originalId, assetId),
+      storeCanonicalFile(db, "media_previews", previewFileId, assetId),
+      db.collection("media_analysis_runs").insertOne({
+        _id: runId,
+        assetId,
+        state: "ready",
+      }),
+    ]);
+    await db.collection("media_assets").insertOne({
+      _id: assetId,
+      owner,
+      kind: "image",
+      status: "staged",
+      storageMode: "managed_original",
+      sha256,
+      byteLength: 23,
+      managedOriginal: { bucket: "media_originals", fileId: originalId },
+      preview: { fileId: previewFileId },
+      currentRunId: runId,
+    });
+    const claimId = `managed-original:${deletionPreviewId}`;
+    await db.collection("media_original_deletion_previews").insertOne({
+      _id: deletionPreviewId,
+      owner,
+      assetId,
+      expectedFileId: originalId,
+      expectedSha256: sha256,
+      expectedStorageMode: "managed_original",
+      expectedPreviewFileId: previewFileId,
+      expectedRunId: runId,
+      reservationClaimId: claimId,
+      byteLength: 23,
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+
+    const [confirmation, cancellation] = await Promise.allSettled([
+      confirmManagedOriginalDeletion(db, owner, deletionPreviewId, now),
+      cancelManagedOriginalDeletionPreview(db, owner, deletionPreviewId),
+    ]);
+    assertEquals(
+      (confirmation.status === "fulfilled") !==
+        (cancellation.status === "fulfilled"),
+      true,
+    );
+    const originalExists = Boolean(
+      await db.collection("media_originals.files").findOne({
+        _id: originalId,
+      }),
+    );
+    if (confirmation.status === "fulfilled") {
+      assertEquals(originalExists, false);
+      assertEquals(
+        (await db.collection("media_assets").findOne({ _id: assetId }))
+          ?.storageMode,
+        "preview_only",
+      );
+    } else {
+      assertEquals(originalExists, true);
+      assertEquals(
+        await db.collection("media_original_deletion_previews")
+          .countDocuments({ _id: deletionPreviewId, owner }),
+        0,
+      );
+    }
+  }),
+);
+
+Deno.test(
+  "legacy recognition queue requires exact owner, retryable state, preview, and original",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const owner = "legacy-retry-eligibility-owner";
+    const asset = {
+      _id: new ObjectId(),
+      owner,
+      kind: "image",
+      sha256: "b".repeat(64),
+      status: "staged",
+      storageMode: "preview_only",
+      preview: { fileId: new ObjectId() },
+    };
+    await db.collection("media_assets").insertOne(asset);
+    assertEquals(
+      await claimMediaAssetForRecognitionQueue(db, owner, asset),
+      null,
+    );
+    await db.collection("media_assets").updateOne(
+      { _id: asset._id },
+      {
+        $set: {
+          storageMode: "managed_original",
+          managedOriginal: { fileId: new ObjectId() },
+        },
+      },
+    );
+    assertEquals(
+      await claimMediaAssetForRecognitionQueue(db, "another-owner", asset),
+      null,
+    );
+    const queued = await claimMediaAssetForRecognitionQueue(db, owner, asset);
+    assertEquals(queued?.status, "queued");
+    assertEquals(
+      await claimMediaAssetForRecognitionQueue(db, owner, asset),
+      null,
+    );
+
+    const missingPreview = {
+      ...asset,
+      _id: new ObjectId(),
+      status: "failed",
+      storageMode: "external_reference",
+      source: { relativePath: "missing-preview.jpg" },
+      preview: undefined,
+    };
+    await db.collection("media_assets").insertOne(missingPreview);
+    assertEquals(
+      await claimMediaAssetForRecognitionQueue(db, owner, missingPreview),
+      null,
+    );
+  }),
+);
+
+Deno.test(
+  "legacy recognition queue and derived deletion claims are mutually exclusive",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const owner = "legacy-retry-derived-race-owner";
+    for (let index = 0; index < 20; index += 1) {
+      const assetId = new ObjectId();
+      const asset = {
+        _id: assetId,
+        owner,
+        kind: "image",
+        sha256: String(index).padStart(64, "0"),
+        status: "staged",
+        storageMode: "managed_original",
+        managedOriginal: { fileId: new ObjectId() },
+        preview: { fileId: new ObjectId() },
+      };
+      await db.collection("media_assets").insertOne(asset);
+      const deletionClaimId = `derived-race-${index}`;
+      const deletionExpiresAt = new Date(Date.now() + 60_000);
+      await claimMediaDeletionReservation(db, {
+        owner,
+        assetId,
+        target: "previews",
+        claimId: deletionClaimId,
+        expiresAt: deletionExpiresAt,
+      });
+      const [queued, deleting] = await Promise.all([
+        claimMediaAssetForRecognitionQueue(db, owner, asset),
+        claimMediaDerivedDeletionState(db, {
+          owner,
+          assetId,
+          target: "previews",
+          claimId: deletionClaimId,
+          expiresAt: deletionExpiresAt,
+        }),
+      ]);
+      assertEquals(Boolean(queued) !== Boolean(deleting), true);
+      if (queued) {
+        assertEquals(queued.status, "queued");
+        assertEquals(
+          await claimMediaDerivedDeletionState(db, {
+            owner,
+            assetId,
+            target: "previews",
+            claimId: deletionClaimId,
+            expiresAt: deletionExpiresAt,
+          }),
+          null,
+        );
+        assertEquals(
+          (await claimMediaAssetForRecognitionProcessing(
+            db,
+            owner,
+            queued,
+          ))?.status,
+          "processing",
+        );
+      } else {
+        assertEquals(
+          await claimMediaAssetForRecognitionProcessing(db, owner, asset),
+          null,
+        );
+      }
+      await releaseMediaDeletionReservation(db, {
+        owner,
+        assetId,
+        target: "previews",
+        claimId: deletionClaimId,
+        states: ["deleting"],
+      });
+    }
+  }),
+);
+
+Deno.test(
+  "legacy recognition queue and managed-original confirmation choose one asset state",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const owner = "legacy-retry-original-race-owner";
+    const assetId = new ObjectId();
+    const originalId = new ObjectId();
+    const previewFileId = new ObjectId();
+    const deletionPreviewId = new ObjectId();
+    const runId = "legacy-retry-original-race-run";
+    const sha256 = "a".repeat(64);
+    const now = new Date();
+    await Promise.all([
+      storeCanonicalFile(db, "media_originals", originalId, assetId),
+      storeCanonicalFile(db, "media_previews", previewFileId, assetId),
+      db.collection("media_analysis_runs").insertOne({
+        _id: runId,
+        assetId,
+        state: "ready",
+      }),
+    ]);
+    const asset = {
+      _id: assetId,
+      owner,
+      kind: "image",
+      status: "staged",
+      storageMode: "managed_original",
+      sha256,
+      byteLength: 23,
+      managedOriginal: { bucket: "media_originals", fileId: originalId },
+      preview: { fileId: previewFileId },
+      currentRunId: runId,
+    };
+    await db.collection("media_assets").insertOne(asset);
+    const claimId = `managed-original:${deletionPreviewId}`;
+    await db.collection("media_original_deletion_previews").insertOne({
+      _id: deletionPreviewId,
+      owner,
+      assetId,
+      expectedFileId: originalId,
+      expectedSha256: sha256,
+      expectedStorageMode: "managed_original",
+      expectedPreviewFileId: previewFileId,
+      expectedRunId: runId,
+      reservationClaimId: claimId,
+      byteLength: 23,
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    await claimMediaDeletionReservation(db, {
+      owner,
+      assetId,
+      target: "managed_original",
+      claimId,
+      deletionPreviewId,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+
+    const [confirmation, queued] = await Promise.allSettled([
+      confirmManagedOriginalDeletion(db, owner, deletionPreviewId, now),
+      claimMediaAssetForRecognitionQueue(db, owner, asset),
+    ]);
+    const confirmationWon = confirmation.status === "fulfilled";
+    const queueWon = queued.status === "fulfilled" && Boolean(queued.value);
+    assertEquals(confirmationWon !== queueWon, true);
+    const durable = await db.collection("media_assets").findOne({
+      _id: assetId,
+    });
+    if (confirmationWon) {
+      assertEquals(durable?.storageMode, "preview_only");
+      assertEquals(durable?.managedOriginal, undefined);
+    } else {
+      assertEquals(durable?.status, "queued");
+      assertEquals(
+        Boolean(
+          await db.collection("media_originals.files").findOne({
+            _id: originalId,
+          }),
+        ),
+        true,
+      );
+    }
   }),
 );

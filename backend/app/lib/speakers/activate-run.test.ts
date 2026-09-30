@@ -14,7 +14,7 @@ const MARCH_END = new Date("2024-03-02T00:00:00.000Z");
  */
 Deno.test(
   "activation supersedes legacy segments recorded after the legacy run's range",
-  withFixtures(["Admin", "Mongo"], async (auth: Auth) => {
+  withFixtures(["Admin", "Mongo", "Migrations"], async (auth: Auth) => {
     const mongo = await getMongoResource(auth);
     await mongo({
       action: "insertMany",
@@ -77,7 +77,7 @@ Deno.test(
 
 Deno.test(
   "a run that keeps active segments outside the window is only partially superseded",
-  withFixtures(["Admin", "Mongo"], async (auth: Auth) => {
+  withFixtures(["Admin", "Mongo", "Migrations"], async (auth: Auth) => {
     const mongo = await getMongoResource(auth);
     await mongo({
       action: "insertMany",
@@ -150,7 +150,7 @@ Deno.test(
 
 Deno.test(
   "overlapping run activations are serialized so only one target remains active",
-  withFixtures(["Admin", "Mongo"], async (auth: Auth) => {
+  withFixtures(["Admin", "Mongo", "Migrations"], async (auth: Auth) => {
     const mongo = await getMongoResource(auth);
     await mongo({
       action: "insertMany",

@@ -52,12 +52,12 @@ const capability: JobCapability = {
       throw new Error("Media folder worker resource context is missing");
     }
     let totalProcessed = 0;
-    let lastResult: Record<string, any> = { success: true, idle: true };
+    let lastPublishedAt = 0;
     // One durable BullMQ job owns the visible campaign progress. The backend
     // still commits only 25 files per request, so a restart resumes safely from
     // Mongo without creating a long HTTP request or a chain of user-visible
     // continuation jobs.
-    for (let chunk = 0; chunk < 1_000; chunk += 1) {
+    while (true) {
       const result = await callResource("media-library", {
         action: "processFolderCampaign",
         ...(typeof job.data.campaignId === "string"
@@ -65,13 +65,16 @@ const capability: JobCapability = {
           : {}),
         jobId: job.id,
       }, { jwt, myceliaUrl }) as Record<string, any>;
-      lastResult = result;
       const processed = Number(result.processed ?? 0);
       if (Number.isFinite(processed) && processed > 0) {
         totalProcessed += processed;
       }
-      if (result.progress && typeof result.progress === "object") {
+      if (
+        result.progress && typeof result.progress === "object" &&
+        (Date.now() - lastPublishedAt >= 2_000 || result.hasMore !== true)
+      ) {
         await job.updateProgress(result.progress);
+        lastPublishedAt = Date.now();
       }
       if (result.hasMore !== true) {
         return { ...result, processed: totalProcessed, hasMore: false };
@@ -88,12 +91,6 @@ const capability: JobCapability = {
         };
       }
     }
-    return {
-      ...lastResult,
-      processed: totalProcessed,
-      hasMore: false,
-      waitingForRecovery: true,
-    };
   },
 };
 

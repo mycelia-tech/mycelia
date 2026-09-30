@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import {
+  MemoryRouter,
+  type NavigateFunction,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import * as userEventLib from "@testing-library/user-event";
 import * as api from "@/lib/api";
 import MediaPage from "./MediaPage";
@@ -26,6 +31,52 @@ vi.mock("@/components/media/MediaEventsPanel", () => ({
     <div data-testid="event-candidates">{candidateAssetIds.join(",")}</div>
   ),
 }));
+vi.mock("@/components/ui/dialog", async () => {
+  const React = await import("react");
+  const OpenChangeContext = React.createContext<(open: boolean) => void>(
+    () => {},
+  );
+  return {
+    Dialog: ({ children, onOpenChange, open }: any) =>
+      open
+        ? (
+          <OpenChangeContext.Provider value={onOpenChange}>
+            {children}
+          </OpenChangeContext.Provider>
+        )
+        : null,
+    DialogContent: ({ children, className }: any) => {
+      const onOpenChange = React.useContext(OpenChangeContext);
+      return (
+        <div
+          aria-labelledby="media-page-test-dialog-title"
+          className={className}
+          role="dialog"
+        >
+          {children}
+          <button
+            aria-label="Close"
+            onClick={() => onOpenChange(false)}
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+      );
+    },
+    DialogDescription: ({ children, className }: any) => (
+      <p className={className}>{children}</p>
+    ),
+    DialogHeader: ({ children, className }: any) => (
+      <div className={className}>{children}</div>
+    ),
+    DialogTitle: ({ children, className }: any) => (
+      <h2 className={className} id="media-page-test-dialog-title">
+        {children}
+      </h2>
+    ),
+  };
+});
 
 const mockCallResource = vi.mocked(api.callResource);
 const mockPostForm = vi.mocked(api.apiClient.postForm);
@@ -68,21 +119,42 @@ function defaultResourceResponse(input: any) {
 }
 
 function renderMediaPage(initialEntry = "/media") {
-  return render(
+  const navigation: { current?: NavigateFunction } = {};
+  const rendered = render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <MediaPage />
-      <LocationProbe />
+      <LocationProbe navigation={navigation} />
     </MemoryRouter>,
   );
+  return {
+    ...rendered,
+    navigate: (to: string) => {
+      if (!navigation.current) throw new Error("Router is not ready");
+      navigation.current(to, { replace: true });
+    },
+  };
 }
 
-function LocationProbe() {
+function LocationProbe(
+  { navigation }: { navigation: { current?: NavigateFunction } },
+) {
   const location = useLocation();
+  navigation.current = useNavigate();
   return (
     <output data-testid="media-location">
       {location.pathname + location.search}
     </output>
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("MediaPage consolidated library", () => {
@@ -96,8 +168,9 @@ describe("MediaPage consolidated library", () => {
   it("shows one mounted-folder picker and routes recognition to analysis", async () => {
     renderMediaPage();
 
-    expect(await screen.findByText("Mounted folder browser")).toBeTruthy();
-    expect(screen.getAllByText("Mounted folder browser")).toHaveLength(1);
+    expect(await screen.findByText("Folder sync")).toBeTruthy();
+    expect(screen.getAllByText("Folder sync")).toHaveLength(1);
+    expect(screen.queryByText("Mounted folders")).toBeNull();
     expect(screen.queryByLabelText("Relative folder or file path")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Analyze mounted path" }),
@@ -116,6 +189,73 @@ describe("MediaPage consolidated library", () => {
     expect(
       (screen.getByLabelText("Choose files") as HTMLInputElement).disabled,
     ).toBe(false);
+  });
+
+  it("offers a sortable table and sends all matching photos to processing", async () => {
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [baseAsset], total: 801 });
+      }
+      return defaultResourceResponse(input);
+    });
+    const user = userEvent.setup();
+    renderMediaPage("/media?view=table");
+
+    expect(await screen.findByRole("table")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Photo" }));
+    await waitFor(() =>
+      expect(mockCallResource).toHaveBeenCalledWith(
+        "media",
+        expect.objectContaining({
+          action: "listAssets",
+          sortBy: "fileName",
+          sortDirection: "asc",
+        }),
+      )
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Select all matching (801)" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Process selection" }),
+    );
+    expect(screen.getByTestId("media-location").textContent).toBe(
+      "/media/analysis?view=table&selection=all",
+    );
+  });
+
+  it("can ignore an explicit processing selection without deleting it", async () => {
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [baseAsset], total: 1 });
+      }
+      if (input.action === "setRecognitionIgnored") {
+        return Promise.resolve({ success: true, updated: 1 });
+      }
+      return defaultResourceResponse(input);
+    });
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderMediaPage();
+
+    await user.click(await screen.findByLabelText("Select photo.jpg"));
+    await user.click(
+      screen.getByRole("button", { name: "Ignore for processing" }),
+    );
+    await waitFor(() =>
+      expect(mockCallResource).toHaveBeenCalledWith("media-library", {
+        action: "setRecognitionIgnored",
+        selection: {
+          mode: "explicit",
+          inventoryFilter: "all",
+          placement: "all",
+          assetIds: ["asset-1"],
+        },
+        ignored: true,
+        confirm: true,
+      })
+    );
+    confirm.mockRestore();
   });
 
   it("uploads locally and refreshes the gallery after confirmation", async () => {
@@ -204,9 +344,15 @@ describe("MediaPage consolidated library", () => {
     renderMediaPage();
 
     await screen.findByText("No media matches these filters.");
-    await user.click(screen.getByRole("button", { name: "Ready" }));
+    await user.selectOptions(
+      screen.getByLabelText("Processing status"),
+      "ready",
+    );
     await waitFor(() => expect(resolveReady).toBeTypeOf("function"));
-    await user.click(screen.getByRole("button", { name: "Unprocessed" }));
+    await user.selectOptions(
+      screen.getByLabelText("Processing status"),
+      "unprocessed",
+    );
     await waitFor(() => expect(resolveUnprocessed).toBeTypeOf("function"));
 
     await act(async () => {
@@ -294,6 +440,8 @@ describe("MediaPage consolidated library", () => {
       inventoryFilter: "all",
       placement: "all",
       cursor: "cursor-2",
+      sortBy: "createdAt",
+      sortDirection: "desc",
     });
   });
 
@@ -304,7 +452,11 @@ describe("MediaPage consolidated library", () => {
       }
       if (input.action === "getAsset") {
         return Promise.resolve({
-          asset: baseAsset,
+          asset: {
+            ...baseAsset,
+            capturedAt: "2024-04-05T12:00:00.000Z",
+            location: { latitude: 41.7, longitude: -8.1 },
+          },
           pages: [],
           annotations: [],
           runs: [],
@@ -316,7 +468,7 @@ describe("MediaPage consolidated library", () => {
     renderMediaPage();
 
     await user.click(
-      await screen.findByLabelText("Select photo.jpg for photo event"),
+      await screen.findByLabelText("Select photo.jpg"),
     );
     expect(screen.getByTestId("event-candidates").textContent).toContain(
       "asset-1",
@@ -326,16 +478,78 @@ describe("MediaPage consolidated library", () => {
     const dialog = await screen.findByRole("dialog", { name: "photo.jpg" });
     expect(dialog).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: "Open in Photo analysis" }).getAttribute(
+      screen.getByRole("link", { name: "Get description" }).getAttribute(
+        "href",
+      ),
+    ).toBe("/media/analysis?assetId=asset-1&select=1");
+    expect(
+      screen.getByRole("link", { name: "Show on Map" }).getAttribute("href"),
+    ).toBe("/map?photoAssetId=asset-1");
+    expect(
+      screen.getByRole("link", { name: "Show on Timeline" }).getAttribute(
+        "href",
+      ),
+    ).toBe("/timeline?photoAssetId=asset-1");
+    expect(
+      screen.queryByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Storage & deletion…" }),
+    );
+    expect(
+      (screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      screen.getByText(
+        /Mounted originals remain read-only/i,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Manual Timeline / Map placement")).toBeTruthy();
+  });
+
+  it("keeps general analysis but hides photo-only actions for a PDF", async () => {
+    const pdfAsset = {
+      ...baseAsset,
+      fileName: "document.pdf",
+      kind: "pdf",
+    };
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [pdfAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: pdfAsset,
+          pages: [],
+          annotations: [],
+          runs: [],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    renderMediaPage("/media?assetId=asset-1");
+
+    expect(
+      await screen.findByRole("dialog", { name: "document.pdf" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("link", { name: "Get description" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Open in Photo analysis" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open in Analysis" }).getAttribute(
         "href",
       ),
     ).toBe("/media/analysis?assetId=asset-1");
-    expect(
-      (screen.getByRole("button", {
-        name: "Review original deletion",
-      }) as HTMLButtonElement).disabled,
-    ).toBe(false);
-    expect(screen.getByText("Manual Timeline / Map placement")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Show on Map" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Show on Timeline" })).toBeNull();
   });
 
   it("preserves assetId deep links in the same dialog viewer", async () => {
@@ -362,16 +576,11 @@ describe("MediaPage consolidated library", () => {
     ).toBeTruthy();
     expect(screen.getByLabelText("Provider analysis status").textContent)
       .toContain("Not processed");
-    expect(
-      screen.getByText(
-        /No stored Google Cloud or self-hosted analysis run or result/i,
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(/Local preview and metadata only/i)).toBeTruthy();
     expect(mockCallResource).toHaveBeenCalledWith("media", {
       action: "getAsset",
       assetId: "asset-1",
     });
-
     await user.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "photo.jpg" })).toBeNull()
@@ -449,10 +658,654 @@ describe("MediaPage consolidated library", () => {
     expect(providerStatus.textContent).toContain(
       "Google Cloud EU Photo Knowledge",
     );
-    expect(providerStatus.textContent).toContain(
-      "Visual description: available",
+    expect(providerStatus.textContent).toContain("description available");
+    expect(providerStatus.textContent).toContain("OCR 1");
+    expect(
+      screen.getByRole("link", {
+        name: "Open in Photo analysis",
+      }).getAttribute("href"),
+    ).toBe("/media/analysis?assetId=asset-1");
+    expect(screen.queryByRole("link", { name: "Get description" })).toBeNull();
+  });
+
+  it("opens ready OCR-only photos as analysis history instead of promising a description", async () => {
+    const readyOcrAsset = {
+      ...baseAsset,
+      status: "ready",
+      currentRunId: "run-ocr",
+    };
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [readyOcrAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: readyOcrAsset,
+          pages: [{ _id: "page-1", pageNumber: 1, text: "Receipt" }],
+          annotations: [],
+          runs: [{ _id: "run-ocr", state: "ready" }],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    renderMediaPage("/media?assetId=asset-1");
+
+    expect(
+      (await screen.findByRole("link", {
+        name: "Open in Photo analysis",
+      })).getAttribute("href"),
+    ).toBe("/media/analysis?assetId=asset-1");
+    expect(screen.queryByRole("link", { name: "Get description" })).toBeNull();
+  });
+
+  it("does not promise a description when a staged photo has no retained original", async () => {
+    const previewOnlyAsset = {
+      ...baseAsset,
+      storageMode: "preview_only",
+      managedOriginal: undefined,
+    };
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [previewOnlyAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: previewOnlyAsset,
+          pages: [],
+          annotations: [],
+          runs: [],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    renderMediaPage("/media?assetId=asset-1");
+
+    expect(
+      (await screen.findByRole("link", {
+        name: "Open in Photo analysis",
+      })).getAttribute("href"),
+    ).toBe("/media/analysis?assetId=asset-1");
+    expect(screen.queryByRole("link", { name: "Get description" })).toBeNull();
+  });
+
+  it("explains mounted storage behind one storage and deletion entrypoint", async () => {
+    const mountedAsset = {
+      ...baseAsset,
+      storageMode: "external_reference",
+      managedOriginal: undefined,
+      source: { relativePath: "900-photos/trip/photo.jpg" },
+    };
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [mountedAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: mountedAsset,
+          pages: [],
+          annotations: [],
+          runs: [],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    const user = userEvent.setup();
+    renderMediaPage("/media?assetId=asset-1");
+
+    expect(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: "Forget mounted original reference",
+      }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Storage & deletion…" }),
     );
-    expect(providerStatus.textContent).toContain("OCR pages: 1");
+
+    expect(
+      screen.getByRole("button", { name: "Remove from Mycelia" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/original file in the mounted folder is never deleted/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/later folder sync can import it again/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Remove from Mycelia",
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", {
+      name: "Delete Mycelia previews",
+    })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    ).toBeNull();
+
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    await user.click(
+      screen.getByRole("button", { name: "Remove from Mycelia" }),
+    );
+    await waitFor(() =>
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "deleteDerived",
+        assetId: "asset-1",
+        target: "asset_record",
+        confirm: true,
+      })
+    );
+    confirm.mockRestore();
+  });
+
+  it("locks every storage mutation while recognition reserves the asset", async () => {
+    const reservedAsset = {
+      ...baseAsset,
+      storageMode: "external_reference",
+      managedOriginal: undefined,
+      source: { relativePath: "900-photos/private.jpg" },
+    };
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [reservedAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: reservedAsset,
+          recognitionReservation: {
+            state: "active",
+            batchId: "batch-1",
+            batch: {
+              status: "running",
+              profileName: "Google Cloud EU Photo Knowledge",
+            },
+          },
+          pages: [],
+          annotations: [],
+          runs: [{ _id: "run-1", state: "failed" }],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    const user = userEvent.setup();
+    renderMediaPage("/media?assetId=asset-1");
+    await user.click(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+
+    expect(
+      screen.getByText("Storage changes are temporarily locked"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Current state: running · active/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", {
+        name: "View active batch and stop new calls",
+      }).getAttribute("href"),
+    ).toBe("/media/analysis");
+    expect(
+      (screen.getByRole("button", {
+        name: "Remove from Mycelia",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await user.click(screen.getByText("Advanced: reset provider analysis"));
+    expect(
+      (screen.getByRole("button", {
+        name: "Reset derived analysis",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      mockCallResource.mock.calls.some(([, input]) =>
+        input.action === "deleteDerived" ||
+        input.action === "previewOriginalDeletion"
+      ),
+    ).toBe(false);
+  });
+
+  it("locks managed-original review while recognition reserves the asset", async () => {
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [baseAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: baseAsset,
+          recognitionReservation: {
+            state: "active",
+            batchId: "batch-1",
+            batch: { status: "running" },
+          },
+          pages: [],
+          annotations: [],
+          runs: [{ _id: "run-1", state: "ready" }],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    const user = userEvent.setup();
+    renderMediaPage("/media?assetId=asset-1");
+    await user.click(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+
+    expect(
+      (screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      mockCallResource.mock.calls.some(([, input]) =>
+        input.action === "previewOriginalDeletion"
+      ),
+    ).toBe(false);
+  });
+
+  it("distinguishes a forgotten mounted reference from a deleted managed original", async () => {
+    const forgottenReferenceAsset = {
+      ...baseAsset,
+      storageMode: "preview_only",
+      managedOriginal: undefined,
+      source: undefined,
+      sourceReferenceForgottenAt: "2026-08-26T03:00:00.000Z",
+      originalDeletionReceipt: undefined,
+    };
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [forgottenReferenceAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: forgottenReferenceAsset,
+          pages: [],
+          annotations: [],
+          runs: [],
+        });
+      }
+      return defaultResourceResponse(input);
+    });
+
+    renderMediaPage("/media?assetId=asset-1");
+
+    expect(
+      await screen.findByText(/mounted original reference was forgotten/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/preview_only · no retained original/i))
+      .toBeTruthy();
+    expect(screen.getByText(/mounted file was not deleted/i)).toBeTruthy();
+    expect(
+      screen.queryByText(/Mycelia-managed original was permanently deleted/i),
+    ).toBeNull();
+  });
+
+  it("discards a late deletion preview after switching from asset A to B", async () => {
+    const assetA = { ...baseAsset, _id: "asset-a", fileName: "a.jpg" };
+    const assetB = { ...baseAsset, _id: "asset-b", fileName: "b.jpg" };
+    const pendingPreview = deferred<any>();
+    const pendingCancellation = deferred<{ success: true }>();
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [assetA, assetB], total: 2 });
+      }
+      if (input.action === "getAsset") {
+        const asset = input.assetId === "asset-a" ? assetA : assetB;
+        return Promise.resolve({
+          asset,
+          pages: [],
+          annotations: [],
+          runs: [{ _id: `run-${asset._id}`, state: "ready" }],
+        });
+      }
+      if (
+        input.action === "previewOriginalDeletion" &&
+        input.assetId === "asset-a"
+      ) {
+        return pendingPreview.promise;
+      }
+      if (input.action === "cancelOriginalDeletionPreview") {
+        return pendingCancellation.promise;
+      }
+      return defaultResourceResponse(input);
+    });
+    const user = userEvent.setup();
+    const page = renderMediaPage("/media?assetId=asset-a");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    );
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "previewOriginalDeletion",
+        assetId: "asset-a",
+      });
+    });
+
+    act(() => page.navigate("/media?assetId=asset-b"));
+    expect(await screen.findByRole("dialog", { name: "b.jpg" })).toBeTruthy();
+
+    await act(async () => {
+      pendingPreview.resolve({
+        assetId: "asset-a",
+        canDelete: true,
+        deletionPreviewId: "preview-a",
+        previewReady: true,
+        analysisReady: true,
+      });
+      await pendingPreview.promise;
+    });
+
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "cancelOriginalDeletionPreview",
+        deletionPreviewId: "preview-a",
+      });
+    });
+    act(() => page.navigate("/media?assetId=asset-a"));
+    await waitFor(() => {
+      expect(
+        mockCallResource.mock.calls.filter(([, input]) =>
+          input.action === "getAsset" && input.assetId === "asset-a"
+        ),
+      ).toHaveLength(2);
+    });
+    expect(await screen.findByRole("dialog", { name: "a.jpg" })).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Storage & deletion…" }),
+    );
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", {
+          name: "Review managed original deletion",
+        }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    });
+    await act(async () => {
+      pendingCancellation.resolve({ success: true });
+      await pendingCancellation.promise;
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", {
+          name: "Review managed original deletion",
+        }) as HTMLButtonElement).disabled,
+      ).toBe(false);
+    });
+    expect(
+      mockCallResource.mock.calls.some(([, input]) =>
+        input.action === "confirmOriginalDeletion"
+      ),
+    ).toBe(false);
+  });
+
+  it("discards a late deletion preview after closing the asset", async () => {
+    const assetA = { ...baseAsset, _id: "asset-a", fileName: "a.jpg" };
+    const pendingPreview = deferred<any>();
+    const pendingCancellation = deferred<{ success: true }>();
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [assetA], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: assetA,
+          pages: [],
+          annotations: [],
+          runs: [{ _id: "run-a", state: "ready" }],
+        });
+      }
+      if (input.action === "previewOriginalDeletion") {
+        return pendingPreview.promise;
+      }
+      if (input.action === "cancelOriginalDeletionPreview") {
+        return pendingCancellation.promise;
+      }
+      return defaultResourceResponse(input);
+    });
+    const user = userEvent.setup();
+    const page = renderMediaPage("/media?assetId=asset-a");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    );
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "previewOriginalDeletion",
+        assetId: "asset-a",
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Close details" }));
+
+    await act(async () => {
+      pendingPreview.resolve({
+        assetId: "asset-a",
+        canDelete: true,
+        deletionPreviewId: "preview-a",
+        previewReady: true,
+        analysisReady: true,
+      });
+      await pendingPreview.promise;
+    });
+
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "cancelOriginalDeletionPreview",
+        deletionPreviewId: "preview-a",
+      });
+    });
+    await act(async () => {
+      pendingCancellation.resolve({ success: true });
+      await pendingCancellation.promise;
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("media-location").textContent).toBe("/media");
+    });
+    expect(screen.queryByRole("dialog", { name: "a.jpg" })).toBeNull();
+    act(() => page.navigate("/media?assetId=asset-a"));
+    await waitFor(() => {
+      expect(
+        mockCallResource.mock.calls.filter(([, input]) =>
+          input.action === "getAsset" && input.assetId === "asset-a"
+        ),
+      ).toHaveLength(2);
+    });
+    expect(await screen.findByRole("dialog", { name: "a.jpg" })).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Storage & deletion…" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Storage & deletion…" })
+          .getAttribute("aria-expanded"),
+      ).toBe("true");
+    });
+    expect(screen.queryByText("Original deletion preview")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Permanently delete managed original",
+      }),
+    ).toBeNull();
+    expect(
+      (screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("releases a displayed deletion review on close before allowing another review", async () => {
+    const assetA = { ...baseAsset, _id: "asset-a", fileName: "a.jpg" };
+    const pendingCancellation = deferred<{ success: true }>();
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [assetA], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: assetA,
+          pages: [],
+          annotations: [],
+          runs: [{ _id: "run-a", state: "ready" }],
+        });
+      }
+      if (input.action === "previewOriginalDeletion") {
+        return Promise.resolve({
+          assetId: "asset-a",
+          canDelete: true,
+          deletionPreviewId: "preview-a",
+          previewReady: true,
+          analysisReady: true,
+        });
+      }
+      if (input.action === "cancelOriginalDeletionPreview") {
+        return pendingCancellation.promise;
+      }
+      return defaultResourceResponse(input);
+    });
+    const user = userEvent.setup();
+    const page = renderMediaPage("/media?assetId=asset-a");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: "Permanently delete managed original",
+      }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Close details" }));
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "cancelOriginalDeletionPreview",
+        deletionPreviewId: "preview-a",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("media-location").textContent).toBe("/media");
+      expect(screen.queryByRole("dialog", { name: "a.jpg" })).toBeNull();
+    });
+    act(() => page.navigate("/media?assetId=asset-a"));
+    await waitFor(() => {
+      expect(
+        mockCallResource.mock.calls.filter(([, input]) =>
+          input.action === "getAsset" && input.assetId === "asset-a"
+        ),
+      ).toHaveLength(2);
+    });
+    expect(await screen.findByRole("dialog", { name: "a.jpg" })).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Storage & deletion…" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Storage & deletion…" })
+          .getAttribute("aria-expanded"),
+      ).toBe("true");
+      expect(
+        (screen.getByRole("button", {
+          name: "Review managed original deletion",
+        }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Permanently delete managed original",
+      }),
+    ).toBeNull();
+
+    await act(async () => {
+      pendingCancellation.resolve({ success: true });
+      await pendingCancellation.promise;
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", {
+          name: "Review managed original deletion",
+        }) as HTMLButtonElement).disabled,
+      ).toBe(false);
+    });
+  });
+
+  it("keeps a managed-original review open when cancellation fails", async () => {
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listAssets") {
+        return Promise.resolve({ assets: [baseAsset], total: 1 });
+      }
+      if (input.action === "getAsset") {
+        return Promise.resolve({
+          asset: baseAsset,
+          pages: [],
+          annotations: [],
+          runs: [{ _id: "run-1", state: "ready" }],
+        });
+      }
+      if (input.action === "previewOriginalDeletion") {
+        return Promise.resolve({
+          canDelete: true,
+          deletionPreviewId: "deletion-preview-1",
+          byteLength: baseAsset.byteLength,
+          previewReady: true,
+          analysisReady: true,
+        });
+      }
+      if (input.action === "cancelOriginalDeletionPreview") {
+        return Promise.reject(new Error("Cancellation could not be saved"));
+      }
+      return defaultResourceResponse(input);
+    });
+    const user = userEvent.setup();
+    renderMediaPage("/media?assetId=asset-1");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Cancel original deletion review",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "cancelOriginalDeletionPreview",
+        deletionPreviewId: "deletion-preview-1",
+      });
+    });
+    expect(
+      screen.getByRole("button", {
+        name: "Permanently delete managed original",
+      }),
+    ).toBeTruthy();
   });
 
   it("keeps the preview-and-confirm guard for managed-original deletion", async () => {
@@ -462,6 +1315,9 @@ describe("MediaPage consolidated library", () => {
         ...baseAsset,
         storageMode: deleted ? "preview_only" : "managed_original",
         managedOriginal: deleted ? undefined : baseAsset.managedOriginal,
+        originalDeletionReceipt: deleted
+          ? { receiptId: "receipt-1", deletedAt: new Date().toISOString() }
+          : undefined,
       };
       if (input.action === "listAssets") {
         return Promise.resolve({ assets: [currentAsset], total: 1 });
@@ -496,12 +1352,38 @@ describe("MediaPage consolidated library", () => {
       await screen.findByRole("button", { name: "Open photo.jpg" }),
     );
     await user.click(
-      await screen.findByRole("button", { name: "Review original deletion" }),
+      await screen.findByRole("button", { name: "Storage & deletion…" }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Review managed original deletion",
+      }),
     );
     expect(mockCallResource).toHaveBeenCalledWith("media", {
       action: "previewOriginalDeletion",
       assetId: "asset-1",
     });
+    await user.click(
+      screen.getByRole("button", {
+        name: "Cancel original deletion review",
+      }),
+    );
+    await waitFor(() => {
+      expect(mockCallResource).toHaveBeenCalledWith("media", {
+        action: "cancelOriginalDeletionPreview",
+        deletionPreviewId: "deletion-preview-1",
+      });
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Permanently delete managed original",
+      }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Review managed original deletion",
+      }),
+    );
     await user.click(
       await screen.findByRole("button", {
         name: "Permanently delete managed original",
@@ -515,7 +1397,11 @@ describe("MediaPage consolidated library", () => {
         confirm: true,
       });
     });
-    expect(await screen.findByText(/managed original was deleted/i))
+    expect(
+      await screen.findByText(
+        /Mycelia-managed original was permanently deleted/i,
+      ),
+    )
       .toBeTruthy();
   });
 });

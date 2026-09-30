@@ -21,6 +21,7 @@ import {
   VoiceDetectionTrack,
 } from "./tracks";
 import { PHOTOS_CONFIG, PhotosTrack } from "./tracks/PhotosTrack";
+import type { PhotoTimelineFocus } from "@/lib/photoTimelineDeepLink";
 import { TrackHeader } from "./tracks/TrackHeader";
 import { LOCATIONS_CONFIG, LocationTrack } from "./tracks/LocationTrack";
 import type { TrackId } from "@/types/tracks";
@@ -37,6 +38,8 @@ const AUDIO_LAYER = AudioLayer();
 interface MultiTrackTimelineProps {
   timeline: ReturnType<typeof useTimeline>;
   className?: string;
+  focusedPhoto?: PhotoTimelineFocus;
+  onFocusedPhotoDismiss?: () => void;
 }
 
 // Map track IDs to components
@@ -78,6 +81,8 @@ const HISTOGRAM_TRACK_IDS: TrackId[] = [
 export const MultiTrackTimeline = memo(function MultiTrackTimeline({
   timeline,
   className,
+  focusedPhoto,
+  onFocusedPhotoDismiss,
 }: MultiTrackTimelineProps) {
   const { containerRef, width, timeScale, transform } = timeline;
 
@@ -173,6 +178,9 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
                 width={width}
                 height={height}
                 items={items}
+                {...(trackId === "photos"
+                  ? { focusedPhoto, onFocusedPhotoDismiss }
+                  : {})}
               />
             </div>
           );

@@ -122,11 +122,29 @@ export const zMediaAsset = z.object({
   status: zMediaAnalysisStatus,
   currentRunId: z.string().optional(),
   safeError: z.string().optional(),
+  recognitionIgnoredAt: zDateOrString().optional(),
+  recognitionIgnoreReason: z.string().optional(),
   createdAt: zDateOrString(),
   updatedAt: zDateOrString(),
 });
 
 export const zMediaRecognitionProfile = z.discriminatedUnion("providerType", [
+  z.object({
+    id: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+    providerType: z.literal("openai-compatible"),
+    enabled: z.boolean().default(false),
+    concurrency: z.number().int().min(1).max(8).default(1),
+    connectionId: z.string().trim().min(1),
+    model: z.string().trim().min(1).max(240),
+    language: z.string().trim().min(1).max(80).default("Russian"),
+    maxOutputTokens: z.number().int().min(256).max(8192).default(1600),
+    connectionSnapshot: z.object({
+      id: z.string(),
+      baseUrl: z.string(),
+      model: z.string(),
+    }).optional(),
+  }),
   z.object({
     id: z.string().trim().min(1),
     name: z.string().trim().min(1),
@@ -188,7 +206,8 @@ export const zMediaKnowledgeConfig = z.object({
     promotionExpiresAt: z.string().datetime().optional(),
     stopBeforeHours: z.number().int().min(1).max(168).default(72),
     monthlyGrossLimitUsd: z.number().positive().max(300).default(1),
-    dailyGrossLimitUsd: z.number().positive().max(50).default(0.1),
+    // Only an explicit null disables the daily stop; missing values stay guarded.
+    dailyGrossLimitUsd: z.number().positive().max(50).nullable().default(0.1),
     perImportGrossLimitUsd: z.number().positive().max(10).default(0.01),
     creditVerifiedAt: z.string().datetime().optional(),
     creditVerifiedProjectId: z.string().trim().min(1).optional(),

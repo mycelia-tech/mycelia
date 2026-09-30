@@ -65,6 +65,19 @@ Deno.test("folder and recognition campaign schemas reject unbounded invalid stat
   );
 });
 
+Deno.test("folder listing preserves the connected disks scan restriction", () => {
+  const listing = zMediaSourceFolderListing.parse({
+    currentPath: "disks",
+    parentPath: ".",
+    folders: [],
+    scanUnavailableReason: "Choose a disk or a folder before scanning",
+  });
+  assertEquals(
+    listing.scanUnavailableReason,
+    "Choose a disk or a folder before scanning",
+  );
+});
+
 Deno.test("recognition selections normalize filters and require unique explicit IDs", () => {
   assertEquals(
     zMediaRecognitionSelection.parse({ mode: "all_matching" }),

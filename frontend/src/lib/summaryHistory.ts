@@ -1,9 +1,24 @@
 export type SummaryHistoryFilters = {
+  start?: string;
+  end?: string;
   model?: string;
   from?: string;
   to?: string;
   limit?: number;
+  amount?: number;
 };
+
+export function summaryPreview(text: string): string {
+  const section = text.match(
+    /(?:^|\n)#{1,6}\s+(?:summary|резюме|сводка|краткое содержание)\s*\n([\s\S]*?)(?=\n#{1,6}\s|$)/i,
+  );
+  return (section?.[1] ?? text)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^[#>*-]+\s*/gm, "")
+    .replace(/\*\*|__/g, "")
+    .trim()
+    .slice(0, 600);
+}
 
 export type SummaryHistoryEntry = {
   id: string;
@@ -50,6 +65,8 @@ export type SummaryHistoryResult = {
   entries: SummaryHistoryEntry[];
   models: SummaryHistoryModel[];
   total: number;
+  objectCount: number;
+  selectedObjectIds: string[];
 };
 
 export type SummaryTaskStatus =
@@ -115,6 +132,8 @@ export function buildSummaryHistoryPipeline(
 
   if (filters.from) generatedAt.$gte = startOfLocalDay(filters.from);
   if (filters.to) generatedAt.$lte = endOfLocalDay(filters.to);
+  if (filters.start) generatedAt.$gte = new Date(filters.start);
+  if (filters.end) generatedAt.$lt = new Date(filters.end);
   if (Object.keys(generatedAt).length > 0) {
     summaryMatch["summaries.date"] = generatedAt;
   }
@@ -139,8 +158,14 @@ export function buildSummaryHistoryPipeline(
   }
 
   entryPipeline.push(
-    { $sort: { "summaries.date": -1 } },
-    { $limit: Math.min(Math.max(filters.limit ?? 100, 1), 500) },
+    { $sort: { "summaries.date": -1, _id: -1, summaryIndex: -1 } },
+    {
+      $limit: Math.min(
+        Math.max(filters.limit ?? 100, 1),
+        filters.amount ?? 500,
+        500,
+      ),
+    },
     {
       $addFields: {
         summaryJobId: {
@@ -199,14 +224,26 @@ export function buildSummaryHistoryPipeline(
     },
   );
 
-  const countPipeline: Record<string, unknown>[] = [];
+  const selectionPipeline: Record<string, unknown>[] = [];
   if (Object.keys(summaryMatch).length > 0) {
-    countPipeline.push({ $match: summaryMatch });
+    selectionPipeline.push({ $match: summaryMatch });
   }
-  countPipeline.push({ $count: "value" });
+  if (filters.amount != null) {
+    if (
+      !Number.isInteger(filters.amount) || filters.amount < 1 ||
+      filters.amount > 10000
+    ) {
+      throw new Error("Amount must be between 1 and 10,000");
+    }
+    selectionPipeline.push(
+      { $project: { _id: 1, "summaries.date": 1, summaryIndex: 1 } },
+      { $sort: { "summaries.date": -1, _id: -1, summaryIndex: -1 } },
+      { $limit: filters.amount },
+    );
+  }
 
   return [
-    { $match: { "summaries.0": { $exists: true } } },
+    { $match: { isConversation: true, "summaries.0": { $exists: true } } },
     {
       $unwind: {
         path: "$summaries",
@@ -216,7 +253,19 @@ export function buildSummaryHistoryPipeline(
     {
       $facet: {
         entries: entryPipeline,
-        total: countPipeline,
+        total: [...selectionPipeline, { $count: "value" }],
+        objectCount: [...selectionPipeline, { $group: { _id: "$_id" } }, {
+          $count: "value",
+        }],
+        ...(filters.amount != null
+          ? {
+            selectedObjects: [
+              ...selectionPipeline,
+              { $group: { _id: "$_id" } },
+              { $project: { _id: 0, id: { $toString: "$_id" } } },
+            ],
+          }
+          : {}),
         models: [
           {
             $project: {
@@ -260,6 +309,10 @@ export function normalizeSummaryHistoryResult(
     entries: Array.isArray(facet?.entries) ? facet.entries : [],
     models: Array.isArray(facet?.models) ? facet.models : [],
     total: facet?.total?.[0]?.value ?? 0,
+    objectCount: facet?.objectCount?.[0]?.value ?? 0,
+    selectedObjectIds: Array.isArray(facet?.selectedObjects)
+      ? facet.selectedObjects.map((item: { id: string }) => item.id)
+      : [],
   };
 }
 

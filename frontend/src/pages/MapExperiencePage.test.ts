@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import {
+  mapUrlWithoutPhotoFocus,
   normalizeBounds,
   readMapUrlState,
   updateMapUrl,
@@ -11,7 +12,7 @@ describe("map URL state", () => {
     history.replaceState(
       {},
       "",
-      "/map?start=100&end=200&lat=46.948000&lng=7.447400&z=15.25&at=150&layers=routes,conversations",
+      "/map?start=100&end=200&lat=46.948000&lng=7.447400&z=15.25&at=150&layers=routes,conversations&photoAssetId=photo-1",
     );
     const parsed = readMapUrlState();
     expect(parsed.viewport).toEqual({ center: [46.948, 7.4474], zoom: 15.25 });
@@ -24,6 +25,7 @@ describe("map URL state", () => {
     expect(params.get("end")).toBe("200");
     expect(params.get("lat")).toBe("46.948000");
     expect(params.get("layers")).toBe("conversations,routes");
+    expect(params.get("photoAssetId")).toBe("photo-1");
   });
 
   it("normalizes a viewport crossing the antimeridian", () => {
@@ -36,5 +38,26 @@ describe("map URL state", () => {
     const parsed = readMapUrlState();
     expect(parsed.viewport).toBeNull();
     expect([...parsed.layers]).toEqual([]);
+  });
+
+  it("shows photos by default while respecting an explicit layer selection", () => {
+    history.replaceState({}, "", "/map");
+    expect([...readMapUrlState().layers]).toEqual([
+      "presence",
+      "conversations",
+      "routes",
+      "photos",
+    ]);
+
+    history.replaceState({}, "", "/map?layers=routes");
+    expect([...readMapUrlState().layers]).toEqual(["routes"]);
+  });
+
+  it("removes only the focused photo from an exact map URL", () => {
+    expect(
+      mapUrlWithoutPhotoFocus(
+        "http://localhost/map?start=100&end=200&layers=routes,photos&photoAssetId=photo-1#details",
+      ),
+    ).toBe("/map?start=100&end=200&layers=routes%2Cphotos#details");
   });
 });

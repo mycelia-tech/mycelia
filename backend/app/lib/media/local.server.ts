@@ -63,7 +63,12 @@ export function mediaSourceConfigured(): boolean {
 export type MediaSourceFolderListing = {
   currentPath: string;
   parentPath?: string;
-  folders: Array<{ name: string; relativePath: string }>;
+  scanUnavailableReason?: string;
+  folders: Array<{
+    name: string;
+    relativePath: string;
+    unavailableReason?: string;
+  }>;
 };
 
 export function assertSafeMediaRelativePath(relativePath: string): void {
@@ -81,22 +86,89 @@ export function assertSafeMediaRelativePath(relativePath: string): void {
   }
 }
 
-export async function resolveMediaSourcePath(relativePath: string): Promise<{
+function mediaSourceAliases(): Record<string, string> {
+  const aliases = JSON.parse(env.MEDIA_SOURCE_ALIASES);
+  if (!aliases || typeof aliases !== "object" || Array.isArray(aliases)) {
+    throw new Error("MEDIA_SOURCE_ALIASES must be a JSON object");
+  }
+  for (const [name, target] of Object.entries(aliases)) {
+    if (
+      !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name) || typeof target !== "string"
+    ) {
+      throw new Error(
+        "Media source aliases require a simple name and relative path",
+      );
+    }
+    assertSafeMediaRelativePath(target);
+  }
+  return aliases;
+}
+
+function separateSourceNames(): string[] {
+  return [...Object.keys(mediaSourceAliases()), env.MEDIA_SOURCE_DISKS_DIR]
+    .filter(Boolean);
+}
+
+function childMediaPath(parent: string, name: string): string {
+  return parent === "." ? name : `${parent}/${name}`;
+}
+
+export function assertMediaScanSelection(relativePath: string): void {
+  assertSafeMediaRelativePath(relativePath);
+  const normalized = relativePath.split(/[\\/]+/).filter((p) => p && p !== ".")
+    .join("/");
+  if (env.MEDIA_SOURCE_DISKS_DIR && normalized === env.MEDIA_SOURCE_DISKS_DIR) {
+    throw new Error("Choose a disk or a folder before scanning");
+  }
+}
+
+export async function resolveMediaSourcePath(
+  relativePath: string,
+  sourceRoot = env.MEDIA_SOURCE_ROOT,
+): Promise<{
   root: string;
   realPath: string;
   relativePath: string;
 }> {
-  if (!env.MEDIA_SOURCE_ROOT) {
+  if (!sourceRoot) {
     throw new Error("MEDIA_SOURCE_ROOT is not configured");
   }
   assertSafeMediaRelativePath(relativePath);
-  const root = await Deno.realPath(env.MEDIA_SOURCE_ROOT);
-  const candidate = resolve(root, relativePath);
+  const logicalPath = relativePath.split(/[\\/]+/).filter((p) => p && p !== ".")
+    .join("/") || ".";
+  const [first, ...rest] = logicalPath.split("/");
+  const aliases = mediaSourceAliases();
+  const aliasTarget = Object.hasOwn(aliases, first)
+    ? aliases[first]
+    : undefined;
+  const root = await Deno.realPath(sourceRoot);
+  const candidate = resolve(root, aliasTarget ?? first, ...rest);
+  // Reject links even when their destination happens to remain inside the root.
+  let componentPath = root;
+  for (const component of relative(root, candidate).split(SEPARATOR)) {
+    if (!component || component === ".") continue;
+    componentPath = resolve(componentPath, component);
+    let info: Deno.FileInfo;
+    try {
+      info = await Deno.lstat(componentPath);
+    } catch {
+      throw mediaSourceUnavailable(relativePath);
+    }
+    if (info.isSymlink) {
+      throw new Error("Media source symlinks are not allowed");
+    }
+  }
   const realPath = await Deno.realPath(candidate);
   if (realPath !== root && !realPath.startsWith(`${root}${SEPARATOR}`)) {
     throw new Error("Media path escapes the configured source root");
   }
-  return { root, realPath, relativePath: relative(root, realPath) || "." };
+  return { root, realPath, relativePath: logicalPath };
+}
+
+function mediaSourceUnavailable(relativePath: string): Error {
+  return new Error(
+    `Media folder "${relativePath}" is unavailable. Connect the external disk and refresh folders; if it remains unavailable, recreate the backend with the same media mounts.`,
+  );
 }
 
 export async function listMediaSourceFolders(
@@ -105,29 +177,59 @@ export async function listMediaSourceFolders(
 ): Promise<MediaSourceFolderListing> {
   if (!sourceRoot) throw new Error("MEDIA_SOURCE_ROOT is not configured");
   assertSafeMediaRelativePath(relativePath);
-  const root = await Deno.realPath(sourceRoot);
-  const candidate = resolve(root, relativePath);
-  const realPath = await Deno.realPath(candidate);
-  if (realPath !== root && !realPath.startsWith(`${root}${SEPARATOR}`)) {
-    throw new Error("Media path escapes the configured source root");
-  }
+  const { root, realPath, relativePath: currentPath } =
+    await resolveMediaSourcePath(
+      relativePath,
+      sourceRoot,
+    );
   const stat = await Deno.stat(realPath);
   if (!stat.isDirectory) throw new Error("Selected media path is not a folder");
 
   const folders: MediaSourceFolderListing["folders"] = [];
+  const aliases = mediaSourceAliases();
   for await (const entry of Deno.readDir(realPath)) {
     // Deno reports symlinks separately, so isDirectory excludes them. Resolve
     // again as a defense in depth check before exposing a selectable path.
     if (!entry.isDirectory || entry.isSymlink) continue;
-    const childRealPath = await Deno.realPath(resolve(realPath, entry.name));
+    if (currentPath === "." && Object.hasOwn(aliases, entry.name)) continue;
+    let childRealPath: string;
+    try {
+      childRealPath = await Deno.realPath(resolve(realPath, entry.name));
+      await Deno.stat(childRealPath);
+    } catch {
+      folders.push({
+        name: entry.name,
+        relativePath: childMediaPath(currentPath, entry.name),
+        unavailableReason: "Disk unavailable — reconnect and refresh",
+      });
+      continue;
+    }
     if (
       childRealPath !== root &&
       !childRealPath.startsWith(`${root}${SEPARATOR}`)
     ) continue;
     folders.push({
-      name: entry.name,
-      relativePath: relative(root, childRealPath) || ".",
+      name: currentPath === "." && entry.name === env.MEDIA_SOURCE_DISKS_DIR
+        ? "Connected disks"
+        : entry.name,
+      relativePath: childMediaPath(currentPath, entry.name),
     });
+  }
+  if (currentPath === ".") {
+    for (const name of Object.keys(aliases)) {
+      let unavailableReason: string | undefined;
+      try {
+        const target = await resolveMediaSourcePath(name, sourceRoot);
+        if (!(await Deno.stat(target.realPath)).isDirectory) throw new Error();
+      } catch {
+        unavailableReason = "Disk unavailable — reconnect and refresh";
+      }
+      folders.push({
+        name,
+        relativePath: name,
+        ...(unavailableReason ? { unavailableReason } : {}),
+      });
+    }
   }
   folders.sort((left, right) =>
     left.name.localeCompare(right.name, undefined, {
@@ -136,14 +238,71 @@ export async function listMediaSourceFolders(
     })
   );
 
-  const currentPath = relative(root, realPath) || ".";
-  const parentRealPath = dirname(realPath);
   return {
     currentPath,
-    ...(currentPath === "."
-      ? {}
-      : { parentPath: relative(root, parentRealPath) || "." }),
+    ...(currentPath === env.MEDIA_SOURCE_DISKS_DIR
+      ? { scanUnavailableReason: "Choose a disk or a folder before scanning" }
+      : {}),
+    ...(currentPath === "." ? {} : { parentPath: dirname(currentPath) }),
     folders,
+  };
+}
+
+export type MediaDirectoryEntry = {
+  name: string;
+  relativePath: string;
+  kind: "directory" | "image" | "unsupported";
+};
+
+/** A stable name cursor bounds each inventory commit, including very wide folders. */
+export async function readMediaSourceDirectoryPage(
+  relativePath: string,
+  afterName = "",
+  limit = 1_000,
+  sourceRoot = env.MEDIA_SOURCE_ROOT,
+): Promise<{ entries: MediaDirectoryEntry[]; nextAfterName?: string }> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
+    throw new Error("Directory page size must be between 1 and 1000");
+  }
+  assertMediaScanSelection(relativePath);
+  const { realPath, relativePath: currentPath } = await resolveMediaSourcePath(
+    relativePath,
+    sourceRoot,
+  );
+  // Keep only the next page, not an array of the entire library or directory.
+  const excludedSources = currentPath === "." ? separateSourceNames() : [];
+  let entries: MediaDirectoryEntry[] = [];
+  const trim = () => {
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    entries = entries.slice(0, limit + 1);
+  };
+  try {
+    for await (const entry of Deno.readDir(realPath)) {
+      if (entry.isSymlink || (!entry.isFile && !entry.isDirectory)) continue;
+      if (excludedSources.includes(entry.name)) continue;
+      if (entry.name <= afterName) continue;
+      entries.push({
+        name: entry.name,
+        relativePath: childMediaPath(currentPath, entry.name),
+        kind: entry.isDirectory
+          ? "directory"
+          : [".jpg", ".jpeg", ".png", ".webp"].includes(
+              extname(entry.name).toLowerCase(),
+            )
+          ? "image"
+          : "unsupported",
+      });
+      if (entries.length >= (limit + 1) * 2) trim();
+    }
+  } catch {
+    throw mediaSourceUnavailable(relativePath);
+  }
+  trim();
+  return {
+    entries: entries.slice(0, limit),
+    ...(entries.length > limit
+      ? { nextAfterName: entries[limit - 1].name }
+      : {}),
   };
 }
 
@@ -163,6 +322,7 @@ export async function scanMediaSourceInventory(
   unsupportedPaths: string[];
   truncated: boolean;
 }> {
+  assertMediaScanSelection(relativePath);
   const resolved = await resolveMediaSourcePath(relativePath);
   const stat = await Deno.stat(resolved.realPath);
   if (stat.isFile) {
@@ -189,6 +349,18 @@ export async function scanMediaSourceInventory(
       includeDirs: false,
       followSymlinks: false,
       maxDepth: 20,
+      skip: resolved.relativePath === "."
+        ? separateSourceNames().map((name) =>
+          new RegExp(
+            `^${
+              resolve(resolved.root, name).replace(
+                /[.*+?^${}()|[\]\\]/g,
+                "\\$&",
+              )
+            }(?:[/\\\\]|$)`,
+          )
+        )
+        : [],
     })
   ) {
     if (!entry.isFile) continue;
@@ -202,8 +374,12 @@ export async function scanMediaSourceInventory(
     ) {
       continue;
     }
-    if (supported) files.push(relative(resolved.root, real));
-    else unsupportedPaths.push(relative(resolved.root, real));
+    const logicalPath = childMediaPath(
+      resolved.relativePath,
+      relative(resolved.realPath, real),
+    );
+    if (supported) files.push(logicalPath);
+    else unsupportedPaths.push(logicalPath);
     if (files.length + unsupportedPaths.length > limit) {
       truncated = true;
       if (supported) files.pop();
@@ -288,7 +464,7 @@ async function inspectMediaFile(
   } else {
     const [technical, exif] = await Promise.all([
       ffprobe(path),
-      exiftool(path),
+      readExifMetadata(path),
     ]);
     const location = normalizeMediaLocation({
       latitude: exif.GPSLatitude,
@@ -354,7 +530,9 @@ async function ffprobe(path: string): Promise<Record<string, unknown>> {
   return JSON.parse(new TextDecoder().decode(output.stdout));
 }
 
-async function exiftool(path: string): Promise<Record<string, unknown>> {
+export async function readExifMetadata(
+  path: string,
+): Promise<Record<string, unknown>> {
   try {
     const output = await new Deno.Command("exiftool", {
       args: ["-json", "-n", "-a", "-s", path],
@@ -368,7 +546,11 @@ async function exiftool(path: string): Promise<Record<string, unknown>> {
     const { SourceFile: _sourceFile, ...metadata } = first;
     return metadata;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return {};
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(
+        "EXIF_METADATA_TOOL_UNAVAILABLE: rebuild the backend image with exiftool before importing photos; capture time and GPS cannot be inspected safely",
+      );
+    }
     throw error;
   }
 }

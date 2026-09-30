@@ -31,6 +31,40 @@ function restoreEnv(values: Map<string, string | undefined>) {
 // only environment variables (or an injected config) drive the routes.
 const noStoredConfig = () => Promise.reject(new Error("no config storage"));
 
+Deno.test("photo-only connections preserve environment and legacy text routes", async () => {
+  const previous = new Map(ENV_NAMES.map((name) => [name, Deno.env.get(name)]));
+  ENV_NAMES.forEach((name) => Deno.env.delete(name));
+  const config = {
+    llmProfiles: {
+      includeEnvironment: false,
+      profiles: [
+        zLlmProviderProfile.parse({
+          id: "photo",
+          name: "Photo",
+          photoOnly: true,
+          baseUrl: "http://photo/v1",
+          apiKey: "",
+          aliases: {},
+        }),
+      ],
+    },
+    llm: { baseUrl: "http://legacy/v1", apiKey: "key", model: "legacy-model" },
+  };
+  const resource = new LLMResource(() => Promise.resolve(config as never));
+  try {
+    expect((await resource.getInferenceProviders()).map((p) => p.id)).toEqual([
+      "legacy",
+    ]);
+    Deno.env.set("OPENAI_BASE_URL", "http://environment/v1");
+    Deno.env.set("OPENAI_API_KEY", "key");
+    expect((await resource.getInferenceProviders()).map((p) => p.id)).toEqual([
+      "environment",
+    ]);
+  } finally {
+    restoreEnv(previous);
+  }
+});
+
 function makeResourceWithProfiles(
   profiles: unknown[],
   overrides: Record<string, unknown> = {},

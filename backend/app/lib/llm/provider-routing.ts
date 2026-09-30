@@ -11,6 +11,7 @@ export function isLlmModelAlias(value: string): value is LlmModelAlias {
 }
 
 export type ResolvedLlmProvider = {
+  photoOnly?: boolean;
   id: string;
   name: string;
   baseUrl: string;
@@ -60,7 +61,7 @@ export function getEnabledLlmProviders(
   providers: readonly ResolvedLlmProvider[],
 ): ResolvedLlmProvider[] {
   return providers
-    .filter((provider) => provider.enabled)
+    .filter((provider) => provider.enabled && !provider.photoOnly)
     .sort((a, b) =>
       a.priority - b.priority ||
       a.name.localeCompare(b.name) ||
@@ -153,7 +154,9 @@ export class LlmProviderLimiter {
     return Object.fromEntries(this.#inFlight);
   }
 
-  tryAcquire(provider: ResolvedLlmProvider): boolean {
+  tryAcquire(
+    provider: Pick<ResolvedLlmProvider, "id" | "concurrency">,
+  ): boolean {
     const current = this.#inFlight.get(provider.id) ?? 0;
     if (current >= provider.concurrency) return false;
     this.#inFlight.set(provider.id, current + 1);

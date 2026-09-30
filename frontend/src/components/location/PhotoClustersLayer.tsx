@@ -100,6 +100,8 @@ function AccessiblePhotoMarker({
 
 export function PhotoClustersLayer({
   onStats,
+  focusedAssetId,
+  onFocusedAssetClose,
 }: {
   onStats?: (stats: {
     totalPlaced: number;
@@ -107,11 +109,14 @@ export function PhotoClustersLayer({
     unplacedLocationCount: number;
     truncated: boolean;
   }) => void;
+  focusedAssetId?: string;
+  onFocusedAssetClose?: () => void;
 }) {
   const map = useMap();
   const fittedOnce = useRef(false);
   const fittingUntil = useRef(0);
   const loadSerial = useRef(0);
+  const focusSerial = useRef(0);
   const returnFocusElement = useRef<HTMLElement | null>(null);
   const moveTimer = useRef<
     ReturnType<typeof globalThis.setTimeout> | undefined
@@ -122,6 +127,9 @@ export function PhotoClustersLayer({
   const [viewTick, setViewTick] = useState(0);
   const [selectedCluster, setSelectedCluster] = useState<
     PhotoCluster | undefined
+  >();
+  const [focusedItem, setFocusedItem] = useState<
+    PhotoCollectionItem | undefined
   >();
   const [truncated, setTruncated] = useState(false);
 
@@ -148,7 +156,7 @@ export function PhotoClustersLayer({
       setTruncated(Boolean(result.truncated));
       toast.dismiss(PHOTO_MAP_LOAD_ERROR_TOAST);
       if (initialLoad) fittedOnce.current = true;
-      if (initialLoad && loadedPoints.length > 0) {
+      if (initialLoad && loadedPoints.length > 0 && !focusedAssetId) {
         // Leaflet can emit a late moveend after the fit animation and after the
         // initial request has resolved. Keep the authoritative bootstrap points
         // while that programmatic movement settles; subsequent user movement
@@ -178,11 +186,74 @@ export function PhotoClustersLayer({
         },
       });
     }
-  }, [map, onStats]);
+  }, [focusedAssetId, map, onStats]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const serial = ++focusSerial.current;
+    if (!focusedAssetId) {
+      setFocusedItem(undefined);
+      return;
+    }
+
+    setFocusedItem(undefined);
+    let active = true;
+    void callResource("media", {
+      action: "getAsset",
+      assetId: focusedAssetId,
+    }).then((result) => {
+      if (!active || serial !== focusSerial.current) return;
+      const asset = result.asset;
+      if (!asset || asset.kind !== "image") {
+        throw new Error("Only photo assets can be opened on the map");
+      }
+      const latitude = Number(asset.location?.latitude);
+      const longitude = Number(asset.location?.longitude);
+      const hasLocation = Number.isFinite(latitude) &&
+        Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 &&
+        longitude >= -180 && longitude <= 180;
+      const visual = result.visual?.visualUnderstanding;
+      const shortCaption = typeof visual?.shortCaption === "string" &&
+          visual.shortCaption.trim()
+        ? visual.shortCaption
+        : typeof visual?.description === "string" && visual.description.trim()
+        ? visual.description
+        : undefined;
+      setFocusedItem({
+        assetId: String(asset._id),
+        fileName: String(asset.fileName ?? "Photo"),
+        status: String(asset.status ?? "staged"),
+        capturedAt: asset.capturedAt,
+        thumbnailUrl: asset.thumbnailUrl ?? asset.previewUrl,
+        shortCaption,
+        location: hasLocation ? { latitude, longitude } : null,
+      });
+      if (hasLocation) {
+        const maxZoom = map.getMaxZoom();
+        const targetZoom = Math.min(
+          PHOTO_CLUSTER_DETAILS_ZOOM,
+          Number.isFinite(maxZoom) ? maxZoom : PHOTO_CLUSTER_DETAILS_ZOOM,
+        );
+        fittingUntil.current = Date.now() + 5_000;
+        map.flyTo([latitude, longitude], targetZoom, { animate: true });
+      }
+    }).catch((error) => {
+      if (!active || serial !== focusSerial.current) return;
+      setFocusedItem(undefined);
+      toast.error("Could not open this photo on the map", {
+        id: `photo-map-focus-${focusedAssetId}`,
+        description: error instanceof Error
+          ? error.message
+          : "The photo details request failed.",
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [focusedAssetId, map]);
   const scheduleViewportLoad = useCallback(() => {
     if (Date.now() < fittingUntil.current) {
       // Re-project clusters after the bootstrap fit without replacing the
@@ -239,6 +310,7 @@ export function PhotoClustersLayer({
     marker?: L.Marker,
   ) => {
     returnFocusElement.current = marker?.getElement() ?? null;
+    setFocusedItem(undefined);
     setSelectedCluster(cluster);
   }, []);
 
@@ -260,19 +332,21 @@ export function PhotoClustersLayer({
 
   const selectedItems = useMemo<PhotoCollectionItem[]>(
     () =>
-      (selectedCluster?.points ?? []).map((point) => ({
-        assetId: String(point.assetId),
-        fileName: point.fileName,
-        status: point.status,
-        capturedAt: point.capturedAt,
-        thumbnailUrl: point.thumbnailUrl,
-        shortCaption: point.shortCaption,
-        location: {
-          latitude: point.latitude,
-          longitude: point.longitude,
-        },
-      })),
-    [selectedCluster],
+      focusedItem
+        ? [focusedItem]
+        : (selectedCluster?.points ?? []).map((point) => ({
+          assetId: String(point.assetId),
+          fileName: point.fileName,
+          status: point.status,
+          capturedAt: point.capturedAt,
+          thumbnailUrl: point.thumbnailUrl,
+          shortCaption: point.shortCaption,
+          location: {
+            latitude: point.latitude,
+            longitude: point.longitude,
+          },
+        })),
+    [focusedItem, selectedCluster],
   );
 
   const selectedCenter = selectedCluster
@@ -342,18 +416,37 @@ export function PhotoClustersLayer({
         );
       })}
       <PhotoCollectionSheet
-        open={Boolean(selectedCluster)}
+        open={Boolean(focusedItem || selectedCluster)}
         onOpenChange={(open) => {
           if (open) return;
+          const closingFocusedItem = Boolean(focusedItem);
+          setFocusedItem(undefined);
           setSelectedCluster(undefined);
-          globalThis.setTimeout(() => returnFocusElement.current?.focus(), 0);
+          if (closingFocusedItem) {
+            onFocusedAssetClose?.();
+          } else {
+            globalThis.setTimeout(
+              () => returnFocusElement.current?.focus(),
+              0,
+            );
+          }
         }}
-        title={truncated
+        title={focusedItem
+          ? focusedItem.location
+            ? "Photo on the map"
+            : "Photo is not placed on the map"
+          : truncated
           ? "Photos at this location"
           : selectedItems.length === 1
           ? "Photo at this location"
           : `${selectedItems.length} photos at this location`}
-        description={selectedCenter
+        description={focusedItem
+          ? focusedItem.location
+            ? `${focusedItem.location.latitude.toFixed(5)}, ${
+              focusedItem.location.longitude.toFixed(5)
+            }`
+            : "No GPS or manual coordinates are stored for this photo, so the map was not moved."
+          : selectedCenter
           ? truncated
             ? `Showing the latest loaded photos near ${
               selectedCenter.latitude.toFixed(5)
@@ -366,7 +459,7 @@ export function PhotoClustersLayer({
           : undefined}
         items={selectedItems}
         total={selectedItems.length}
-        hasMore={truncated}
+        hasMore={!focusedItem && truncated}
       />
     </>
   );

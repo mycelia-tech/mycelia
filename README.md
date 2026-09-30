@@ -12,7 +12,8 @@ your own words.
 
 ### Audio Ingestion & Processing
 
-- Continuous import from Apple Voice Memos, Google Drive, and local folders.
+- Staged import from Apple Voice Memos plus continuous Google Drive and local
+  folder discovery.
 - Automated pipeline: VAD → Transcription → Conversation extraction →
   Summarization.
 - Smart chunking, waveform normalization, and diarization-friendly segments.
@@ -58,19 +59,34 @@ your own words.
   interrupted confirmation has a bounded seven-day recovery lease. Originals
   can later be removed with a preview-and-confirm receipt while previews,
   metadata, and analysis remain.
-- Recognition is provider-neutral and can be queued separately from import. Its
-  primary Google preset uses multimodal Gemini Flash-Lite through Vertex AI in
-  the EU multi-region for Russian structured visual descriptions, plus
-  `gemini-embedding-001` in `europe-west4` for semantic search. The same Open
-  Media API contract supports a self-hosted visual model.
+- Recognition is provider-neutral and can be queued separately from import.
+  **Settings → Photo analysis** reuses an existing LLM connection or creates a
+  photo-only OpenAI-compatible vision connection, with an optional API key,
+  explicit model, output language, and bounded concurrency. Google is optional
+  and disabled by default through `externalServices.google.enabled`; saved
+  Google results remain readable and locally searchable. The custom self-hosted
+  Open Media API remains supported.
 - Bulk Photo analysis uses one fixed package: visual understanding plus OCR. A
-  Google profile runs Vertex visual understanding/embedding and strict-EU Cloud
+  general vision profile returns a description and model-extracted visible text
+  without requiring embeddings. Its price is shown as unknown, not zero. An
+  explicitly enabled Google profile runs Vertex visual understanding/embedding and strict-EU Cloud
   Vision OCR; a self-hosted profile requests the same two features only from its
   configured endpoint and does not call Google. Global Vision labels/objects are
   excluded from this batch action. Versioned descriptions, embeddings, OCR
   pages, annotations, provenance, usage, deduplication, an app-side gross-cost
-  ledger, and independent removal of previews, derived analysis, or the source
-  reference are stored separately. See
+  ledger, previews, derived analysis, and source references are stored as
+  separate layers. Their actions live in one **Storage & deletion…** panel;
+  mounted items can be removed from Mycelia together with their previews and
+  analysis while the read-only mounted original is never deleted. Photos can
+  also be ignored for future recognition and later returned without changing
+  files or existing results.
+- **Analysis & results** includes result-provider and import-batch filters,
+  server-side select-all, and explicit **Reanalyze ready photos**. Reanalysis
+  creates a new version; failed attempts never replace the accepted result.
+  Photo details have Description, Text, Metadata, and History sections.
+  Recognition reservations temporarily block these storage mutations. The main
+  UAT stack opts into read-only source and ADC mounts with
+  `docker-compose.media-uat.yml`; real host paths remain in `.env`. See
   [MEDIA_KNOWLEDGE.md](docs/MEDIA_KNOWLEDGE.md).
 - Photo events locally cluster nearby owned images by capture time and EXIF GPS,
   then use a separate preview-and-confirm step before a Google or self-hosted
@@ -78,16 +94,40 @@ your own words.
   by default, at most twelve). Ready results can be reviewed and explicitly
   published as idempotent Mycelia Event Objects on the Timeline;
   audio/transcription/Object links stay local and identity recognition is
-  forbidden. Media uses a responsive photo gallery with a focused detail
-  viewer, while `/media/analysis` provides server-side status, placement,
-  filename, and capture-date filters. Recognition batches can target the
-  current explicit selection or every eligible asset matching the server-side
-  filters without being limited to the visible page. Unmatched event candidates
+  forbidden. Media uses switchable gallery/table views, stable server-side
+  sorting, explicit page selection, and all-matching server selection with a
+  focused detail viewer. The compact workspace keeps import, filters, selection,
+  and batch actions close to the photos; secondary privacy, provider, and
+  placement explanations are available through keyboard-accessible hover/focus
+  hints instead of permanent help paragraphs. `/media/analysis` provides the
+  same sortable inventory plus server-side status, placement, filename, and a
+  shared capture-date range picker. Its **Unprocessed by
+  capture-date range** workflow can target every eligible asset matching the
+  server-side filters without being limited to the visible page, then shows an
+  exact preview and, where pricing is known, a ceiling before confirmation.
+  General model previews state when no monetary ceiling can be enforced.
+  Unmatched event candidates
   remain visible as single photos instead of being silently omitted.
 - Large mounted folders use a visual folder picker and resumable scan → review →
-  confirm campaigns. The mounted root is selected by default and subfolders are
-  browsable without typing paths. One `mediaFolderImport` job reports live
+  confirm campaigns. The local root is selected by default; separately configured
+  disks and aliases are excluded from that scan. The optional macOS
+  `docker-compose.media-disks.yml` overlay exposes **Connected disks** read-only,
+  with stable aliases preserving references when disks reconnect. See
+  [External photo libraries](docs/MEDIA_KNOWLEDGE.md#external-photo-libraries).
+  Subfolders are
+  browsable without typing paths from a collapsed **Choose folder** control, so
+  the current path and primary Scan action remain visible without consuming the
+  page. One `mediaFolderImport` job reports live
   checked/total progress, speed and ETA while committing durable 25-file steps.
+  **Import + Google** optionally turns a folder campaign into a live stream:
+  discovery, local previews, and Google recognition overlap. Review one total
+  gross ceiling and batch size before enabling it. Exact SHA-bound photo waves
+  consume that ceiling conservatively; **Pause new batches** leaves confirmed
+  waves and the independent local import running. Monthly/per-photo caps and
+  any enabled daily cap remain enforced. See [streaming photo import](docs/MEDIA_KNOWLEDGE.md#streaming-photo-import).
+  Later syncs stat every path but reuse the previously verified SHA-256 and
+  extracted metadata when owner, path, byte size, and modification time are
+  unchanged; only new or changed files are read and hashed again.
   The gallery is cursor-paginated and refreshes while folder imports or
   recognition jobs advance. An exact SHA-bound provider batch on the Analysis
   page can process every eligible photo matching the server-side filters with
@@ -104,7 +144,10 @@ your own words.
   Unplaced and can be assigned locally with audit history.
 - Google media billing supports a fail-closed 24-hour Free Trial confirmation
   or an explicit persistent paid-account acknowledgement bound to one project;
-  both retain the application monthly, daily, per-asset, and per-event limits.
+  both retain the application monthly, per-asset, per-event, and confirmed batch
+  limits. **Settings → Google Cloud → Daily limit** can explicitly disable the
+  daily stop (`dailyGrossLimitUsd: null`); daily usage is still recorded, and no
+  other ceiling is raised. Missing settings retain the guarded $0.10/day default.
 
 ### AI Chat
 
@@ -141,6 +184,13 @@ your own words.
 - Per-object audio player with transcript sync and segment navigation.
 - LLM summarization with model selection and cost estimation.
 - Summary comparison (side-by-side, star/favorite).
+- In `/summaries`, combine **Last X** (optional, 1–10,000) with a generated-date
+  **Period**, or use either filter alone. The page shows matching summaries and
+  distinct conversations. Choose a target model and click **Rerun summaries**;
+  this single action follows the full filter, independently of how many cards
+  are displayed. Clear Last X to include the whole period. New versions are
+  appended; existing target-model versions and queued jobs are skipped. Keep
+  the page open until queueing completes.
 - Autosave with per-field throttling and version history.
 - Full-text search, category filtering, and relationship graph.
 - Lazy, cursor-paginated object sections with bounded backend queries and
@@ -312,12 +362,24 @@ The daemon can import:
 - Google Drive Folders
 - Local Audio Folders
 
-On macOS, give your terminal application **Full Disk Access** in System Settings
-if you want to import Apple Voice Memos.
+On macOS, the recommended background setup does not read Apple's protected
+Group Container. Run the repository's staging refresh interactively from an
+already trusted Terminal; it copies a bounded set of verified audio and an
+atomically published SQLite snapshot into `~/Library/mycelia`. The LaunchAgent
+never opens either Apple's library or the external archive volume. Do not grant
+Full Disk Access to `uv` or to the ingestion LaunchAgent for this workflow.
 
 **Environment variables** (optional, set in `.env`):
 
-- `MYCELIA_APPLE_VOICEMEMOS_ROOT` - Apple Voice Memos path
+- `MYCELIA_APPLE_VOICEMEMOS_MODE` - `manual` disables background Apple
+  discovery, `staged` requires explicit local staging paths, and `live` is the
+  legacy opt-in direct-library mode
+- `MYCELIA_APPLE_VOICEMEMOS_ROOT` - local published staging folder containing
+  Apple audio files; required in `staged` mode
+- `MYCELIA_APPLE_VOICEMEMOS_DB` - optional separate `CloudRecordings.db` or
+  snapshot path; required in `staged` mode
+- `MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE` - timezone-aware ISO 8601 cutoff;
+  required by the bounded staging publisher and optional for direct discovery
 - `MYCELIA_GOOGLE_DRIVE_ROOT` - Google Drive path
 - `MYCELIA_LOCAL_AUDIO_ROOT` - Local audio folder
 - `MYCELIA_GOOGLE_TZ` / `MYCELIA_LOCAL_TZ` - Timezones (default: UTC)
@@ -354,12 +416,89 @@ bash scripts/install-ingestion-service.sh
 curl -fsS http://localhost:8001/health
 ```
 
-The LaunchAgent starts at login, discovers local recordings every 10 seconds,
-and ingests bounded batches on the host. The Jobs page's ingestion **Run now**
-button calls the same serialized service, so it cannot overlap the automatic
-cycle. Ingestion remains host-side because local source paths are deliberately
-not mounted into the Docker Python worker. Grant Full Disk Access to the
-background process if Apple Voice Memos reports permission errors.
+The LaunchAgent starts at login, scans its configured readable sources every 10
+seconds, and ingests bounded batches on the host. The Jobs page's ingestion
+**Run now** button calls the same serialized service, so it cannot overlap the
+automatic cycle. Ingestion remains host-side because local source paths are
+deliberately not mounted into the Docker Python worker. The installer waits up
+to 90 seconds for `/readiness`, independently of ingestion completion, and
+prints the ingestion health and per-source result; the
+service includes standard Intel and Apple Silicon Homebrew paths so `uv`,
+`ffmpeg`, and `ffprobe` remain available under launchd's minimal environment.
+The health response is `degraded` when a configured staging source cannot be
+opened, an upload fails, or eligible sources have unresolved cached errors.
+`lastCycle.ingestion` reports attempted, successful, failed, remaining, and
+cached-error counts. An empty readable catalog with no unresolved ingestion
+failures remains healthy. Installation can succeed while ingestion health is
+`starting` or `degraded`; readiness confirms application startup only.
+Invalid ingestion batch or interval settings prevent startup. The installer
+bounds each complete HTTP request within its overall 90-second deadline and
+retries interrupted or malformed readiness responses.
+
+Open **Audio → Pipeline → Audio processing overview** for ingestion reachability,
+last completed scan, last imported files (recording and import dates), staging
+publication time, and the Import → VAD → Transcription backlog in one place.
+**Check service** refreshes lightweight status; **Scan staging now** queues one
+serialized ingestion batch, not a refresh of Apple's protected library.
+**Update audio counts** explicitly recalculates the corpus snapshot. Counts keep
+their calculation time, and unavailable counts appear as `—`, not zero. Service
+and queue status refresh every 15 seconds while the page is visible; exact audio
+counts never run on that timer. A running service with cached errors or an old
+staging publication does not mean all Apple recordings have been imported.
+
+To preview a Voice Memos archive refresh without changing anything, then apply
+and verify it when ready:
+
+```bash
+bash scripts/refresh-voice-memos-staging.sh
+bash scripts/refresh-voice-memos-staging.sh --apply
+```
+
+`--apply` runs the existing `~/claude-cowork/icloud-archive-tool` Voice Memos
+component, performs its full verification, and copies the audio at or after
+`MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE` plus the newest `CloudRecordings` snapshot
+under `~/Library/mycelia/voice-memos-staging`. Audio is published additively;
+the database is replaced atomically only after every bounded audio file passes
+a hash check. Start it interactively so only the trusted Terminal crosses the
+macOS privacy and external-volume boundaries; the background `uv` process never
+does. The LaunchAgent discovers the local published update on its next cycle.
+Incremental staging budgets space for audio needing copying, a temporary
+SQLite snapshot, and a 1 GiB reserve; verified unchanged audio is reused.
+Existing audio symlinks are materialized as regular local files; symlinked
+staging directories are rejected before publication.
+UUID lookup is paginated. A unique pending recording can be rebound to a
+readable configured copy, preserving its source ID and cached error. Retry
+cached failures explicitly after repair; ambiguous identities are reported
+for review without creating another source or changing a pending path. This
+includes catalog entries assigning multiple paths to the same UUID.
+
+For a custom archive, export `MYCELIA_VOICE_MEMOS_ARCHIVE_ROOT` and configure
+the archive tool's `ARCHIVE_TARGET` to point to the same directory. The wrapper
+loads `ICLOUD_ARCHIVE_CONFIG` (or the tool's `config.env`) and compares the
+resolved paths before every preview, refresh, and verification. A mismatch
+stops the command; the tool's config can override an exported `ARCHIVE_TARGET`.
+
+For a verified backup whose audio and database snapshot are stored separately,
+run one bounded recovery cycle like this:
+
+```bash
+cd python
+MYCELIA_APPLE_VOICEMEMOS_ROOT=/path/to/audio-original \
+MYCELIA_APPLE_VOICEMEMOS_DB=/path/to/CloudRecordings.snapshot.db \
+MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE=2026-08-24T00:00:00+04:00 \
+MYCELIA_APPLE_VOICEMEMOS_MODE=staged \
+uv run --env-file ../.env daemon.py --once
+```
+
+Stop the LaunchAgent before a foreground recovery and start it again afterward.
+The Apple importer uses the full Voice Memo UUID for deduplication, so changing
+from the live path to a backup path does not create a second source record. The
+cutoff limits discovery only. Refresh and republish the staging snapshot before
+expecting newer recordings to appear in the automatic scan.
+
+Audio chunks are written with idempotent MongoDB upserts in batches of 50. A
+retry after interruption reuses `(original_id, index)` and does not duplicate
+chunks, while avoiding one HTTP round trip for every 10-second segment.
 
 For a foreground session instead, use:
 
@@ -368,9 +507,11 @@ cd /path/to/mycelia
 ./scripts/run-audio-pipeline.sh
 ```
 
-It starts the Docker services and then runs local discovery/import on the host,
-where Apple Voice Memos and other local files are accessible. After each audio
-chunk is inserted, the backend automatically runs the remaining stages:
+It starts the Docker services and then runs local discovery/import on the host.
+With the recommended `staged` mode, Apple Voice Memos are still read from the
+published local staging directory. Direct access to the live protected library
+is only an explicit `live`-mode foreground exception. After each audio chunk is
+inserted, the backend automatically runs the remaining stages:
 
 The foreground wrapper waits up to three minutes for backend readiness before
 starting the host daemon. Do not run it while the LaunchAgent is active, because

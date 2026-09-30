@@ -45,6 +45,7 @@ import SummaryHistoryPage from "./pages/SummaryHistoryPage";
 import MediaPage from "./pages/MediaPage";
 import MediaAnalysisPage from "./pages/MediaAnalysisPage";
 import GoogleCloudSettingsPage from "./pages/settings/GoogleCloudSettingsPage";
+import PhotoAnalysisSettingsPage from "./pages/settings/PhotoAnalysisSettingsPage";
 import SearchPage from "./pages/SearchPage";
 import KnowledgeSettingsPage from "./pages/settings/KnowledgeSettingsPage";
 
@@ -229,6 +230,7 @@ export const router = createBrowserRouter([
             path: "google-cloud",
             element: <GoogleCloudSettingsPage />,
           },
+          { path: "photo-analysis", element: <PhotoAnalysisSettingsPage /> },
           {
             path: "knowledge",
             element: <KnowledgeSettingsPage />,

@@ -17,6 +17,85 @@ const DEFAULT_JOB_STATUSES: JobListStatus[] = [
 ];
 
 const DEFAULT_INTERNAL_JOB_TYPES = new Set(["mediaRecognition"]);
+export const DEFAULT_JOBS_LIST_LIMIT = 200;
+
+const JOBS_REFRESH_QUIET_MS = 200;
+const JOBS_REFRESH_MAX_WAIT_MS = 1_000;
+
+interface JobsInvalidationClient {
+  invalidateQueries(filters: {
+    queryKey: readonly unknown[];
+    exact?: boolean;
+    refetchType?: "active" | "none";
+  }): unknown;
+}
+
+interface PendingJobsRefresh {
+  queryKeys: Map<string, readonly unknown[]>;
+  quietTimer: ReturnType<typeof setTimeout> | null;
+  deadlineTimer: ReturnType<typeof setTimeout> | null;
+}
+
+const pendingJobsRefreshes = new WeakMap<object, PendingJobsRefresh>();
+
+function flushJobsQueryRefreshes(
+  client: JobsInvalidationClient & object,
+  pending: PendingJobsRefresh,
+): void {
+  if (pendingJobsRefreshes.get(client) !== pending) return;
+  if (pending.quietTimer) clearTimeout(pending.quietTimer);
+  if (pending.deadlineTimer) clearTimeout(pending.deadlineTimer);
+  pendingJobsRefreshes.delete(client);
+
+  // Inactive views only need to be stale for their next mount. Refetch the
+  // exact active views that subscribed to the event instead of fanning one
+  // completion out across every cached Jobs filter.
+  void client.invalidateQueries({
+    queryKey: ["jobs"],
+    refetchType: "none",
+  });
+  for (const queryKey of pending.queryKeys.values()) {
+    void client.invalidateQueries({
+      queryKey,
+      exact: true,
+      refetchType: "active",
+    });
+  }
+}
+
+/**
+ * Batch WebSocket-driven Jobs refreshes per QueryClient. A quiet window
+ * collapses bursts and the deadline preserves membership correctness during
+ * a continuous event stream.
+ */
+export function scheduleJobsQueryRefresh(
+  client: JobsInvalidationClient & object,
+  queryKey: readonly unknown[],
+  timing: { quietMs?: number; maxWaitMs?: number } = {},
+): void {
+  const quietMs = timing.quietMs ?? JOBS_REFRESH_QUIET_MS;
+  const maxWaitMs = timing.maxWaitMs ?? JOBS_REFRESH_MAX_WAIT_MS;
+  let pending = pendingJobsRefreshes.get(client);
+  if (!pending) {
+    pending = {
+      queryKeys: new Map(),
+      quietTimer: null,
+      deadlineTimer: null,
+    };
+    pendingJobsRefreshes.set(client, pending);
+    pending.deadlineTimer = setTimeout(
+      () => flushJobsQueryRefreshes(client, pending!),
+      maxWaitMs,
+    );
+  }
+
+  pending.queryKeys.set(JSON.stringify(queryKey), [...queryKey]);
+  if (pending.quietTimer) clearTimeout(pending.quietTimer);
+  pending.quietTimer = setTimeout(
+    () => flushJobsQueryRefreshes(client, pending!),
+    quietMs,
+  );
+}
 
 /**
  * Individual photo-recognition jobs are implementation details of one durable
@@ -44,7 +123,7 @@ export function buildJobsListRequest(
   return {
     action: "list" as const,
     view,
-    limit: options.limit ?? 1000,
+    limit: options.limit ?? DEFAULT_JOBS_LIST_LIMIT,
     statuses: options.statuses ?? DEFAULT_JOB_STATUSES,
     ...(types?.length ? { types } : {}),
     ...(options.providerProfileId
@@ -55,7 +134,10 @@ export function buildJobsListRequest(
 }
 
 export function shouldRefreshJobsViews(eventName: string): boolean {
-  return eventName === "job.completed";
+  return eventName === "job.active" || eventName === "job.started" ||
+    eventName === "job.waiting" || eventName === "job.delayed" ||
+    eventName === "job.completed" || eventName === "job.failed" ||
+    eventName === "job.cancelled" || eventName === "job.state";
 }
 
 /**

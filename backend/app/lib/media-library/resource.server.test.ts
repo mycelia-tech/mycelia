@@ -12,6 +12,7 @@ import {
   folderCampaignProgress,
   geoBoundsQuery,
   listRecognitionBatches,
+  mediaFolderReusableHashQuery,
   mediaLibraryRequestSchema,
   MediaLibraryResource,
   mediaLibrarySummaryQueries,
@@ -42,6 +43,27 @@ const googleProfile = {
   allowGlobalPhotoAnalysis: false,
 };
 
+Deno.test("ready photos require explicit reanalysis selection", () => {
+  assertEquals(
+    recognitionEligibilityQuery("owner").status.$in.includes("ready"),
+    false,
+  );
+  assertEquals(
+    recognitionEligibilityQuery("owner", true).status.$in.includes("ready"),
+    true,
+  );
+});
+
+Deno.test("ordinary recognition excludes published results even after a failed replacement", () => {
+  assertEquals(recognitionEligibilityQuery("owner").currentRunId, {
+    $exists: false,
+  });
+  assertEquals(
+    recognitionEligibilityQuery("owner", true).currentRunId,
+    undefined,
+  );
+});
+
 const selfHostedProfile = {
   id: "self-hosted-media",
   name: "Self-hosted Photo Knowledge",
@@ -54,6 +76,60 @@ const selfHostedProfile = {
 Deno.test("folder and recognition campaigns use bounded work windows", () => {
   assertEquals(FOLDER_CHUNK_SIZE, 25);
   assertEquals(RECOGNITION_WINDOW, 16);
+});
+
+Deno.test("stream progress counts imported work while discovery total remains unknown", () => {
+  const progress = folderCampaignProgress({
+    status: "importing",
+    streaming: {},
+    inventoryInitialized: false,
+  }, {
+    total: 130,
+    unsupported: 30,
+    pending: 50,
+    ready: 25,
+    imported: 25,
+  });
+  assertEquals(progress.stage, "streaming");
+  assertEquals(progress.totalKnown, false);
+  assertEquals(progress.processed, 25);
+  assertEquals(progress.remaining, 75);
+  const waiting = folderCampaignProgress({
+    status: "importing",
+    streaming: {},
+    updatedAt: new Date(Date.now() - 120_000),
+  }, { total: 10, pending: 10 });
+  assertEquals(waiting.waitingForRecovery, true);
+  assertEquals(waiting.totalKnown, false);
+});
+
+Deno.test("stream authorization requires explicit consent and bounded costs", () => {
+  assertEquals(
+    mediaLibraryRequestSchema.safeParse({
+      action: "confirmFolderStream",
+      previewId: String(new ObjectId()),
+    }).success,
+    false,
+  );
+  assertEquals(
+    mediaLibraryRequestSchema.safeParse({
+      action: "previewFolderStream",
+      campaignId: String(new ObjectId()),
+      profileId: "google",
+      maxGrossUsd: 301,
+    }).success,
+    false,
+  );
+  assertEquals(
+    mediaLibraryRequestSchema.safeParse({
+      action: "previewFolderStream",
+      campaignId: String(new ObjectId()),
+      profileId: "google",
+      maxGrossUsd: 50,
+      batchSize: 501,
+    }).success,
+    false,
+  );
 });
 
 Deno.test("folder scan progress separates checked ready files from pending work", () => {
@@ -94,6 +170,22 @@ Deno.test("folder scan progress separates checked ready files from pending work"
   });
   assertEquals(interrupted.waitingForRecovery, true);
   assertEquals(interrupted.etaSeconds, undefined);
+});
+
+Deno.test("inventory progress reports discovered files without inventing a total or ETA", () => {
+  const progress = folderCampaignProgress({
+    status: "queued",
+    relativePath: "external-photos",
+    inventoryDiscovered: 23_500,
+    inventoryCurrentPath: "external-photos/2026",
+    createdAt: new Date(Date.now() - 10_000),
+  }, { total: 23_500, pending: 23_000, unsupported: 500 });
+  assertEquals(progress.stage, "inventory");
+  assertEquals(progress.processed, 23_500);
+  assertEquals(progress.totalKnown, false);
+  assertEquals(progress.percent, 0);
+  assertEquals(progress.etaSeconds, undefined);
+  assertEquals(progress.currentPath, "external-photos/2026");
 });
 
 Deno.test("recognition batch progress reports terminal work and live queue states", () => {
@@ -236,6 +328,7 @@ Deno.test("all-matching recognition selection scopes server-side filters", () =>
     { owner: "alice", kind: "image" },
     { createdAt: { $lte: cutoff } },
     {
+      recognitionIgnoredAt: { $exists: false },
       status: {
         $in: [
           "failed",
@@ -306,10 +399,51 @@ Deno.test("explicit recognition selection is unique, normalized, and ID-scoped",
   );
 });
 
-Deno.test("recognition eligibility excludes ready and active assets", () => {
+Deno.test("ignore processing accepts explicit and all-matching selections", () => {
+  const assetId = new ObjectId().toString();
+  assertEquals(
+    mediaLibraryRequestSchema.parse({
+      action: "setRecognitionIgnored",
+      selection: { mode: "explicit", assetIds: [assetId] },
+      ignored: true,
+      confirm: true,
+    }),
+    {
+      action: "setRecognitionIgnored",
+      selection: {
+        mode: "explicit",
+        inventoryFilter: "unprocessed",
+        placement: "all",
+        assetIds: [assetId],
+      },
+      ignored: true,
+      confirm: true,
+    },
+  );
+  const restored = mediaLibraryRequestSchema.parse({
+    action: "setRecognitionIgnored",
+    selection: {
+      mode: "all_matching",
+      inventoryFilter: "ignored",
+    },
+    ignored: false,
+    confirm: true,
+  });
+  if (restored.action !== "setRecognitionIgnored") {
+    throw new Error("Unexpected parsed action");
+  }
+  assertEquals(restored.selection.inventoryFilter, "ignored");
+});
+
+Deno.test("recognition eligibility excludes ready, active, deleting, and ignored assets", () => {
   assertEquals(recognitionEligibilityQuery("admin"), {
     owner: "admin",
+    currentRunId: { $exists: false },
     kind: "image",
+    "preview.fileId": { $type: "objectId" },
+    derivedDeletionPending: { $exists: false },
+    originalDeletionPending: { $exists: false },
+    recognitionIgnoredAt: { $exists: false },
     status: {
       $in: ["staged", "failed", "budget_blocked", "recognition_disabled"],
     },
@@ -378,12 +512,15 @@ Deno.test("media summary exposes mutually observable queue and attention counts"
   });
   assertEquals(queries.unprocessed, {
     owner: "alice",
+    currentRunId: { $exists: false },
     kind: "image",
+    recognitionIgnoredAt: { $exists: false },
     status: { $nin: ["ready", "queued", "processing"] },
   });
   assertEquals(queries.needsAttention, {
     owner: "alice",
     kind: "image",
+    recognitionIgnoredAt: { $exists: false },
     status: {
       $in: [
         "failed",
@@ -394,6 +531,34 @@ Deno.test("media summary exposes mutually observable queue and attention counts"
       ],
     },
   });
+  assertEquals(queries.ignored, {
+    owner: "alice",
+    kind: "image",
+    recognitionIgnoredAt: { $type: "date" },
+  });
+});
+
+Deno.test("folder sync reuses SHA only for an unchanged owner-scoped path", () => {
+  const campaignId = new ObjectId();
+  assertEquals(
+    mediaFolderReusableHashQuery(
+      "alice",
+      campaignId,
+      "900-photos/IMG_0001.JPG",
+      1_234_567,
+      1_787_000_000_000,
+    ),
+    {
+      owner: "alice",
+      campaignId: { $ne: campaignId },
+      relativePath: "900-photos/IMG_0001.JPG",
+      byteLength: 1_234_567,
+      sourceModifiedAtMs: 1_787_000_000_000,
+      sha256: { $type: "string" },
+      kind: "image",
+      state: { $in: ["ready", "duplicate", "imported"] },
+    },
+  );
 });
 
 Deno.test("photo Timeline switches from hour to day and month density", () => {

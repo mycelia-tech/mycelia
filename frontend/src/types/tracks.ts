@@ -77,6 +77,7 @@ export interface TrackVisibilityState {
   visibleTracks: Set<TrackId>;
   trackHeights: Record<TrackId, number>;
   toggleTrack: (id: TrackId) => void;
+  setTrackVisible: (id: TrackId, visible: boolean) => void;
   setTrackHeight: (id: TrackId, height: number) => void;
   showAll: () => void;
   hideAll: () => void;

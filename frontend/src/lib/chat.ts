@@ -86,6 +86,11 @@ export function chatStatusLabel(
   return "Ready";
 }
 
+export function isChatRunActive(state?: ChatRunState): boolean {
+  return state === "submitted" || state === "streaming" ||
+    state === "needs_approval";
+}
+
 export function isNearBottom(element: HTMLElement, threshold = 120): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <=
     threshold;

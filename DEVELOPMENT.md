@@ -142,10 +142,38 @@ profiles use Vertex visual understanding/embedding plus strict-EU Vision OCR;
 self-hosted profiles receive the same fixed visual-understanding + OCR request
 without a Google call. Global labels/objects are excluded from this bulk path.
 
+General vision connections are configured at `/settings/photo-analysis`.
+They reference `llmProfiles.profiles[].id`, share the text-provider limiter,
+and use an explicit model rather than text aliases. New photo-only connections
+are excluded from text routing. Metadata-only settings/history reads never
+test an external model. **Test image** requires explicit consent and sends a
+synthetic PNG. Photo jobs send sanitized previews, accept descriptions without
+embeddings, store unknown monetary cost as `null`, and retry only HTTP 429
+(at most three requests). Timeouts remain outcome-unknown, with no automatic
+billable repetition. Explicit reanalysis binds its new run to the immutable
+batch receipt while leaving the old accepted projection intact until success.
+The exact batch preview displays the bound endpoint, model, language and output
+token limit. Unknown-priced providers have no enforced monetary ceiling; the
+photo-count and token limits are not a dollar budget. Results remain visible
+after a failed replacement and are excluded from ordinary unprocessed batches.
+
+`externalServices.google.enabled` defaults to `false`, independently of ADC or
+provider configuration. It gates Google token acquisition and direct/brokered
+Gemini inference; enabling media analysis does not enable Google. The optional
+Google settings page has a separate explicit opt-in. No credentials, originals,
+or historical results are removed by this switch. Existing paused recognition
+workers remain paused until resumed in Jobs; saving a provider starts no batch.
+
 The dependency watchdog uses its own one-connection MongoDB pool. Long-running
 imports and worker rebuilds may make ordinary queries slower, but they must not
 starve the watchdog or cause `[SELF-HEAL]` restarts from an application-pool
 `connection checkout` timeout.
+
+Mongo change notifications use a separate four-connection pool and two cursors:
+an Objects cursor preserving the selective lookup/catalog behavior, and a
+database cursor excluding Objects. They no longer allocate one long-poll cursor
+per collection from the application query pool. Startup logs
+`[ChangeStream] Started 2 isolated cursors (objects + database)`.
 
 When a change is not visible:
 
@@ -167,6 +195,33 @@ When a change is not visible:
 5. After recreating frontend or backend, restart nginx because the container IP
    may have changed: `docker compose restart nginx`.
 6. Do not restart MongoDB or Redis for an application-code reload.
+
+#### Photo/PDF Knowledge in the main UAT stack
+
+The main `sky-uat` stack keeps its existing project, database, ports, and other
+overlays. To expose the mounted media source and Google ADC to that backend,
+set absolute `MEDIA_SOURCE_HOST_PATH` and `GCP_ADC_HOST_PATH` values in the
+uncommitted `.env`, then append `docker-compose.media-uat.yml` to the same UAT
+Compose command. Do not copy the ADC JSON into the repository.
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.media-uat.yml \
+  up -d --no-deps --force-recreate backend
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.media-uat.yml \
+  restart nginx
+```
+
+If UAT already uses another overlay, keep it in both commands and append the
+media overlay last. Verify that `/media-source` and `/run/secrets/gcp-adc` are
+read-only mounts, wait for backend `[READY]`, then require `/readiness = 200`.
+Missing host variables or paths fail at Compose time rather than producing a
+later `MEDIA_SOURCE_ROOT is not configured` request error. MongoDB and Redis do
+not need to be recreated.
 
 #### Isolated Photo/PDF Knowledge development
 
@@ -210,6 +265,24 @@ WebP retrieval without queueing recognition. Add `docker-compose.media-gcp.yml`
 when testing ADC/GCP; keep it on every backend recreate so the credential mount
 is not dropped. Untouched upload previews expire after one hour, while an
 interrupted confirmation has a bounded seven-day idempotent recovery lease.
+
+For removable disks on macOS, append `docker-compose.media-disks.yml` after
+the primary media overlay. It mounts the stable `/Volumes` directory read-only,
+so individual disks are optional at startup. In **Media → Choose folder**, open
+**Connected disks**, refresh after connecting a disk, and select a disk or folder
+before scanning. First create an empty `disks` directory inside the local
+`MEDIA_SOURCE_HOST_PATH` folder for the nested mountpoint. The default
+local-folder scan excludes these separate sources.
+See [External photo libraries](docs/MEDIA_KNOWLEDGE.md#external-photo-libraries)
+for stable aliases that preserve existing original-file references.
+
+When switching from a direct disk mount, remove only its old overlay from the
+local `.env` `COMPOSE_FILE` (for example, `docker-compose.media-external.yml` or
+a local `docker-compose.media-local.yml`). Keep the primary media and credential
+overlays. Run `docker compose config --quiet`, then
+`docker compose up -d --no-deps backend` and `docker compose restart nginx`;
+verify `/readiness`. Do not create an empty replacement for a disconnected disk.
+
 Full setup and the provider-neutral
 visual-understanding/embedding contract, configurable gross-cost guards
 (24-hour Free Trial confirmation or persistent project-bound paid mode), and
@@ -227,15 +300,24 @@ For the 900-photo campaign, place originals under
 folder browser on `/media`; `.` remains the default recursive root. Local folder
 sync does not call Google. Its single normal `mediaFolderImport` job loops over
 durable 25-file commits and publishes checked/total progress, speed and ETA to
-Media and Jobs. Restart/recovery attempts remain durable history, but Jobs
+Media and Jobs. A later sync still inventories and stats the selected tree, but
+reuses a prior item SHA and metadata only when owner, relative path, byte size,
+and modification time all match; `reused SHA` in the campaign report makes this
+visible. New or changed files are hashed normally. Restart/recovery attempts
+remain durable history, but Jobs
 groups the same `campaignId` into one visible campaign row. On
 `/media/analysis`, a batch preview can select an explicit set or every eligible
 asset matching the current server-side filters, not only the visible gallery
-page. It fixes visual-understanding + OCR and shows the authoritative batch
-ceiling before consent. With a Google profile this means Vertex visual
-understanding/embedding plus strict-EU Vision OCR; a self-hosted profile sends
-the same feature request only to its configured endpoint. Photos with local
-time/GPS are queryable through indexed Timeline/Map projections in every
+page. The shared date-range picker uses the configured application timezone;
+the **Unprocessed by capture-date range** shortcut waits for the new server
+scope, selects all matching pages, and never reuses a stale page after a filter
+reload fails. The preview rechecks retained-original and sanitized-WebP
+pointers plus active reservations. It then fixes visual-understanding + OCR and
+shows the authoritative eligible count and batch ceiling before consent. With a
+Google profile this means Vertex
+visual understanding/embedding plus strict-EU Vision OCR; a self-hosted profile
+sends the same feature request only to its configured endpoint. Photos with
+local time/GPS are queryable through indexed Timeline/Map projections in every
 recognition state. At close map zoom, grouped markers expand into a thumbnail,
 caption, status, and capture-time list; the adaptive Photos Timeline track opens
 the same library links from overlapping markers or a selected density bucket.
@@ -247,6 +329,82 @@ only for explicit diagnostics. Jobs launch/restart actions follow the worker
 catalog's `manualRun` capability. Generic cancel/clear actions leave folder
 imports, recognition batches, and paid per-photo work untouched; manage those
 campaigns on `/media` and `/media/analysis` instead.
+
+Optional **Import + Google** uses `previewFolderStream` → `confirmFolderStream`
+to authorize a source-scoped total gross ceiling (not a snapshot of all future
+photos). A running folder campaign can be upgraded without restarting discovery.
+The local coordinator overlaps bounded directory pages and 25-file inspection /
+preview steps. Its 24-hour job timeout replaces the generic 15-minute timeout;
+Mongo cursors/claims still recover if interrupted. Local-only scan → review →
+confirm is unchanged.
+
+The independent `mediaRecognitionBatch` coordinator dispatches one immutable
+wave per stream at a time, up to 500 photos (UI default 100), flushing a partial
+wave after 30 seconds or local completion. `0084_media_folder_streams` creates
+authorization TTL, runnable-stream, batch lookup and unique campaign/asset
+assignment indexes. The exact pending preview and integer-microdollar allocation
+are committed together before dispatch; crash recovery replays the receipt.
+Confirmed authorizations are retained; unconfirmed previews expire in one hour.
+Late duplicate files and failed photos are not automatically recharged by the
+same stream. Retry failures through a fresh explicit Analysis batch.
+
+`pauseFolderStream` stops **new waves**, not previously confirmed batches or local
+import. Resume reviews the **total** ceiling including already allocated waves;
+allocation is conservative, not actual spend, and unused wave estimates are not
+automatically refunded. Profile/source changes pause the stream. Monthly budget
+exhaustion (or daily exhaustion when enabled) defers new waves to the next UTC
+window. An explicit `mediaKnowledge.promoGuard.dailyGrossLimitUsd: null` disables
+only the daily stop; dispatch then uses monthly capacity while continuing to
+record daily usage. Missing values retain the guarded default. Per-photo ledger
+reservations remain the final race-safe limit. No Google request is authorized
+merely by starting a local scan.
+
+#### Disabling Google without deleting media
+
+An expired credit is not an application-level stop switch. Set the global
+Google switch off in optional Google settings (`externalServices.google.enabled:
+false`) and disable its photo profile. On older deployments without this switch,
+disable all Google/Gemini profiles and environment fallbacks; if Google is the
+only recognition provider, also set `mediaKnowledge.enabled` to false. Local
+uploads, folder import, previews and stored results remain available.
+
+Pause Google folder streams and cancel any unstarted confirmed Google batches.
+When no non-Google photo work shares the queues, pause `mediaRecognition` and
+`mediaRecognitionBatch` through Jobs as an additional durable safeguard. Pause
+stops new work; a provider request that already started may still finish. Do not
+clear queues, delete history, remove originals or restart MongoDB/Redis to stop
+cloud processing. The global switch gates token acquisition and the final Google
+network boundary, including photo events with a previously prepared token.
+This does not disable APIs in the Google account.
+
+Re-enabling photo queues later requires a deliberate review of their pending
+provider snapshots; an old Google batch must not silently become a local-model
+batch. The general connection and results-review feature is described
+in the [provider-neutral photo design](docs/superpowers/specs/2026-09-30-provider-neutral-photo-analysis-design.md);
+that document is a design, not a claim that the new adapter is deployed.
+
+The Media workspace uses progressive disclosure: the folder tree is collapsed
+until **Choose folder** is activated, while durable campaign progress remains
+visible. Status, placement, sorting, page/all-results selection, and processing
+actions share one compact toolbar. Long provider, privacy, placement, and
+incremental-sync explanations belong in the reusable hover/focus `MediaHint`
+rather than in always-visible paragraphs; the tooltip trigger must retain an
+accessible name for keyboard and screen-reader users.
+
+Media detail exposes one **Storage & deletion…** panel. **Remove from Mycelia**
+deletes an external-reference or preview-only library record together with its
+Mycelia WebP previews and derived projections, writes a local deletion receipt,
+and never deletes the mounted original. A later folder sync may import that
+still-present original again. **Ignore for processing** instead preserves the
+record, previews, original reference, and existing analysis while excluding it
+from unprocessed/attention selection; **Return to processing** clears that
+flag. Managed originals must still use their separate preview-and-confirm
+deletion before the remaining library item can be removed. These mutations must
+claim the same per-asset reservation used by recognition batches and are
+rejected while recognition is reserved, queued, or processing. A managed
+original deletion remains preview-and-confirm; cancelling its review must call
+`cancelOriginalDeletionPreview` so the reservation claim is released instead
+of waiting for expiry.
 
 #### Isolated Qdrant RAG development
 
@@ -415,6 +573,24 @@ chunk: zero is exact, while existing work is shown either as the persisted
 campaign estimate (`≈N`, with its update time) or as `Work remains` when no
 estimate is available.
 
+The unified **Audio processing overview** uses authenticated
+`GET /api/audio/pipeline/operations`, cached/coalesced for 15 seconds per
+authorization scope. Each refresh reads host ingestion `/health`, three BullMQ
+queue counters, one `_id`-indexed persisted snapshot, and at most five recent
+imports. The latter uses migration `0082_audio_imports_recent.ts`'s
+`audio_imports_recent_v1` index and a 1-second Mongo deadline; a missing index
+returns an explicit warning, never an unhinted fallback scan. No corpus counts
+or audio payloads are read by this endpoint. **Update audio counts** reuses the
+existing explicit pipeline calculation and saves its small summary in
+`jobs_dashboard_snapshots` (`audio_operations:v1`). A failed core-audio count keeps
+the last complete data and timestamp, marking it stale instead of publishing
+fallback zeros; unrelated job-history failures do not invalidate audio counts.
+Publishing a snapshot invalidates the lightweight cache immediately.
+The host adds scan start/finish/trigger, interval/batch settings,
+and a bounded read of the configured staging database's publication receipt.
+Changing Python source requires restarting only the host ingestion LaunchAgent;
+frontend/backend readiness does not prove the host daemon has reloaded.
+
 Jobs **First 8 on** enables diarization routes in displayed order up to the
 enforced eight-slot total. Routes that do not fit remain disabled, and the card
 keeps the enabled/total route count visible. The same maximum applies to saved
@@ -506,7 +682,8 @@ Keep live service availability separate from corpus-wide statistics:
 - Jobs and Settings read one canonical worker catalog. The last successful
   catalog is persisted in `jobs_dashboard_snapshots`; discovery or Python
   `/capabilities` failure marks rows stale/degraded instead of returning an
-  empty list. `ingestion` is daemon-managed and has no queue controls.
+  empty list. `ingestion` is daemon-managed: only a bounded **Run now** request
+  is allowed; daemon pause, schedule, and concurrency remain host-controlled.
 - Page load reads only live queue totals and persisted snapshots. **Update
   history**, **Update backlog**, and the Timeline audit action return an
   operation id immediately; old values remain visible while the leased refresh
@@ -1094,16 +1271,91 @@ a large source chunk; inspect Job Detail window diagnostics first.
 2. Common causes:
    - Corrupted audio file
    - Unsupported codec
-   - File permission issues (grant Full Disk Access)
-3. Failed files auto-retry after 2 hours
+   - Missing, stale, or unreadable staging archive
+3. Failed files remain cached until an explicit retry with
+   `python/manage_errors.py`; fixing staging access does not clear old errors.
 
-### macOS Full Disk Access
+### macOS Voice Memos staging boundary
 
-Required for accessing Voice Memos:
+The supported background configuration avoids Full Disk Access for `uv` and
+`tech.mycelia.ingestion`:
 
-1. System Settings → Privacy & Security → Full Disk Access
-2. Add your terminal app (Terminal, iTerm, VS Code, etc.)
-3. Restart the terminal
+1. Set `MYCELIA_APPLE_VOICEMEMOS_MODE=staged`.
+2. Point `MYCELIA_APPLE_VOICEMEMOS_ROOT` at the local published
+   `~/Library/mycelia/voice-memos-staging/audio-original` directory and
+   `MYCELIA_APPLE_VOICEMEMOS_DB` at the stable local SQLite snapshot.
+3. From an already trusted interactive Terminal, preview with
+   `bash scripts/refresh-voice-memos-staging.sh`, then refresh with
+   `bash scripts/refresh-voice-memos-staging.sh --apply`.
+4. Let the running LaunchAgent pick up the atomic snapshot on its next cycle.
+
+The refresh wrapper runs the existing `icloud-archive-tool`, performs a full
+archive verification, then hash-verifies and materializes the audio at or after
+`MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE` alongside the newest completed SQLite
+snapshot in `~/Library/mycelia/voice-memos-staging`. The database is replaced
+last and atomically. The archive and local audio staging are additive; the
+wrapper does not delete source or archived recordings. Incremental refreshes
+reuse size-and-hash-verified files.
+The capacity check budgets only audio needing copying, the temporary SQLite
+snapshot, and a 1 GiB reserve. Full replacement-file sizes are included while
+old files still exist. Duplicate catalog paths count once. Existing staged
+audio symlinks are copied into regular files, even when target hashes match;
+symlinked staging directories are rejected before publication. Keeping audio local
+also prevents launchd from crossing the removable-volume privacy boundary. A
+fully unattended read of Apple's Group Container still requires a
+TCC-authorized background process, so `live` mode remains an explicit legacy
+opt-in rather than the normal LaunchAgent configuration. If no interactive
+process may read the protected library either, export recordings from Voice
+Memos to a user-readable folder and import that folder instead.
+
+When `/health` is `degraded`, inspect `appleVoiceMemosMode` and
+`lastCycle.sources` and `lastCycle.ingestion` before changing any data. The
+ingestion counts are `attempted`, `succeeded`, `failed`, `remaining`, and
+`cached_errors`, scoped to this daemon's eligible sources or explicitly
+selected IDs. Current failures and unresolved cached errors degrade health;
+pending work alone does not. A readable source with no new
+files is `completed` with `discovered: 0`; SQLite corruption and missing-path
+failures are explicit. Health describes the latest cycle's discovery and
+eligible ingestion work; full media verification and snapshot freshness must
+be checked through the interactive staging refresh. For a bounded
+recovery, also set `MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE` to a timezone-aware ISO
+timestamp. Stop the LaunchAgent only when running a separate foreground
+recovery process; publishing a new staging snapshot is atomic and does not
+require a stop.
+
+Apple UUID lookup uses paginated Mongo finds with projection, sort, and limit
+under `options`; catalogs and existing duplicate sets can exceed 1,000 records.
+A single pending UUID match can have its path updated to a readable regular
+file in the configured root. The guarded update preserves source identity,
+metadata, and cached failures. Completed sources are not rebound; ambiguous
+matches and unreadable replacement paths produce discovery warnings. A catalog
+with multiple paths for the same UUID is skipped with a warning before either
+insertion or path repair, including when that UUID has only one Mongo record. Cached
+errors still require explicit retries through `python/manage_errors.py`.
+
+Before invoking the archive tool for a plan, refresh, or verification, the
+staging wrapper loads its `scripts/common.sh` and calls `load_config`. Its
+effective `ARCHIVE_TARGET` must resolve to the same directory as
+`MYCELIA_VOICE_MEMOS_ARCHIVE_ROOT`; a mismatch fails before that archive command
+runs. Configure a custom root in both places. The archive tool uses
+`ICLOUD_ARCHIVE_CONFIG`, falling back to its `config.env`, which can override
+shell environment values. Equivalent paths through archive symlinks are
+accepted; staging-directory symlinks remain rejected.
+
+The host service's `/readiness` endpoint reports application startup with
+`service: mycelia-host-ingestion` and includes current ingestion health. The
+installer polls it for at most 90 seconds; readiness is independent of slow
+authentication, discovery, and audio processing. A ready service with
+`starting` or `degraded` ingestion health is installed successfully, with that
+state printed for inspection. `/health` remains the ingestion outcome signal.
+Invalid batch or interval settings fail startup before readiness is enabled.
+The installer uses a total transfer timeout and a subprocess deadline for each
+HTTP probe, both bounded by the remaining 90-second budget. Interrupted and
+malformed responses are retried; late responses cannot report success.
+
+Source ingestion writes audio chunks as unordered 50-operation `bulkWrite`
+batches. The `$setOnInsert` contract on `(original_id, index)` makes a retry
+idempotent; do not replace it with plain inserts when changing batch size.
 
 ## Project Structure
 

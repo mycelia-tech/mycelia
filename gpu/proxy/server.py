@@ -136,6 +136,12 @@ async def transcribe_audio(
             params["language"] = language
         if prompt:
             params["initial_prompt"] = prompt
+        # OpenAI clients request word timing via timestamp_granularities[]=word;
+        # only then ask whisper for word_timestamps so default callers are unaffected.
+        form = await request.form()
+        granularities = form.getlist("timestamp_granularities[]") + form.getlist("timestamp_granularities")
+        if "word" in granularities:
+            params["word_timestamps"] = "true"
         
         # Forward request to whisper service and stream response back
         async with httpx.AsyncClient(timeout=300.0) as client:

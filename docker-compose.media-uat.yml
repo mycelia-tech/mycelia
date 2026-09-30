@@ -1,0 +1,18 @@
+services:
+  backend:
+    environment:
+      MEDIA_SOURCE_ROOT: /media-source
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-adc
+    volumes:
+      - type: bind
+        source: ${MEDIA_SOURCE_HOST_PATH:?Set MEDIA_SOURCE_HOST_PATH in .env}
+        target: /media-source
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GCP_ADC_HOST_PATH:?Set GCP_ADC_HOST_PATH in .env}
+        target: /run/secrets/gcp-adc
+        read_only: true
+        bind:
+          create_host_path: false

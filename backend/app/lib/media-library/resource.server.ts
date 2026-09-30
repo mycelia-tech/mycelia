@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { bindMediaConfig } from "@/lib/media/provider-settings.server.ts";
+import { mediaInventoryScope } from "@/lib/media/inventory-scope.server.ts";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { type Db, GridFSBucket, ObjectId } from "mongodb";
@@ -9,12 +11,12 @@ import { getServerConfig } from "@/lib/config/serverConfig.server.ts";
 import { enqueueJob, getQueue } from "@/lib/jobs/queue.ts";
 import { publishJobUpdate } from "@/lib/events/publisher.ts";
 import {
+  assertMediaScanSelection,
   createWebpPreview,
   inspectLocalMedia,
   listMediaSourceFolders,
   mediaSourceConfigured,
   resolveMediaSourcePath,
-  scanMediaSourceInventory,
 } from "@/lib/media/local.server.ts";
 import {
   enqueueConfirmedAsset,
@@ -23,7 +25,10 @@ import {
 import {
   assertMediaPerImportBudget,
   estimateMediaGrossUsd,
+  gcpUsageLedgerId,
+  summarizeGcpUsage,
 } from "@/lib/media/costs.ts";
+import { assertPromoGuard } from "@/lib/media/promo-guard.ts";
 import {
   type MediaKnowledgeConfig,
   type MediaRecognitionProfile,
@@ -35,9 +40,18 @@ import {
   type MediaRecognitionSelection,
   zMediaRecognitionSelection,
 } from "@myceliasdk/media-library.ts";
+import { mediaRecognitionAssetReservationId } from "./recognition-reservation-fence.server.ts";
+import { processMediaFolderInventory } from "./folder-inventory.server.ts";
+import {
+  authorizeFolderStream,
+  dispatchFolderStream,
+  runnableFolderStreams,
+  USD_MICROS,
+  usdMicros,
+} from "./folder-stream.server.ts";
 
 export const FOLDER_CHUNK_SIZE = 25;
-const MAX_FOLDER_FILES = 20_000;
+const MAX_RECOGNITION_BATCH_ASSETS = 20_000;
 export const RECOGNITION_WINDOW = 16;
 const PREVIEW_TTL_MS = 60 * 60 * 1000;
 const RESERVATION_PREPARE_TTL_MS = 15 * 60 * 1000;
@@ -75,6 +89,23 @@ const processFolderCampaignSchema = z.object({
 
 const recognitionTasksSchema = z.array(zMediaRecognitionTask).min(1).max(4)
   .default(["visual-understanding", "ocr"]);
+const previewFolderStreamSchema = z.object({
+  action: z.literal("previewFolderStream"),
+  campaignId: z.string().refine(ObjectId.isValid),
+  profileId: z.string().min(1),
+  maxGrossUsd: z.number().finite().min(0.01).max(300),
+  batchSize: z.number().int().min(1).max(500).default(100),
+});
+const confirmFolderStreamSchema = z.object({
+  action: z.literal("confirmFolderStream"),
+  previewId: z.string().refine(ObjectId.isValid),
+  consent: z.literal(true),
+});
+const pauseFolderStreamSchema = z.object({
+  action: z.literal("pauseFolderStream"),
+  campaignId: z.string().refine(ObjectId.isValid),
+  confirm: z.literal(true),
+});
 const previewRecognitionBatchSchema = z.object({
   action: z.literal("previewRecognitionBatch"),
   profileId: z.string().min(1),
@@ -108,6 +139,12 @@ const processRecognitionBatchSchema = z.object({
   action: z.literal("processRecognitionBatch"),
   batchId: z.string().refine(ObjectId.isValid).optional(),
   jobId: z.string().refine(ObjectId.isValid),
+});
+const setRecognitionIgnoredSchema = z.object({
+  action: z.literal("setRecognitionIgnored"),
+  selection: zMediaRecognitionSelection,
+  ignored: z.boolean(),
+  confirm: z.literal(true),
 });
 
 const timelineSchema = z.object({
@@ -148,6 +185,9 @@ export const mediaLibraryRequestSchema = z.discriminatedUnion("action", [
   getActiveFolderCampaignSchema,
   confirmFolderCampaignSchema,
   processFolderCampaignSchema,
+  previewFolderStreamSchema,
+  confirmFolderStreamSchema,
+  pauseFolderStreamSchema,
   previewRecognitionBatchSchema,
   confirmRecognitionBatchSchema,
   getRecognitionBatchSchema,
@@ -155,6 +195,7 @@ export const mediaLibraryRequestSchema = z.discriminatedUnion("action", [
   cancelRecognitionBatchSchema,
   retryRecognitionBatchFailuresSchema,
   processRecognitionBatchSchema,
+  setRecognitionIgnoredSchema,
   timelineSchema,
   timeRangeSchema,
   mapSchema,
@@ -187,7 +228,7 @@ function mediaConfig(value: unknown): MediaKnowledgeConfig {
 }
 
 async function loadConfig(): Promise<MediaKnowledgeConfig> {
-  return mediaConfig(await getServerConfig());
+  return bindMediaConfig(await getServerConfig());
 }
 
 function selectProfile(
@@ -500,11 +541,24 @@ async function cancelRecognitionQueueJob(
 
 const MEDIA_BATCH_CHILD_CANCEL_REASON = "media_recognition_batch_cancelled";
 
-async function stageRecognitionAssetAfterCancellation(
+export async function stageRecognitionAssetAfterCancellation(
   db: Db,
   batch: any,
   item: any,
 ): Promise<boolean> {
+  const restored = await db.collection("media_assets").updateOne(
+    {
+      _id: item.assetId,
+      owner: batch.owner,
+      status: "queued",
+      currentRunId: { $type: "string" },
+    },
+    {
+      $set: { status: "ready", updatedAt: new Date() },
+      $unset: { safeError: "" },
+    },
+  );
+  if (restored.modifiedCount === 1) return true;
   const updated = await db.collection("media_assets").updateOne(
     {
       _id: item.assetId,
@@ -526,6 +580,7 @@ async function stageRecognitionAssetAfterCancellation(
   // Missing assets and an already-staged asset are both terminal-safe. A
   // processing/ready/failed asset must instead be reconciled from its worker.
   return !asset ||
+    (asset.status === "ready" && Boolean(asset.currentRunId)) ||
     (asset.status === "staged" && !asset.currentRunId);
 }
 
@@ -739,6 +794,37 @@ export function folderCampaignProgress(
   campaign: any,
   rawCounts: Record<string, number>,
 ) {
+  if (campaign.streaming && campaign.status === "importing") {
+    const total = Math.max(
+      0,
+      (rawCounts.total ?? 0) - (rawCounts.unsupported ?? 0),
+    );
+    const remaining = (rawCounts.pending ?? 0) + (rawCounts.inspecting ?? 0) +
+      (rawCounts.ready ?? 0) + (rawCounts.importing ?? 0);
+    const processed = Math.max(0, total - remaining);
+    const lastProgressAt = campaign.lastProgressAt ?? campaign.updatedAt;
+    const waitingForRecovery = Boolean(
+      lastProgressAt &&
+        Date.now() - new Date(lastProgressAt).getTime() > 60_000,
+    );
+    return {
+      stage: "streaming",
+      total,
+      processed,
+      remaining,
+      percent: total > 0 ? Math.min(100, processed / total * 100) : 0,
+      totalKnown: campaign.inventoryInitialized === true,
+      currentPath: campaign.inventoryCurrentPath ?? campaign.relativePath,
+      chunkSize: FOLDER_CHUNK_SIZE,
+      waitingForRecovery,
+      message: waitingForRecovery
+        ? "No recent local progress; waiting for the worker or automatic recovery"
+        : "Discovering and importing locally; Google runs in separate batches",
+      nextStep:
+        "Recovery waits for existing queue/file leases (up to 10 minutes after restart). Google batches can be paused independently.",
+      lastProgressAt,
+    };
+  }
   const status = String(campaign.status);
   const totalEntries = rawCounts.total ?? 0;
   const unsupported = rawCounts.unsupported ?? 0;
@@ -752,7 +838,8 @@ export function folderCampaignProgress(
   const importRemaining = (rawCounts.ready ?? 0) +
     (rawCounts.importing ?? 0);
   const importProcessed = Math.max(0, confirmedReady - importRemaining);
-  const stage = status === "queued"
+  const stage = status === "queued" ||
+      (status === "scanning" && campaign.inventoryInitialized === false)
     ? "inventory"
     : status === "scanning"
     ? "metadata_scan"
@@ -771,14 +858,14 @@ export function folderCampaignProgress(
     ? confirmedReady
     : supportedTotal;
   const processed = stage === "inventory"
-    ? 0
+    ? Number(campaign.inventoryDiscovered ?? totalEntries)
     : stage === "metadata_scan"
     ? scanProcessed
     : stage === "creating_previews"
     ? importProcessed
     : total;
   const remaining = Math.max(0, total - processed);
-  const percent = total > 0
+  const percent = stage !== "inventory" && total > 0
     ? Math.min(100, Math.max(0, Number((processed / total * 100).toFixed(1))))
     : 0;
   const startedAt = stage === "creating_previews"
@@ -790,24 +877,26 @@ export function folderCampaignProgress(
   const filesPerSecond = processed > 0 && elapsedSeconds > 0
     ? Number((processed / elapsedSeconds).toFixed(2))
     : undefined;
-  const etaSeconds = filesPerSecond && remaining > 0
+  const etaSeconds = stage !== "inventory" && filesPerSecond && remaining > 0
     ? Math.ceil(remaining / filesPerSecond)
     : undefined;
   const lastProgressAt = campaign.lastProgressAt ?? campaign.updatedAt;
-  const waitingForRecovery = stage === "metadata_scan" && remaining > 0 &&
+  const waitingForRecovery = (stage === "inventory" ||
+    (["metadata_scan", "creating_previews"].includes(stage) &&
+      remaining > 0)) &&
     lastProgressAt &&
     Date.now() - new Date(lastProgressAt).getTime() > 60_000;
   const copy = waitingForRecovery
     ? {
       message:
-        "Waiting for an interrupted local file step to become safe to resume",
+        "No recent local progress; waiting for the worker or automatic recovery",
       nextStep:
-        "No action is required; the watchdog will release the stale claim automatically",
+        "Recovery waits for existing queue/file leases (up to 10 minutes after restart); no rescan is needed",
     }
     : stage === "inventory"
     ? {
-      message: "Building a recursive local file inventory",
-      nextStep: "Metadata and hashes will be checked locally in 25-file steps",
+      message: "Discovering files and folders locally",
+      nextStep: "The total and ETA become available after directory discovery",
     }
     : stage === "metadata_scan"
     ? {
@@ -844,6 +933,12 @@ export function folderCampaignProgress(
     };
   return {
     stage,
+    ...(stage === "inventory"
+      ? {
+        totalKnown: false,
+        currentPath: campaign.inventoryCurrentPath ?? campaign.relativePath,
+      }
+      : {}),
     processed,
     total,
     remaining,
@@ -958,15 +1053,7 @@ async function recoverStaleRecognitionClaims(db: Db, batch: any) {
       );
       continue;
     }
-    await db.collection("media_assets").updateOne(
-      {
-        _id: item.assetId,
-        owner: batch.owner,
-        status: "queued",
-        currentRunId: { $exists: false },
-      },
-      { $set: { status: "staged", updatedAt: new Date() } },
-    );
+    await stageRecognitionAssetAfterCancellation(db, batch, item);
     await db.collection("media_recognition_batch_items").updateOne(
       { _id: item._id, state: "claiming" },
       {
@@ -978,6 +1065,32 @@ async function recoverStaleRecognitionClaims(db: Db, batch: any) {
 }
 
 async function publicFolderCampaign(db: Db, campaign: any) {
+  const streamCounts = campaign.streaming
+    ? await db.collection("media_recognition_batches").aggregate([
+      { $match: { folderCampaignId: campaign._id, owner: campaign.owner } },
+      {
+        $group: {
+          _id: null,
+          ...Object.fromEntries(
+            [
+              "total",
+              "ready",
+              "failed",
+              "skipped",
+              "queued",
+              "processing",
+              "pending",
+              "cancelled",
+            ]
+              .map((
+                key,
+              ) => [key, { $sum: { $ifNull: [`$counts.${key}`, 0] } }]),
+          ),
+        },
+      },
+      { $project: { _id: 0 } },
+    ]).toArray()
+    : [];
   const rawCounts = await stateCounts(
     db,
     "media_folder_items",
@@ -985,6 +1098,8 @@ async function publicFolderCampaign(db: Db, campaign: any) {
     campaign._id,
   );
   const counts = publicFolderCounts(rawCounts);
+  const reusedHashCount = await db.collection("media_folder_items")
+    .countDocuments({ campaignId: campaign._id, hashReused: true });
   const samples = await db.collection("media_folder_items").find({
     campaignId: campaign._id,
     state: { $in: ["ready", "duplicate", "imported"] },
@@ -1004,6 +1119,7 @@ async function publicFolderCampaign(db: Db, campaign: any) {
     relativePath: campaign.relativePath,
     status: campaign.status,
     counts,
+    reusedHashCount,
     progress: folderCampaignProgress(campaign, rawCounts),
     samples,
     inventoryTruncated: Boolean(campaign.inventoryTruncated),
@@ -1011,83 +1127,48 @@ async function publicFolderCampaign(db: Db, campaign: any) {
     createdAt: campaign.createdAt,
     updatedAt: campaign.updatedAt,
     completedAt: campaign.completedAt,
+    ...(campaign.streaming
+      ? {
+        streaming: {
+          state: campaign.streaming.state,
+          counts: streamCounts[0] ?? {},
+          profileName: campaign.streaming.profileSnapshot.name,
+          batchSize: campaign.streaming.batchSize,
+          authorizedGrossUsd: campaign.streaming.authorizedMicros / USD_MICROS,
+          allocatedGrossUsd: campaign.streaming.allocatedMicros / USD_MICROS,
+          lastBatchId: campaign.streaming.lastBatchId,
+          safeError: campaign.streaming.safeError,
+          nextCheckAt: campaign.streaming.nextCheckAt,
+          batches: await db.collection("media_recognition_batches").find({
+            folderCampaignId: campaign._id,
+            owner: campaign.owner,
+          }, {
+            projection: { _id: 1, status: 1, counts: 1, authorizedGrossUsd: 1 },
+          })
+            .sort({ createdAt: -1 }).limit(5).toArray(),
+        },
+      }
+      : {}),
   };
 }
 
-async function initializeFolderInventory(db: Db, campaign: any): Promise<void> {
-  const inventory = await scanMediaSourceInventory(
-    campaign.relativePath,
-    MAX_FOLDER_FILES,
-    { includeUnsupported: true },
-  );
-  if (inventory.truncated) {
-    throw new Error(
-      `Mounted folder contains more than ${MAX_FOLDER_FILES} files; split it into subfolders`,
-    );
-  }
-  if (inventory.paths.length === 0 && inventory.unsupportedPaths.length === 0) {
-    throw new Error("No supported JPEG, PNG, WebP, or PDF files were found");
-  }
-  const items = db.collection("media_folder_items");
-  const inventoryItems = [
-    ...inventory.paths.map((relativePath) => ({
-      relativePath,
-      state: "pending",
-    })),
-    ...inventory.unsupportedPaths.map((relativePath) => ({
-      relativePath,
-      state: "unsupported",
-    })),
-  ].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  for (let index = 0; index < inventoryItems.length; index += 1_000) {
-    const page = inventoryItems.slice(index, index + 1_000);
-    await items.bulkWrite(
-      page.map((entry) => ({
-        updateOne: {
-          filter: {
-            campaignId: campaign._id,
-            relativePath: entry.relativePath,
-          },
-          update: {
-            $setOnInsert: {
-              _id: deterministicObjectId([
-                "media-folder-item-v1",
-                campaign._id,
-                entry.relativePath,
-              ]),
-              campaignId: campaign._id,
-              owner: campaign.owner,
-              relativePath: entry.relativePath,
-              state: entry.state,
-              ...(entry.state === "unsupported"
-                ? { safeError: "Unsupported file type" }
-                : {}),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          },
-          upsert: true,
-        },
-      })),
-      { ordered: false },
-    );
-  }
-  const scanStartedAt = campaign.scanStartedAt ?? new Date();
-  await db.collection("media_folder_campaigns").updateOne(
-    { _id: campaign._id, inventoryInitialized: { $ne: true } },
-    {
-      $set: {
-        inventoryInitialized: true,
-        inventoryTruncated: false,
-        status: "scanning",
-        scanStartedAt,
-        lastProgressAt: scanStartedAt,
-        updatedAt: scanStartedAt,
-      },
-    },
-  );
-  campaign.scanStartedAt = scanStartedAt;
-  campaign.lastProgressAt = scanStartedAt;
+export function mediaFolderReusableHashQuery(
+  owner: string,
+  campaignId: ObjectId,
+  relativePath: string,
+  byteLength: number,
+  sourceModifiedAtMs: number,
+) {
+  return {
+    owner,
+    campaignId: { $ne: campaignId },
+    relativePath,
+    byteLength,
+    sourceModifiedAtMs,
+    sha256: { $type: "string" },
+    kind: "image",
+    state: { $in: ["ready", "duplicate", "imported"] },
+  };
 }
 
 async function inspectFolderChunk(
@@ -1124,7 +1205,20 @@ async function inspectFolderChunk(
     if (!item) break;
     processed += 1;
     try {
-      const inspected = await inspectLocalMedia(
+      const resolved = await resolveMediaSourcePath(item.relativePath);
+      const fileInfo = await Deno.stat(resolved.realPath);
+      const modifiedAtMs = fileInfo.mtime?.getTime();
+      const reusable = modifiedAtMs == null ? null : await items.findOne(
+        mediaFolderReusableHashQuery(
+          campaign.owner,
+          campaign._id,
+          item.relativePath,
+          fileInfo.size,
+          modifiedAtMs,
+        ),
+        { sort: { updatedAt: -1 } },
+      );
+      const inspected = reusable ?? await inspectLocalMedia(
         item.relativePath,
         config.limits,
       );
@@ -1165,9 +1259,16 @@ async function inspectFolderChunk(
             location: inspected.location,
             metadata: inspected.metadata,
             duplicateAssetId: duplicate?._id,
+            sourceModifiedAtMs: modifiedAtMs,
+            hashReused: Boolean(reusable),
+            ...(reusable ? { hashSourceCampaignId: reusable.campaignId } : {}),
             updatedAt: new Date(),
           },
-          $unset: { claimedAt: "", safeError: "" },
+          $unset: {
+            claimedAt: "",
+            safeError: "",
+            ...(reusable ? {} : { hashSourceCampaignId: "" }),
+          },
         },
       );
     } catch (error) {
@@ -1413,12 +1514,34 @@ async function processFolderCampaign(
   if (!campaign) return { success: true, idle: true };
   const config = await loadConfig();
   try {
-    if (!campaign.inventoryInitialized) {
-      await initializeFolderInventory(db, campaign);
-      campaign.inventoryInitialized = true;
-      campaign.status = "scanning";
+    let inventoryComplete = campaign.inventoryInitialized === true;
+    let discovered = 0;
+    if (!inventoryComplete) {
+      const inventory = await processMediaFolderInventory(
+        db,
+        campaign,
+        undefined,
+        25,
+      );
+      inventoryComplete = inventory.complete;
+      discovered = inventory.processed;
+      if (!campaign.streaming) {
+        return await folderWorkerResult(
+          db,
+          campaign._id,
+          inventory.processed,
+          true,
+        );
+      }
     }
-    if (campaign.status === "queued" || campaign.status === "scanning") {
+    let inspected = 0;
+    if (campaign.streaming) {
+      inspected = await inspectFolderChunk(db, campaign, config);
+    }
+    if (
+      !campaign.streaming &&
+      (campaign.status === "queued" || campaign.status === "scanning")
+    ) {
       const processed = await inspectFolderChunk(db, campaign, config);
       const lastProgressAt = new Date();
       const remaining = await db.collection("media_folder_items")
@@ -1474,7 +1597,7 @@ async function processFolderCampaign(
         $unset: { claimedAt: "" },
       },
     );
-    let processed = 0;
+    let processed = discovered + inspected;
     for (let index = 0; index < FOLDER_CHUNK_SIZE; index += 1) {
       const item = await items.findOneAndUpdate(
         { campaignId: campaign._id, state: "ready" },
@@ -1493,10 +1616,14 @@ async function processFolderCampaign(
     }
     const remaining = await items.countDocuments({
       campaignId: campaign._id,
-      state: { $in: ["ready", "importing"] },
+      state: {
+        $in: campaign.streaming
+          ? ["pending", "inspecting", "ready", "importing"]
+          : ["ready", "importing"],
+      },
     });
     const lastProgressAt = new Date();
-    if (remaining === 0) {
+    if (remaining === 0 && inventoryComplete) {
       const rawCounts = await stateCounts(
         db,
         "media_folder_items",
@@ -1528,7 +1655,7 @@ async function processFolderCampaign(
       db,
       campaign._id,
       processed,
-      remaining > 0,
+      remaining > 0 || !inventoryComplete,
     );
   } catch (error) {
     await campaigns.updateOne(
@@ -1545,12 +1672,23 @@ async function processFolderCampaign(
   }
 }
 
-export function recognitionEligibilityQuery(owner: string) {
+export function recognitionEligibilityQuery(owner: string, reanalyze = false) {
   return {
     owner,
+    ...(!reanalyze ? { currentRunId: { $exists: false } } : {}),
     kind: "image",
+    "preview.fileId": { $type: "objectId" },
+    derivedDeletionPending: { $exists: false },
+    originalDeletionPending: { $exists: false },
+    recognitionIgnoredAt: { $exists: false },
     status: {
-      $in: ["staged", "failed", "budget_blocked", "recognition_disabled"],
+      $in: [
+        "staged",
+        "failed",
+        "budget_blocked",
+        "recognition_disabled",
+        ...(reanalyze ? ["ready"] : []),
+      ],
     },
     $or: [
       {
@@ -1582,12 +1720,13 @@ export function normalizeRecognitionSelection(
 function inventorySelectionQuery(
   filter: MediaRecognitionSelection["inventoryFilter"],
 ): Record<string, unknown> {
-  if (filter === "ready") return { status: "ready" };
+  if (filter === "ready") return { currentRunId: { $type: "string" } };
   if (filter === "processing") {
     return { status: { $in: ["queued", "processing"] } };
   }
   if (filter === "needs_attention") {
     return {
+      recognitionIgnoredAt: { $exists: false },
       status: {
         $in: [
           "failed",
@@ -1600,7 +1739,14 @@ function inventorySelectionQuery(
     };
   }
   if (filter === "unprocessed") {
-    return { status: { $nin: ["ready", "queued", "processing"] } };
+    return {
+      currentRunId: { $exists: false },
+      recognitionIgnoredAt: { $exists: false },
+      status: { $nin: ["ready", "queued", "processing"] },
+    };
+  }
+  if (filter === "ignored") {
+    return { recognitionIgnoredAt: { $type: "date" } };
   }
   return {};
 }
@@ -1678,8 +1824,22 @@ export function recognitionSelectionQuery(
 ): Record<string, unknown> {
   return {
     $and: [
-      recognitionEligibilityQuery(owner),
+      recognitionEligibilityQuery(owner, selection.reanalyze),
       recognitionSelectionScopeQuery(owner, cutoff, selection),
+    ],
+  };
+}
+
+export async function resolvedRecognitionSelectionScope(
+  db: Db,
+  owner: string,
+  cutoff: Date,
+  selection: MediaRecognitionSelection,
+) {
+  return {
+    $and: [
+      recognitionSelectionScopeQuery(owner, cutoff, selection),
+      ...await mediaInventoryScope(db, owner, selection),
     ],
   };
 }
@@ -1689,18 +1849,16 @@ type RecognitionReservationRef = {
   sha256: string;
 };
 
-function recognitionReservationId(owner: string, assetId: ObjectId): ObjectId {
-  return deterministicObjectId([
-    "media-recognition-asset-reservation-v1",
-    owner,
-    assetId,
-  ]);
-}
-
 async function cleanupExpiredRecognitionReservations(db: Db, now: Date) {
   await db.collection("media_recognition_asset_reservations").deleteMany({
-    state: "preparing",
     expiresAt: { $lte: now },
+    $or: [
+      { state: "preparing" },
+      {
+        state: "deleting",
+        deletionTarget: "managed_original",
+      },
+    ],
   });
 }
 
@@ -1712,7 +1870,7 @@ export async function activeRecognitionReservationAssetIds(
   await cleanupExpiredRecognitionReservations(db, now);
   return await db.collection<any>("media_recognition_asset_reservations")
     .find({ owner }, { projection: { assetId: 1 } })
-    .limit(MAX_FOLDER_FILES).map((entry) => entry.assetId as ObjectId)
+    .map((entry) => entry.assetId as ObjectId)
     .toArray();
 }
 
@@ -1738,7 +1896,7 @@ export async function reserveRecognitionAssets(
         page.map((entry) => ({
           updateOne: {
             filter: {
-              _id: recognitionReservationId(owner, entry.assetId),
+              _id: mediaRecognitionAssetReservationId(owner, entry.assetId),
               state: "preparing",
               expiresAt: { $lte: now },
             },
@@ -1769,7 +1927,7 @@ export async function reserveRecognitionAssets(
     }
   }
   const ids = assetRefs.map((entry) =>
-    recognitionReservationId(owner, entry.assetId)
+    mediaRecognitionAssetReservationId(owner, entry.assetId)
   );
   const current = await reservations.find(
     { _id: { $in: ids } },
@@ -1887,7 +2045,12 @@ export async function reconcileRecognitionBatch(
       const asset = byAsset.get(String(item.assetId));
       let state = item.state;
       let error: string | undefined;
-      if (asset?.status === "ready" && asset.currentRunId) state = "ready";
+      if (
+        asset?.status === "ready" && asset.currentRunId &&
+        (!batch.selection?.reanalyze ||
+          (job?.result?.success === true &&
+            job.result.runId === asset.currentRunId))
+      ) state = "ready";
       else if (asset?.status === "budget_blocked") {
         state = "budget_blocked";
         error = asset.safeError;
@@ -1913,7 +2076,10 @@ export async function reconcileRecognitionBatch(
         state = "failed";
         error = safeError(job?.failedReason ?? "Recognition job failed");
       } else if (job?.state === "completed") {
-        state = asset?.status === "ready" ? "ready" : "failed";
+        state = asset?.status === "ready" &&
+            (!batch.selection?.reanalyze || job?.result?.success === true)
+          ? "ready"
+          : "failed";
         error = state === "failed"
           ? safeError(
             asset?.safeError ?? "Recognition completed without a ready asset",
@@ -1922,7 +2088,7 @@ export async function reconcileRecognitionBatch(
       }
       if (
         ["failed", "cancelled"].includes(state) &&
-        asset?.status === "queued" && !asset.currentRunId
+        asset?.status === "queued"
       ) {
         // The queue can become active after cancellation intent is persisted,
         // then fail closed before the provider starts. Re-stage its untouched
@@ -2158,15 +2324,22 @@ async function prepareRecognitionBatch(
     auth.principal,
     cutoff,
   );
-  const selectionQuery = recognitionSelectionQuery(
+  const selectionScope = await resolvedRecognitionSelectionScope(
+    db,
     auth.principal,
     cutoff,
     selection,
   );
+  const selectionQuery = {
+    $and: [
+      recognitionEligibilityQuery(auth.principal, selection.reanalyze),
+      selectionScope,
+    ],
+  };
   const reservedByActiveBatchCount = reservedAssetIds.length > 0
     ? await db.collection("media_assets").countDocuments({
       $and: [
-        recognitionSelectionScopeQuery(auth.principal, cutoff, selection),
+        selectionScope,
         { _id: { $in: reservedAssetIds } },
       ],
     })
@@ -2185,7 +2358,13 @@ async function prepareRecognitionBatch(
         source: 1,
       },
     },
-  ).sort({ createdAt: 1, _id: 1 }).limit(MAX_FOLDER_FILES).toArray();
+  ).sort({ createdAt: 1, _id: 1 }).limit(MAX_RECOGNITION_BATCH_ASSETS + 1)
+    .toArray();
+  if (candidates.length > MAX_RECOGNITION_BATCH_ASSETS) {
+    throw new Error(
+      `This selection exceeds ${MAX_RECOGNITION_BATCH_ASSETS} photos per recognition batch. Narrow the date or filename filters; the local library has no file-count limit.`,
+    );
+  }
 
   const eligible: Array<{ _id: ObjectId; sha256: string }> = [];
   const missingIds: ObjectId[] = [];
@@ -2217,11 +2396,7 @@ async function prepareRecognitionBatch(
   }
   const skippedRows = await db.collection("media_assets").aggregate([
     {
-      $match: recognitionSelectionScopeQuery(
-        auth.principal,
-        cutoff,
-        selection,
-      ),
+      $match: selectionScope,
     },
     { $group: { _id: "$status", count: { $sum: 1 } } },
   ]).toArray();
@@ -2255,6 +2430,7 @@ async function prepareRecognitionBatch(
     selectionDigest: digest,
     perAssetGrossUsd,
     authorizedGrossUsd,
+    costKnown: profile.providerType !== "openai-compatible",
     missingOriginalCount: missingIds.length,
     reservedByActiveBatchCount,
     skippedByStatus,
@@ -2268,10 +2444,19 @@ async function prepareRecognitionBatch(
       id: profile.id,
       name: profile.name,
       providerType: profile.providerType,
+      ...(profile.providerType === "openai-compatible"
+        ? {
+          endpoint: profile.connectionSnapshot?.baseUrl,
+          model: profile.model,
+          language: profile.language,
+          maxOutputTokens: profile.maxOutputTokens,
+        }
+        : {}),
     },
     requestedTasks,
     selection,
     eligibleCount: eligible.length,
+    costKnown: profile.providerType !== "openai-compatible",
     missingOriginalCount: missingIds.length,
     skippedByStatus,
     perAssetGrossUsd,
@@ -2321,6 +2506,25 @@ async function ensureRecognitionBatchItems(
   }
 }
 
+async function exactEligibleRecognitionRefs(
+  db: Db,
+  owner: string,
+  assetRefs: RecognitionReservationRef[],
+  reanalyze = false,
+): Promise<RecognitionReservationRef[]> {
+  if (assetRefs.length === 0) return [];
+  const assets = await db.collection<any>("media_assets").find({
+    _id: { $in: assetRefs.map((entry) => entry.assetId) },
+    ...recognitionEligibilityQuery(owner, reanalyze),
+  }, { projection: { _id: 1, sha256: 1 } }).toArray();
+  const shaById = new Map(
+    assets.map((asset) => [String(asset._id), String(asset.sha256)]),
+  );
+  return assetRefs.filter((entry) =>
+    shaById.get(String(entry.assetId)) === entry.sha256
+  );
+}
+
 export async function materializeRecognitionBatch(
   db: Db,
   batch: any,
@@ -2344,6 +2548,23 @@ export async function materializeRecognitionBatch(
     throw new Error(
       `${safeError}. Build a new preview to process only the remaining photos.`,
     );
+  }
+  const exactRefs = await exactEligibleRecognitionRefs(
+    db,
+    batch.owner,
+    assetRefs,
+    batch.selection?.reanalyze === true,
+  );
+  if (exactRefs.length !== assetRefs.length) {
+    await releaseRecognitionReservations(db, batch._id);
+    const changedCount = assetRefs.length - exactRefs.length;
+    const safeError =
+      `${changedCount} photo(s) changed, lost their sanitized preview, or became ineligible before batch materialization`;
+    await db.collection("media_recognition_batches").updateOne(
+      { _id: batch._id, materializedAt: { $exists: false } },
+      { $set: { status: "paused", safeError, updatedAt: new Date() } },
+    );
+    throw new Error(`${safeError}. Build a new batch preview.`);
   }
   await ensureRecognitionBatchItems(
     db,
@@ -2388,6 +2609,29 @@ export async function materializeRecognitionBatch(
     return current;
   }
   throw new Error("Recognition batch materialization lost its durable claim");
+}
+
+export async function claimRecognitionBatchAssetForQueue(
+  db: Db,
+  owner: string,
+  assetId: ObjectId,
+  sha256: string,
+  expectedStatus: string,
+  reanalyze = false,
+) {
+  return await db.collection<any>("media_assets").findOneAndUpdate(
+    {
+      _id: assetId,
+      ...recognitionEligibilityQuery(owner, reanalyze),
+      sha256,
+      status: expectedStatus,
+    },
+    {
+      $set: { status: "queued", updatedAt: new Date() },
+      $unset: { safeError: "" },
+    },
+    { returnDocument: "after" },
+  );
 }
 
 async function confirmRecognitionBatch(
@@ -2451,7 +2695,7 @@ async function confirmRecognitionBatch(
   const assetIds = preview.assetRefs.map((entry: any) => entry.assetId);
   const currentAssets = await db.collection<any>("media_assets").find({
     _id: { $in: assetIds },
-    ...recognitionEligibilityQuery(auth.principal),
+    ...recognitionEligibilityQuery(auth.principal, selection?.reanalyze),
   }, { projection: { _id: 1, sha256: 1 } }).sort({ createdAt: 1, _id: 1 })
     .toArray();
   const shaById = new Map(
@@ -2507,12 +2751,19 @@ async function confirmRecognitionBatch(
     requestedTasks,
     selection: selection ?? normalizeRecognitionSelection(),
     authorizedGrossUsd: preview.authorizedGrossUsd,
+    costKnown: preview.costKnown ?? true,
     confirmedAt: now,
   };
   try {
     await db.collection("media_recognition_batches").insertOne({
       _id: batchId,
       previewId,
+      ...(preview.folderCampaignId
+        ? {
+          folderCampaignId: preview.folderCampaignId,
+          folderStreamReceiptId: preview.folderStreamReceiptId,
+        }
+        : {}),
       owner: auth.principal,
       status: "queued",
       materializationPending: true,
@@ -2526,6 +2777,7 @@ async function confirmRecognitionBatch(
       selectionDigest: preview.selectionDigest,
       perAssetGrossUsd: preview.perAssetGrossUsd,
       authorizedGrossUsd: preview.authorizedGrossUsd,
+      costKnown: preview.costKnown ?? true,
       consentReceipt: receipt,
       counts: { total: exactRefs.length, pending: exactRefs.length },
       createdAt: now,
@@ -2577,11 +2829,111 @@ async function confirmRecognitionBatch(
   };
 }
 
+async function validateFolderStream(
+  campaign: any,
+  config: MediaKnowledgeConfig,
+) {
+  const stream = campaign.streaming;
+  const profile = selectProfile(config, stream.profileSnapshot.id);
+  if (
+    profile.providerType !== "google-cloud" ||
+    JSON.stringify(profile) !== JSON.stringify(stream.profileSnapshot)
+  ) {
+    throw new Error(
+      "Google profile changed; pause and review the stream configuration",
+    );
+  }
+  assertMediaPerImportBudget(config, stream.perAssetMicros / USD_MICROS);
+  assertPromoGuard(
+    config,
+    profile.projectId,
+    stream.perAssetMicros / USD_MICROS,
+  );
+  const source = await resolveMediaSourcePath(campaign.relativePath);
+  if (
+    source.realPath !== stream.sourceRealPath ||
+    !(await Deno.stat(source.realPath)).isDirectory
+  ) {
+    throw new Error("The authorized source folder changed or is unavailable");
+  }
+}
+
+async function dispatchReadyFolderStreams(db: Db) {
+  const campaigns = await db.collection<any>("media_folder_campaigns")
+    .find(runnableFolderStreams()).sort({ "streaming.lastCheckedAt": 1 }).limit(
+      4,
+    )
+    .toArray();
+  if (!campaigns.length) return;
+  const config = await loadConfig();
+  for (const campaign of campaigns) {
+    await dispatchFolderStream(db, campaign._id, {
+      validate: (current) => validateFolderStream(current, config),
+      eligibleQuery: recognitionEligibilityQuery,
+      capacity: async (current) => {
+        const now = new Date();
+        const usage = summarizeGcpUsage(
+          await db.collection<any>("gcp_usage_months").findOne({
+            _id: gcpUsageLedgerId(
+              current.streaming.profileSnapshot.projectId,
+              now.toISOString().slice(0, 7),
+            ),
+          }),
+          config,
+          now,
+        );
+        const perPhoto = current.streaming.perAssetMicros;
+        const photos = Math.floor(
+          Math.min(
+            usdMicros(usage.dailyRemainingUsd ?? usage.monthlyRemainingUsd),
+            usdMicros(usage.monthlyRemainingUsd),
+          ) / perPhoto,
+        );
+        const monthlyBlocked = usdMicros(usage.monthlyRemainingUsd) < perPhoto;
+        return {
+          photos,
+          retryAt: monthlyBlocked
+            ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+            : new Date(
+              Date.UTC(
+                now.getUTCFullYear(),
+                now.getUTCMonth(),
+                now.getUTCDate() + 1,
+              ),
+            ),
+          reason: monthlyBlocked
+            ? "Waiting for the next monthly budget window (UTC)"
+            : "Waiting for the next daily budget window (UTC)",
+        };
+      },
+      prepare: (current, assetIds) =>
+        prepareRecognitionBatch(db, ownerAuth(current.owner), {
+          action: "previewRecognitionBatch",
+          profileId: current.streaming.profileSnapshot.id,
+          requestedTasks: current.streaming.requestedTasks,
+          selection: {
+            mode: "explicit",
+            assetIds,
+            inventoryFilter: "unprocessed",
+            placement: "all",
+          },
+        }),
+      confirm: (current, previewId) =>
+        confirmRecognitionBatch(db, ownerAuth(current.owner), {
+          action: "confirmRecognitionBatch",
+          previewId,
+          consent: true,
+        }),
+    });
+  }
+}
+
 export async function processRecognitionBatch(
   db: Db,
   requestedBatchId?: ObjectId,
   currentCoordinatorJobId?: ObjectId,
 ): Promise<Record<string, unknown>> {
+  await dispatchReadyFolderStreams(db);
   const batches = db.collection<any>("media_recognition_batches");
   let batch = requestedBatchId
     ? await batches.findOne({
@@ -2592,6 +2944,21 @@ export async function processRecognitionBatch(
       { sort: { updatedAt: 1 } },
     );
   if (!batch) {
+    const waiting = await db.collection("media_folder_campaigns").findOne(
+      runnableFolderStreams(),
+    );
+    if (waiting) {
+      return {
+        success: true,
+        processed: 0,
+        hasMore: true,
+        progress: {
+          stage: "waiting_for_photos",
+          message: "Waiting for locally imported photos",
+          campaignId: String(waiting._id),
+        },
+      };
+    }
     return recognitionWorkerResult(null, 0, false);
   }
   if (currentCoordinatorJobId) {
@@ -2694,7 +3061,7 @@ export async function processRecognitionBatch(
     }
     const asset = await db.collection<any>("media_assets").findOne({
       _id: item.assetId,
-      ...recognitionEligibilityQuery(batch.owner),
+      ...recognitionEligibilityQuery(batch.owner, batch.selection?.reanalyze),
       sha256: item.sha256,
     });
     if (!asset) {
@@ -2729,14 +3096,15 @@ export async function processRecognitionBatch(
       { _id: item._id, state: "claiming" },
       { $set: { jobId, consentReceiptId, updatedAt: new Date() } },
     );
-    const assetClaim = await db.collection("media_assets").updateOne(
-      { _id: item.assetId, owner: batch.owner, status: asset.status },
-      {
-        $set: { status: "queued", updatedAt: new Date() },
-        $unset: { safeError: "" },
-      },
+    const assetClaim = await claimRecognitionBatchAssetForQueue(
+      db,
+      batch.owner,
+      item.assetId,
+      item.sha256,
+      asset.status,
+      batch.selection?.reanalyze === true,
     );
-    if (assetClaim.modifiedCount !== 1) {
+    if (!assetClaim) {
       await items.updateOne(
         { _id: item._id, state: "claiming" },
         {
@@ -2761,18 +3129,7 @@ export async function processRecognitionBatch(
       ),
     ]);
     if (latestBatch?.cancelRequestedAt || !stillClaimed) {
-      await db.collection("media_assets").updateOne(
-        {
-          _id: item.assetId,
-          owner: batch.owner,
-          status: "queued",
-          currentRunId: { $exists: false },
-        },
-        {
-          $set: { status: "staged", updatedAt: new Date() },
-          $unset: { safeError: "" },
-        },
-      );
+      await stageRecognitionAssetAfterCancellation(db, batch, item);
       if (latestBatch?.cancelRequestedAt) {
         await items.updateOne(
           { _id: item._id, state: "claiming" },
@@ -2829,6 +3186,9 @@ async function startFolderCampaign(
     throw new Error("Mounted media source is not configured");
   }
   const resolved = await resolveMediaSourcePath(relativePath);
+  if (!(await Deno.stat(resolved.realPath)).isDirectory) {
+    throw new Error("Select a mounted folder to scan recursively");
+  }
   const canonicalRelativePath = resolved.relativePath;
   const campaigns = db.collection<any>("media_folder_campaigns");
   const existing = await campaigns.findOne({
@@ -3245,6 +3605,8 @@ export function mediaLibrarySummaryQueries(owner: string) {
     all: images,
     unprocessed: {
       ...images,
+      currentRunId: { $exists: false },
+      recognitionIgnoredAt: { $exists: false },
       status: { $nin: ["ready", "queued", "processing"] },
     },
     processing: {
@@ -3259,9 +3621,10 @@ export function mediaLibrarySummaryQueries(owner: string) {
       ...images,
       $nor: [{ "geo.type": "Point" }],
     },
-    ready: { ...images, status: "ready" },
+    ready: { ...images, currentRunId: { $type: "string" } },
     needsAttention: {
       ...images,
+      recognitionIgnoredAt: { $exists: false },
       status: {
         $in: [
           "failed",
@@ -3272,6 +3635,7 @@ export function mediaLibrarySummaryQueries(owner: string) {
         ],
       },
     },
+    ignored: { ...images, recognitionIgnoredAt: { $type: "date" } },
   };
 }
 
@@ -3300,6 +3664,7 @@ export class MediaLibraryResource
       case "listMountedFolders":
         return { listing: await listMediaSourceFolders(input.relativePath) };
       case "startFolderScan":
+        assertMediaScanSelection(input.relativePath);
         return await startFolderCampaign(db, auth, input.relativePath);
       case "getFolderCampaign": {
         const campaign = await db.collection<any>("media_folder_campaigns")
@@ -3314,9 +3679,18 @@ export class MediaLibraryResource
         const campaign = await db.collection<any>("media_folder_campaigns")
           .findOne({
             owner: auth.principal,
-            status: {
-              $in: ["queued", "scanning", "preview_ready", "importing"],
-            },
+            $or: [
+              {
+                status: {
+                  $in: ["queued", "scanning", "preview_ready", "importing"],
+                },
+              },
+              {
+                "streaming.state": {
+                  $in: ["running", "paused", "budget_exhausted"],
+                },
+              },
+            ],
           }, { sort: { createdAt: -1 } });
         return {
           campaign: campaign ? await publicFolderCampaign(db, campaign) : null,
@@ -3328,6 +3702,123 @@ export class MediaLibraryResource
           auth,
           new ObjectId(input.campaignId),
         );
+      case "previewFolderStream": {
+        const campaign = await db.collection<any>("media_folder_campaigns")
+          .findOne({
+            _id: new ObjectId(input.campaignId),
+            owner: auth.principal,
+          });
+        if (!campaign || campaign.status === "cancelled") {
+          throw new Error("Folder campaign is unavailable");
+        }
+        if (campaign.streaming?.state === "running") {
+          throw new Error("Pause new batches before changing the ceiling");
+        }
+        const config = await loadConfig();
+        const profile = selectProfile(config, input.profileId);
+        if (profile.providerType !== "google-cloud") {
+          throw new Error("Select a Google Cloud photo profile");
+        }
+        const requestedTasks: MediaRecognitionTask[] = [
+          "visual-understanding",
+          "ocr",
+        ];
+        const perAssetGrossUsd = estimateMediaGrossUsd(
+          "image",
+          1,
+          requestedTasks,
+          profile,
+        );
+        assertMediaPerImportBudget(config, perAssetGrossUsd);
+        assertPromoGuard(config, profile.projectId, perAssetGrossUsd);
+        const source = await resolveMediaSourcePath(campaign.relativePath);
+        if (!(await Deno.stat(source.realPath)).isDirectory) {
+          throw new Error("Source folder is unavailable");
+        }
+        const authorizedMicros = usdMicros(input.maxGrossUsd);
+        if (
+          authorizedMicros <
+            Math.max(
+              campaign.streaming?.allocatedMicros ?? 0,
+              usdMicros(perAssetGrossUsd),
+            )
+        ) {
+          throw new Error(
+            "The ceiling must cover already allocated batches and at least one photo",
+          );
+        }
+        const preview = {
+          _id: new ObjectId(),
+          campaignId: campaign._id,
+          owner: auth.principal,
+          relativePath: campaign.relativePath,
+          sourceRealPath: source.realPath,
+          profileSnapshot: profile,
+          requestedTasks,
+          perAssetMicros: usdMicros(perAssetGrossUsd),
+          authorizedMicros,
+          batchSize: input.batchSize,
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + PREVIEW_TTL_MS),
+        };
+        await db.collection("media_folder_stream_previews").insertOne(preview);
+        return {
+          previewId: String(preview._id),
+          relativePath: preview.relativePath,
+          profileName: profile.name,
+          projectId: profile.projectId,
+          location: profile.location,
+          requestedTasks,
+          perAssetGrossUsd,
+          authorizedGrossUsd: authorizedMicros / USD_MICROS,
+          allocatedGrossUsd: (campaign.streaming?.allocatedMicros ?? 0) /
+            USD_MICROS,
+          batchSize: input.batchSize,
+          dailyGrossLimitUsd: config.promoGuard.dailyGrossLimitUsd,
+          monthlyGrossLimitUsd: config.promoGuard.monthlyGrossLimitUsd,
+        };
+      }
+      case "confirmFolderStream": {
+        const preview = await db.collection<any>("media_folder_stream_previews")
+          .findOne({
+            _id: new ObjectId(input.previewId),
+            owner: auth.principal,
+          });
+        if (!preview) throw new Error("Stream authorization was not found");
+        await validateFolderStream({
+          relativePath: preview.relativePath,
+          streaming: preview,
+        }, await loadConfig());
+        const campaign = await authorizeFolderStream(
+          db,
+          auth.principal,
+          preview._id,
+        );
+        // Periodic signed coordinators recover enqueue failures without losing consent.
+        if (campaign.status === "importing") {
+          try {
+            await enqueueFolderWorker(campaign._id, auth);
+          } catch { /* watchdog retries */ }
+        }
+        return { campaign: await publicFolderCampaign(db, campaign) };
+      }
+      case "pauseFolderStream": {
+        const campaign = await db.collection<any>("media_folder_campaigns")
+          .findOneAndUpdate({
+            _id: new ObjectId(input.campaignId),
+            owner: auth.principal,
+            "streaming.state": "running",
+          }, {
+            $set: {
+              "streaming.state": "paused",
+              "streaming.pausedAt": new Date(),
+              "streaming.safeError":
+                "New batches paused; already confirmed batches finish. Local import continues.",
+            },
+          }, { returnDocument: "after" });
+        if (!campaign) throw new Error("Running folder stream was not found");
+        return { campaign: await publicFolderCampaign(db, campaign) };
+      }
       case "processFolderCampaign": {
         const job = await assertTrustedCoordinatorJob(
           db,
@@ -3551,6 +4042,44 @@ export class MediaLibraryResource
           new ObjectId(input.jobId),
         );
       }
+      case "setRecognitionIgnored": {
+        const selection = normalizeRecognitionSelection(input.selection);
+        const now = new Date();
+        const scope = await resolvedRecognitionSelectionScope(
+          db,
+          auth.principal,
+          now,
+          selection,
+        );
+        const result = await db.collection("media_assets").updateMany(
+          {
+            $and: [
+              scope,
+              { status: { $nin: ["queued", "processing"] } },
+            ],
+          },
+          input.ignored
+            ? {
+              $set: {
+                recognitionIgnoredAt: now,
+                recognitionIgnoreReason: "manual",
+                updatedAt: now,
+              },
+            }
+            : {
+              $set: { updatedAt: now },
+              $unset: {
+                recognitionIgnoredAt: "",
+                recognitionIgnoreReason: "",
+              },
+            },
+        );
+        return {
+          success: true,
+          matched: result.matchedCount,
+          updated: result.modifiedCount,
+        };
+      }
       case "timeline":
         return await timelineProjection(
           db,
@@ -3578,6 +4107,7 @@ export class MediaLibraryResource
           missingLocation,
           ready,
           needsAttention,
+          ignored,
         ] = await Promise.all([
           db.collection("media_assets").countDocuments(queries.all),
           db.collection("media_assets").countDocuments(queries.unprocessed),
@@ -3590,6 +4120,7 @@ export class MediaLibraryResource
           db.collection("media_assets").countDocuments(
             queries.needsAttention,
           ),
+          db.collection("media_assets").countDocuments(queries.ignored),
         ]);
         return {
           all,
@@ -3599,6 +4130,7 @@ export class MediaLibraryResource
           missingLocation,
           ready,
           needsAttention,
+          ignored,
         };
       }
       case "updatePlacement":

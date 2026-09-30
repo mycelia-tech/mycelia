@@ -12,9 +12,9 @@ export type GcpUsageSnapshot = {
   grossMonthUsd: number;
   grossTodayUsd: number;
   monthlyLimitUsd: number;
-  dailyLimitUsd: number;
+  dailyLimitUsd: number | null;
   monthlyRemainingUsd: number;
-  dailyRemainingUsd: number;
+  dailyRemainingUsd: number | null;
 };
 
 export const GOOGLE_VERTEX_VISUAL_SMOKE_GROSS_USD = 0.006;
@@ -66,7 +66,9 @@ export function summarizeGcpUsage(
     monthlyLimitUsd,
     dailyLimitUsd,
     monthlyRemainingUsd: Math.max(0, monthlyLimitUsd - grossMonthUsd),
-    dailyRemainingUsd: Math.max(0, dailyLimitUsd - grossTodayUsd),
+    dailyRemainingUsd: dailyLimitUsd === null
+      ? null
+      : Math.max(0, dailyLimitUsd - grossTodayUsd),
   };
 }
 
@@ -76,6 +78,11 @@ export function estimateMediaGrossUsd(
   tasks: MediaRecognitionTask[],
   profile: MediaRecognitionProfile,
 ): number {
+  if (profile.providerType === "openai-compatible" && kind !== "image") {
+    throw new Error(
+      "General vision supports photos only; select a PDF/OCR connector for this document",
+    );
+  }
   if (profile.providerType !== "google-cloud") return 0;
   if (kind === "pdf") {
     if (tasks.some((task) => task !== "ocr")) {

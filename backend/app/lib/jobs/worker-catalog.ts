@@ -62,13 +62,13 @@ export const WORKER_CATALOG: readonly CatalogDefinition[] = [
   pipeline(
     "ingestion",
     "Ingestion",
-    "Daemon-managed audio import; not runnable from Jobs.",
+    "Host-managed audio import. Run one bounded scan; automatic scheduling stays on the host.",
     0,
     {
       executionKind: "daemon",
       progressKind: "ingestion",
       capabilities: {
-        manualRun: false,
+        manualRun: true,
         pause: false,
         schedule: false,
         concurrency: false,

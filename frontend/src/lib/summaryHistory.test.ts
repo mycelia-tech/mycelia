@@ -5,9 +5,71 @@ import {
   buildSummaryTaskPipeline,
   normalizeSummaryHistoryResult,
   normalizeSummaryTaskResult,
+  summaryPreview,
 } from "./summaryHistory";
 
 describe("summary history aggregation", () => {
+  it("previews summary prose without participant lists or markdown markers", () => {
+    expect(
+      summaryPreview(
+        "## Participants\n- Alex\n## Summary\nA **decision** about [the project](https://example.com).\n## Actions\nCall tomorrow.",
+      ),
+    )
+      .toBe("A decision about the project.");
+    expect(summaryPreview("Plain summary.")).toBe("Plain summary.");
+  });
+  it("intersects period and amount before counting unique conversations or selecting reruns", () => {
+    const pipeline = buildSummaryHistoryPipeline({
+      start: "2026-08-24T00:00:00Z",
+      end: "2026-08-31T00:00:00Z",
+      amount: 250,
+      limit: 100,
+    });
+    const facet = pipeline[2].$facet as any;
+    for (
+      const stages of [facet.total, facet.objectCount, facet.selectedObjects]
+    ) {
+      expect(stages[0].$match["summaries.date"]).toEqual({
+        $gte: new Date("2026-08-24T00:00:00Z"),
+        $lt: new Date("2026-08-31T00:00:00Z"),
+      });
+      expect(stages.find((stage: any) => stage.$limit).$limit).toBe(250);
+      expect(stages.findIndex((stage: any) => stage.$sort)).toBeLessThan(
+        stages.findIndex((stage: any) => stage.$limit),
+      );
+    }
+    expect(facet.entries.find((stage: any) => stage.$limit).$limit).toBe(100);
+    expect(facet.objectCount.at(-2)).toEqual({ $group: { _id: "$_id" } });
+  });
+
+  it("counts the whole period when amount is omitted and bounds amount-only display", () => {
+    const period = buildSummaryHistoryPipeline({
+      from: "2026-08-24",
+      to: "2026-08-30",
+    })[2].$facet as any;
+    expect(period.objectCount.some((stage: any) => stage.$limit)).toBe(false);
+    expect(period.selectedObjects).toBeUndefined();
+    const amount = buildSummaryHistoryPipeline({ amount: 25, limit: 100 })[2]
+      .$facet as any;
+    expect(amount.entries.find((stage: any) => stage.$limit).$limit).toBe(25);
+    expect(() => buildSummaryHistoryPipeline({ amount: 0 })).toThrow();
+  });
+
+  it("reports matched conversations separately from summary versions", () => {
+    expect(
+      normalizeSummaryHistoryResult([{
+        total: [{ value: 100 }],
+        objectCount: [{ value: 98 }],
+        selectedObjects: [{ id: "conversation-1" }],
+      }]),
+    )
+      .toMatchObject({
+        total: 100,
+        objectCount: 98,
+        selectedObjectIds: ["conversation-1"],
+      });
+  });
+
   it("filters by executed model and generated date", () => {
     const pipeline = buildSummaryHistoryPipeline({
       model: "Qwen.gguf",
@@ -46,6 +108,8 @@ describe("summary history aggregation", () => {
       entries: [],
       models: [],
       total: 0,
+      objectCount: 0,
+      selectedObjectIds: [],
     });
   });
 });

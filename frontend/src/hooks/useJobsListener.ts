@@ -8,9 +8,11 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { buildSummarizationCompletionNotifications } from "@/lib/jobNotifications";
 import {
   buildJobsListRequest,
+  DEFAULT_JOBS_LIST_LIMIT,
   type JobListStatus,
   type JobsListView,
   resolveJobEventState,
+  scheduleJobsQueryRefresh,
   shouldIncludeJobEvent,
   shouldRefreshJobsViews,
 } from "@/lib/jobListView";
@@ -108,7 +110,7 @@ export function useJobsListener(options: UseJobsListenerOptions = {}) {
       ? `provider:${options.providerProfileId}`
       : "all-providers",
     options.campaignId ? `campaign:${options.campaignId}` : "all-campaigns",
-    `limit:${options.limit ?? 1000}`,
+    `limit:${options.limit ?? DEFAULT_JOBS_LIST_LIMIT}`,
   ];
 
   const { data: jobs = [], isLoading } = useQuery({
@@ -217,21 +219,21 @@ export function useJobsListener(options: UseJobsListenerOptions = {}) {
           };
           return updated;
         } else {
-          // WebSocket job events intentionally contain only changing runtime
-          // fields. Fetch the canonical row once so newly-created jobs retain
-          // their immutable routing snapshot (STT server/model) immediately,
-          // instead of showing it only after a manual page reload.
-          // This is a Mycelia Jobs request, not a provider health probe.
-          void queryClient.invalidateQueries({ queryKey });
+          // WebSocket payloads intentionally omit immutable routing fields.
+          // Lifecycle events schedule one canonical refresh below; progress
+          // for a row outside this bounded view must not trigger a request.
           return oldJobs;
         }
       });
 
-      if (shouldRefreshJobsViews(event.event) && event.data) {
-        // A completed automatic run can move from the operational view to the
-        // idle-auto view. Refresh every cached jobs view so the server-side
-        // classifier, not a partial WebSocket payload, decides membership.
-        void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      if (shouldRefreshJobsViews(event.event)) {
+        // The server owns status/view membership. Batch lifecycle bursts and
+        // refetch only this mounted exact view; inactive cached views are
+        // marked stale by the shared scheduler without immediate fan-out.
+        scheduleJobsQueryRefresh(queryClient, queryKey);
+      }
+
+      if (event.event === "job.completed" && event.data) {
         if (jobData.jobType === "speakerIdentity") {
           void queryClient.invalidateQueries({ queryKey: ["speaker-track"] });
           void queryClient.invalidateQueries({

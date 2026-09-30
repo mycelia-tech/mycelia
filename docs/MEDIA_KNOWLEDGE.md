@@ -9,19 +9,58 @@ Mycelia imports and recognizes photos or PDFs in separate explicit stages:
    a recognition provider.
 2. **Confirm local import** creates canonical media assets. Recognition is a
    separate opt-in action on `/media/analysis`, so an import can remain `staged`
-   until Google Cloud or a self-hosted provider is ready.
+   until a chosen vision provider is ready.
 
 The Photo Analysis screen separates **where** a job runs from **what** it does.
-Choose Google Cloud or a self-hosted Open Media API profile. The bulk action has
+Choose a general vision, optional Google Cloud, or custom self-hosted Open Media
+API profile. The bulk action has
 one fixed package: `visual-understanding` plus `ocr`. Visual understanding
 produces a Russian caption and description, scene, objects, activities, people
 count without identity inference, keywords, possible event, confidence,
-warnings, and an embedding for semantic search. A Google profile runs Vertex
+warnings, and, for embedding-capable connectors, a semantic index. A Google profile runs Vertex
 visual understanding/embedding and strict-EU Cloud Vision OCR. A self-hosted
 profile receives the same two requested features at its configured endpoint and
 does not call Google. Global Vision labels and object localization are not part
 of this batch action. Local metadata extraction is always local and precedes
 the provider choice.
+
+## General vision connections and review
+
+Open **Settings → Photo analysis** (`/settings/photo-analysis`). Select an
+existing configured LLM connection, or add a photo-only OpenAI-compatible
+connection. The API key is optional and write-only here; existing keys are
+reused on the server and never returned by the photo settings API. Set an
+explicit vision model and output language (Russian by default). Saving neither
+changes text aliases nor queues photos. New connections are photo-only.
+**Test image** explicitly sends one synthetic PNG and verifies structured image
+inference, rather than just checking `/models`.
+
+The general adapter sends sanitized previews to `/chat/completions`. It stores
+descriptions and visible text without requiring embeddings. Visible text is
+labelled **model-extracted**, not dedicated OCR. Token usage is retained when
+reported; monetary cost remains **unknown**, never presented as free. Shared
+provider capacity and photo concurrency (1–8) both limit requests. HTTP 429 is
+retried at most twice; timeout/uncertain outcomes are not repeated automatically.
+Keys may rotate without invalidating a batch; changing its endpoint/model or
+disabling its connection invalidates unstarted work.
+Before confirmation, the batch preview shows the exact endpoint/model, language
+and output-token limit. Unknown-priced connections have no enforced dollar
+ceiling; photo-count and token limits are not a monetary budget.
+
+In **Photo analysis**, use **To analyze**, **Results**, or **Needs attention**,
+date/provider/import filters, and select the loaded page or every server-side
+match. Import filtering includes duplicate references from that import, without
+creating duplicate assets. Turn on **Reanalyze ready photos** explicitly to
+create new versions; cancellation/failure does not delete the accepted result.
+The details panel's **History** opens stored versions without inference.
+
+Google services default off (`externalServices.google.enabled: false`) and have
+an independent opt-in at **Settings → Google Cloud (optional)**. This blocks
+Google ADC/token use and Gemini requests, including brokered Gemini models.
+Existing Google descriptions, text and history remain available locally. No
+credits, keys, or enabled media profile bypass this switch. A worker paused in
+Jobs stays paused until explicitly resumed; configuration does not start a
+library-wide batch.
 
 Local ingestion is independent of recognition. When `mediaKnowledge.enabled` is
 false, managed uploads and mounted-source imports still extract metadata,
@@ -51,6 +90,24 @@ retaining previews, metadata, provider results and search projections. Mounted
 source files are never deleted; forgetting their reference only changes the
 asset to `preview_only`. A preview-only asset cannot be reprocessed unless an
 original is imported again.
+
+The Media detail view groups retention controls under one **Storage &
+deletion…** panel. This is not a whole-asset delete: Mycelia does not yet offer
+an action that removes the canonical Media Library record and every layer in
+one step. **Forget mounted original reference** removes only Mycelia's pointer;
+the read-only mounted file is never modified or deleted, while existing
+previews, metadata, and results remain. **Delete Mycelia previews** removes only
+the compact WebP files; the original or its reference, metadata, and results
+remain, but the item can no longer be viewed in the gallery or sent for photo
+analysis. Resetting visual/OCR results remains an advanced, separate action.
+
+Storage mutations are mutually exclusive with recognition. An active
+recognition reservation, or a queued/processing asset, locks the panel and is
+also rejected by the backend until the item finishes or the batch stops
+starting new provider calls. Reviewing deletion of a Mycelia-managed original
+claims the asset for that preview-and-confirm operation; **Cancel original
+deletion review** releases the claim immediately so the asset does not remain
+locked until the preview expires.
 
 If a mounted original is moved or removed, recognition stops before any
 provider or budget call and the asset becomes `source_missing`; if its bytes
@@ -93,11 +150,18 @@ confirm. Configure and start recognition later on `/media/analysis`.
 
 The mounted-folder browser exposes only directories below
 `MEDIA_SOURCE_HOST_PATH`, not arbitrary macOS paths. The root (`.`) is selected
-by default and scans the whole mount recursively; choose visible folders and
+by default and scans the local folder recursively, excluding separately configured
+disks and aliases; choose visible folders and
 breadcrumbs to narrow the scan, for example to `2026/photos`. Symlinks are not
 listed or followed. To change the real host folder, edit
 `MEDIA_SOURCE_HOST_PATH` in `.env.media.local`, recreate only `backend`, and
 restart `nginx`:
+
+For the main `sky-uat` stack, store `MEDIA_SOURCE_HOST_PATH` and
+`GCP_ADC_HOST_PATH` only in its uncommitted `.env` and append
+`docker-compose.media-uat.yml` to every Compose command that recreates backend.
+This preserves the UAT database and ports while mounting the source folder and
+ADC JSON read-only. Keep any existing UAT overlays in the command as well.
 
 For the large gallery workflow, create a subfolder such as
 `~/Pictures/Mycelia-Import/900-photos/` under the mounted host root and select
@@ -112,6 +176,39 @@ by `campaignId`, so the campaign remains one visible row. Its local report
 separates imported, duplicate, unsupported, changed, and failed entries before
 or during confirmation. Originals remain read-only external references; only
 EXIF/GPS, stripped WebP previews, hashes, and derived data enter Mycelia.
+
+### Streaming photo import
+
+After **Scan** starts, select **Import + Google** on that folder campaign. This
+also works for a campaign already scanning or imported: no repeated inventory
+is required. Review the total dollar ceiling, photos per wave, project and
+location, then confirm once. The authorization includes newly discovered photos
+in this folder, not just the currently visible page. Discovery and local import
+continue while ready originals enter separate exact-SHA recognition batches.
+Original files are neither copied into Mongo nor modified.
+
+The default form proposes 100 photos per wave and a $50 total ceiling; neither
+is activated before confirmation. Google runs visual understanding/embedding
+and EU OCR, never global labels/objects. Ready, busy, ignored and already
+assigned photos are skipped. Same-byte duplicates share an asset and cannot
+create a second paid wave item in this stream. Per-photo failures remain visible
+in Analysis and require a new explicit batch to retry.
+
+**Allocated / ceiling** counts confirmed wave ceilings, not actual billing or
+remaining promotional credit. Allocation survives restarts and is deliberately
+not refunded from lower actual usage. Monthly/per-photo settings and any enabled
+daily stop still apply; new waves wait for the next UTC budget window when
+necessary.
+**Pause new batches** stops future waves; already confirmed waves finish and
+local import continues. **Review & resume** confirms a new total ceiling that
+includes prior allocation. Missing disks or a changed provider pause cloud
+dispatch; reconnect/review before resuming. Timeline/Map show imported photos
+as soon as local date/GPS is available, before Google finishes.
+
+After a backend restart, the old BullMQ lease may need up to 10 minutes to
+expire before the coordinator resumes. The Media panel marks a lack of recent
+progress instead of suggesting that discovery is still advancing. Do not start
+a duplicate scan: the existing directory cursor and file claims are durable.
 
 ```bash
 docker compose \
@@ -265,9 +362,14 @@ fails closed unless the credit balance and exact project were manually verified
 in the preceding 24 hours, and it stops 72 hours before the recorded expiry. In
 **Paid account** mode one project-bound confirmation permanently acknowledges
 that real charges are acceptable; the 24-hour balance and promotion-expiry
-checks are skipped. Both modes retain configurable monthly, daily, per-asset,
-and per-event gross list-price stops. The 900-photo rollout uses `$300/month`,
-`$50/day`, and `$0.01/photo`; every confirmed batch also stores its exact
+checks are skipped. Both modes retain configurable monthly, per-asset, and
+per-event gross list-price stops. **Settings → Google Cloud → Daily limit** can
+be switched off and saved to disable only the daily stop
+(`mediaKnowledge.promoGuard.dailyGrossLimitUsd: null`). Daily usage remains in
+the ledger; missing settings still default to `$0.10/day`, and turning the stop
+back on starts at that guarded default. Monthly and confirmed batch ceilings
+remain unchanged. The 900-photo rollout initially used `$300/month`, `$50/day`,
+and `$0.01/photo`; every confirmed batch also stores its exact
 SHA-bound maximum cost. A multi-file batch can therefore exceed one cent in
 total while each asset stays below its own stop.
 These guards reduce risk but cannot mathematically guarantee that a paid billing
@@ -378,6 +480,85 @@ links remain local deterministic evidence and cannot be changed by the model.
 
 ## Media inventory and batches
 
+### External photo libraries
+
+On macOS, use `docker-compose.media-disks.yml` after your primary media overlay.
+It mounts the stable parent `/Volumes` at `/media-source/disks` read-only;
+individual external disks are not required for Mycelia to start. Set
+`MEDIA_DISKS_HOST_PATH` only if your disks have a different stable parent.
+Docker Desktop must allow access to that parent. This exposes its directories
+to the authenticated media browser; symlinks are never followed.
+Before the first start, create an empty `disks` directory inside your local
+`MEDIA_SOURCE_HOST_PATH` folder. This permanent mountpoint is required because
+the parent folder is read-only inside Docker. It does not stand in for any disk;
+do not put local files there, as the volumes mount hides that directory's contents.
+
+In **Media → Choose folder**, choose **Local import folder**, a subfolder, or
+**Connected disks → disk → folder**. Refresh after connecting a disk. Scanning
+the local root excludes other sources, and scanning the entire Connected disks
+container is disabled: select the disk or folder you intend to import. Nothing
+is imported merely by connecting a disk. **Scan** builds an inventory; review it
+and use **Confirm local import**. You can also use **Choose files** to upload
+selected photos or PDFs from any location your browser can access without a
+server mount. Managed uploads copy originals; folder sync keeps references.
+
+To retain references from an old direct mount, configure a stable logical alias
+in the uncommitted `.env`, for example:
+
+```dotenv
+MEDIA_SOURCE_ALIASES='{"icloud-backup":"disks/MyDisk/Source/iCloud_backup"}'
+```
+
+Alias names reserve top-level entries in the picker. Targets must be relative
+paths below the media root; absolute paths, traversal, and symlinks are rejected.
+Stored paths remain `icloud-backup/...`. An offline alias stays visible as
+unavailable, and reconnecting the disk makes it usable again. Keep disk and alias
+names stable. Remove the old individual-disk overlay from `COMPOSE_FILE`, retain
+the primary media and credential overlays, and append the disks overlay.
+Recreate only backend and restart nginx once after this configuration change;
+check `/readiness`. Later connections only require refreshing the folder list.
+If Docker Desktop has not exposed a newly connected volume, check its file
+sharing settings and recreate backend, then restart nginx.
+
+For a fixed library that is always available, the direct-mount option remains:
+keep the disk mounted at a stable host path. Set `MEDIA_SOURCE_EXTRA_HOST_PATH`
+to its photo folder in the uncommitted `.env`, and optionally set
+`MEDIA_SOURCE_EXTRA_NAME` (default `external-photos`). Append
+`docker-compose.media-external.yml` after the existing UAT Compose overlays.
+It adds a read-only subfolder under `/media-source`; keep the same subfolder
+name on subsequent recreates because existing asset references use it. Existing
+installations using `icloud-backup` should retain that name. The host directory
+must exist; Compose will not create an empty substitute for a disconnected disk.
+
+After connecting the disk, recreate only backend with the full overlay list and
+restart nginx, then verify readiness as described in `DEVELOPMENT.md`. In
+**Media → Choose folder**, select the mounted library and **Scan**. Discovery
+saves at most 1,000 entries per request and a durable directory/name cursor, with
+no 20,000-file or directory-depth cutoff. It shows discovered files and the
+current directory; a total and ETA become meaningful after discovery. Metadata
+and previews continue in 25-file steps. Restarting resumes discovery and file
+work; replayed pages do not reset prior work. Keep the source tree stable during
+a scan; a later sync discovers files added behind an already committed cursor.
+
+Review the local report, then **Confirm local import**. JPEG/PNG/WebP originals
+remain on the external disk. Mycelia stores SHA-256, EXIF/GPS, 256px and 1280px
+WebP derivatives, and processing results. HEIC/RAW, video, PDF, and sidecars are
+counted as unsupported by the photo-folder pipeline. Exact-byte duplicates
+within the same owner resolve to the existing asset; re-encoded copies are not
+exact duplicates. Unchanged paths reuse previous size/mtime-matched hashes.
+Disconnecting the disk preserves existing metadata and previews; reconnect it
+before importing or processing originals. Unavailable folders are marked in the
+picker, with an actionable error if scanning cannot read one.
+The backend image must include `exiftool` (already declared in its Dockerfile).
+If an older running image lacks it, new metadata inspection fails explicitly
+instead of silently dropping capture time and GPS. Rebuild the backend image
+before retrying such files; source-code hot reload does not install OS packages.
+
+Local discovery/import does not call Google. Recognition still uses a separate
+priced preview and confirmation, at most 20,000 photos per receipt; a larger
+selection now asks for narrower date/filename filters instead of silently
+truncating. The library itself is not capped to that batch size.
+
 The `/media` page is the local library and import workspace. It uses cursor
 pagination, a responsive thumbnail gallery, background refresh, and a focused
 detail viewer, so an archive of 900 or more photos is not truncated to the
@@ -385,6 +566,15 @@ first page. Useful capture time, timezone, camera, dimensions, GPS, provider,
 OCR, annotations, description, and usage remain available in the detail view;
 raw EXIF/ffprobe JSON stays under the advanced disclosure. The detail header
 remains visible while content scrolls and has an explicit close action.
+From the same detail view, **Show on Map** and **Show on Timeline** open a
+focused photo sheet. If the stored GPS or capture time is missing, the target
+page shows the photo as Unplaced instead of inventing metadata. For an image
+without a visual description, **Get description** is offered only while a
+retained original is available and the asset is in a recognition-eligible
+state; it opens Photo Analysis with exactly that photo selected. Ready,
+in-flight, or preview-only images instead open their existing Photo Analysis
+state without promising a new description. Neither path contacts a provider
+until an eligible priced preview is reviewed and explicitly confirmed.
 Provider analysis is always stated: an empty card means no Google or
 self-hosted run/result is stored, while an active result names the provider and
 shows its service/location/model plus stored visual/OCR projection counts.
@@ -393,14 +583,23 @@ older attempts remain provenance history. Gallery checkboxes select photos only
 for explicit local event grouping and never start cloud recognition.
 
 `/media/analysis` is the recognition workspace. Status, placement, filename,
-and capture-date filters run on the server. A batch can contain the explicit
-loaded selection or **all eligible assets matching the current server-side
-filters**, so selection is not capped by the 100-card page. Preparing a preview
-sends nothing to a provider; the exact cutoff, asset IDs/SHA-256 values, tasks,
-provider snapshot, and gross ceiling are fixed before one confirmation. Existing
-batches keep updating in the background without blocking library browsing,
-local import, filter changes, or preparation of another batch from
-still-eligible photos.
+and capture-date filters run on the server. The shared date-range picker applies
+an inclusive capture-date range in the configured application timezone. The
+prominent **Unprocessed by capture-date range** workflow changes the status to
+**Unprocessed** and selects every match across all server pages; it is not
+capped by the 100 cards currently loaded. **Select loaded** includes only
+recognition-eligible rows that still have a managed original or mounted-file
+reference. While a changed filter scope is reloading, the previous result set
+cannot be selected or reviewed as though it matched the new URL.
+
+A batch can contain that all-matching scope or an explicit eligible selection.
+Preparing a preview sends nothing to a provider: the server rechecks the
+retained-original reference and required sanitized WebP pointer, excludes active
+reservations, and returns the exact eligible count, cutoff, asset IDs/SHA-256
+values, tasks, provider snapshot, and gross ceiling.
+Only **Confirm exact batch** authorizes provider work. Existing batches keep
+updating in the background without blocking library browsing, local import,
+filter changes, or preparation of another batch from still-eligible photos.
 
 The batch action first creates a local preview receipt with a cutoff, exact
 asset IDs/SHA-256 values, the pinned provider profile, tasks, per-photo estimate,

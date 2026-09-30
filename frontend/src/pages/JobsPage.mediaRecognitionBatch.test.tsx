@@ -27,6 +27,26 @@ function batchJob(overrides: Partial<JobInfo> = {}): JobInfo {
 }
 
 describe("mediaRecognitionBatch Jobs progress", () => {
+  it("shows discovered files without a percentage while folder totals are unknown", () => {
+    render(
+      <MemoryRouter>
+        <JobProgressCell
+          job={batchJob({
+            type: "mediaFolderImport",
+            progress: {
+              stage: "inventory",
+              totalKnown: false,
+              processed: 21_042,
+              total: 21_042,
+              percent: 0,
+            },
+          })}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("21042 files discovered")).toBeTruthy();
+    expect(screen.queryByText("0.0%")).toBeNull();
+  });
   it("renders one accessible aggregate progress card", () => {
     render(
       <MemoryRouter>

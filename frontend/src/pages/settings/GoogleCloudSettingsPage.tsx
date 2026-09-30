@@ -49,7 +49,7 @@ type MediaConfig = {
     promotionExpiresAt?: string;
     stopBeforeHours: number;
     monthlyGrossLimitUsd: number;
-    dailyGrossLimitUsd: number;
+    dailyGrossLimitUsd: number | null;
     perImportGrossLimitUsd: number;
     creditVerifiedAt?: string;
     creditVerifiedProjectId?: string;
@@ -81,6 +81,7 @@ type MediaConfig = {
 };
 
 type ConnectorStatus = {
+  googleEnabled?: boolean;
   enabled: boolean;
   sourceConfigured: boolean;
   adc: {
@@ -101,9 +102,9 @@ type ConnectorStatus = {
     grossMonthUsd: number;
     grossTodayUsd: number;
     monthlyLimitUsd: number;
-    dailyLimitUsd: number;
+    dailyLimitUsd: number | null;
     monthlyRemainingUsd: number;
-    dailyRemainingUsd: number;
+    dailyRemainingUsd: number | null;
   };
   connectorTestEstimateUsd: {
     vertexAndVision: number;
@@ -348,7 +349,7 @@ export default function GoogleCloudSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Cloud className="h-5 w-5" /> Google Cloud / media recognition
+            <Cloud className="h-5 w-5" /> Google Cloud (optional)
           </CardTitle>
           <CardDescription>
             Visual understanding uses Gemini on Vertex AI through server-side
@@ -357,6 +358,39 @@ export default function GoogleCloudSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <Label htmlFor="google-services">
+              Allow Google services in Mycelia
+            </Label>
+            <Switch
+              id="google-services"
+              checked={status?.googleEnabled === true}
+              disabled={saving}
+              onCheckedChange={async (enabled) => {
+                if (
+                  enabled &&
+                  !window.confirm(
+                    "Enable Google services? Requests may incur charges after credits expire.",
+                  )
+                ) return;
+                setSaving(true);
+                try {
+                  await callResource("config", {
+                    action: "patch",
+                    path: "externalServices.google",
+                    updates: { enabled },
+                  });
+                  await load();
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error ? error.message : "Save failed",
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant={status?.sourceConfigured ? "default" : "secondary"}>
               Media folder{" "}
@@ -569,8 +603,10 @@ export default function GoogleCloudSettingsPage() {
                     Today used / stop
                   </div>
                   <div className="font-medium">
-                    ${status.usage.grossTodayUsd.toFixed(4)}{" "}
-                    / ${status.usage.dailyLimitUsd.toFixed(2)}
+                    ${status.usage.grossTodayUsd.toFixed(4)} /{" "}
+                    {status.usage.dailyLimitUsd === null
+                      ? "No daily limit"
+                      : `$${status.usage.dailyLimitUsd.toFixed(2)}`}
                   </div>
                 </div>
                 <div>
@@ -626,20 +662,48 @@ export default function GoogleCloudSettingsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="google-cloud-daily-stop">Daily stop, USD</Label>
-              <Input
-                id="google-cloud-daily-stop"
-                type="number"
-                value={config.promoGuard.dailyGrossLimitUsd}
-                onChange={(event) =>
-                  setConfig({
-                    ...config,
-                    promoGuard: {
-                      ...config.promoGuard,
-                      dailyGrossLimitUsd: Number(event.target.value),
-                    },
-                  })}
-              />
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="google-cloud-daily-limit-enabled">
+                  Daily limit
+                </Label>
+                <Switch
+                  id="google-cloud-daily-limit-enabled"
+                  checked={config.promoGuard.dailyGrossLimitUsd !== null}
+                  onCheckedChange={(enabled) =>
+                    setConfig({
+                      ...config,
+                      promoGuard: {
+                        ...config.promoGuard,
+                        dailyGrossLimitUsd: enabled ? 0.1 : null,
+                      },
+                    })}
+                />
+              </div>
+              {config.promoGuard.dailyGrossLimitUsd === null
+                ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No daily limit. Monthly and batch limits still apply.
+                  </p>
+                )
+                : (
+                  <Input
+                    id="google-cloud-daily-stop"
+                    aria-label="Daily stop, USD"
+                    type="number"
+                    min="0.01"
+                    max="50"
+                    step="0.01"
+                    value={config.promoGuard.dailyGrossLimitUsd}
+                    onChange={(event) =>
+                      setConfig({
+                        ...config,
+                        promoGuard: {
+                          ...config.promoGuard,
+                          dailyGrossLimitUsd: Number(event.target.value),
+                        },
+                      })}
+                  />
+                )}
             </div>
             <div>
               <Label htmlFor="google-cloud-per-import-stop">
@@ -661,8 +725,8 @@ export default function GoogleCloudSettingsPage() {
             </div>
             <p className="text-xs text-muted-foreground md:col-span-4">
               This is a fail-closed application guard, not a Google billing
-              guarantee. Processing stops {config.promoGuard.stopBeforeHours}
-              {" "}
+              guarantee. Free-trial mode stops processing{" "}
+              {config.promoGuard.stopBeforeHours}{" "}
               hours before the configured promotion expiry. Defaults are
               $1/month, $0.10/day, and $0.01 per asset.
             </p>
@@ -850,9 +914,9 @@ export default function GoogleCloudSettingsPage() {
               </select>
               <p className="text-xs text-muted-foreground">
                 Paid mode permanently acknowledges real-charge risk for this
-                project. Mycelia's monthly, daily, per-asset, and per-event
-                gross limits still apply, but they cannot replace Google
-                Billing.
+                project. Mycelia's monthly, per-asset, per-event, and any
+                enabled daily gross limits still apply, but they cannot replace
+                Google Billing.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-3">

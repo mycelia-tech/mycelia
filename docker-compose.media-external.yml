@@ -1,0 +1,10 @@
+# Append after the regular UAT/media overlays to keep existing references valid.
+services:
+  backend:
+    volumes:
+      - type: bind
+        source: ${MEDIA_SOURCE_EXTRA_HOST_PATH:?Set MEDIA_SOURCE_EXTRA_HOST_PATH to an existing external photo folder}
+        target: /media-source/${MEDIA_SOURCE_EXTRA_NAME:-external-photos}
+        read_only: true
+        bind:
+          create_host_path: false

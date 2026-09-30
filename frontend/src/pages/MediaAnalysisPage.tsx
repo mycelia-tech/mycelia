@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
-  CalendarDays,
+  ArrowUpDown,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -19,10 +26,16 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { callResource } from "@/lib/api";
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { cn } from "@/lib/utils";
 import { getMediaRecognitionBatchProgress } from "@/lib/mediaRecognitionBatchProgress";
+import { zonedDateKey, zonedDateKeyToDate } from "@/lib/datePicker";
+import { resolveDefaultTimeZone } from "@/lib/timeZones";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { AuthenticatedMediaImage } from "@/components/media/AuthenticatedMediaImage";
 import { MediaSectionNav } from "@/components/media/MediaSectionNav";
+import { MediaHint } from "@/components/media/MediaHint";
+import { MediaResultPanel } from "@/components/media/MediaResultPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,16 +64,26 @@ type InventoryFilter =
   | "unprocessed"
   | "processing"
   | "ready"
-  | "needs_attention";
+  | "needs_attention"
+  | "ignored";
 type PlacementFilter = "all" | "missing_time" | "missing_location";
 type RecognitionTask = "visual-understanding" | "ocr";
 type SelectionMode = "explicit" | "all_matching";
+type MediaSortBy =
+  | "capturedAt"
+  | "createdAt"
+  | "fileName"
+  | "status"
+  | "byteLength"
+  | "updatedAt";
 const RECOGNITION_TASKS: RecognitionTask[] = [
   "visual-understanding",
   "ocr",
 ];
 
 interface Filters {
+  providerProfileId?: string;
+  importCampaignId?: string;
   inventoryFilter: InventoryFilter;
   placement: PlacementFilter;
   query: string;
@@ -69,23 +92,27 @@ interface Filters {
 }
 
 interface Asset {
+  currentRunId?: string;
   _id: unknown;
   fileName: string;
   status: string;
   byteLength?: number;
   thumbnailUrl?: string;
   previewUrl?: string;
+  preview?: { fileId?: unknown };
   capturedAt?: string | Date;
   location?: { latitude: number; longitude: number };
   safeError?: string;
   source?: { relativePath?: string };
   storageMode?: string;
+  managedOriginal?: { fileId?: unknown };
   metadata?: Record<string, unknown>;
   inventory?: {
     shortCaption?: string;
     ocrPageCount?: number;
     annotationCount?: number;
   };
+  recognitionIgnoredAt?: string | Date;
 }
 
 interface Batch {
@@ -109,6 +136,12 @@ const PROCESSABLE_STATES = new Set([
   "recognition_disabled",
 ]);
 
+interface SingleAssetEligibility {
+  eligible: boolean;
+  title: string;
+  description: string;
+}
+
 function idOf(value: unknown): string {
   if (typeof value === "string") return value;
   if (value && typeof value === "object" && "$oid" in value) {
@@ -120,7 +153,7 @@ function idOf(value: unknown): string {
 function parsedInventoryFilter(value: string | null): InventoryFilter {
   if (
     value === "unprocessed" || value === "processing" || value === "ready" ||
-    value === "needs_attention"
+    value === "needs_attention" || value === "ignored"
   ) return value;
   return "all";
 }
@@ -130,26 +163,75 @@ function parsedPlacement(value: string | null): PlacementFilter {
   return "all";
 }
 
-function isoDate(value: string, end = false): string | undefined {
+function captureDateBoundary(
+  value: string,
+  timeZone: string,
+  end = false,
+): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  return new Date(
-    value + (end ? "T23:59:59.999Z" : "T00:00:00.000Z"),
-  ).toISOString();
+  const boundary = zonedDateKeyToDate(value, timeZone);
+  if (!boundary) return undefined;
+  if (!end) return boundary.toISOString();
+
+  const [year, month, day] = value.split("-").map(Number);
+  const nextCalendarDay = new Date(Date.UTC(year, month - 1, day + 1));
+  const nextKey = [
+    nextCalendarDay.getUTCFullYear(),
+    String(nextCalendarDay.getUTCMonth() + 1).padStart(2, "0"),
+    String(nextCalendarDay.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+  const nextBoundary = zonedDateKeyToDate(nextKey, timeZone);
+  return nextBoundary
+    ? new Date(nextBoundary.getTime() - 1).toISOString()
+    : undefined;
 }
 
-function filterRequest(filters: Filters) {
+function recognitionFilterRequest(filters: Filters, timeZone: string) {
+  const capturedFrom = captureDateBoundary(filters.capturedFrom, timeZone);
+  const capturedTo = captureDateBoundary(filters.capturedTo, timeZone, true);
   return {
     inventoryFilter: filters.inventoryFilter,
+    ...(filters.providerProfileId
+      ? { providerProfileId: filters.providerProfileId }
+      : {}),
+    ...(filters.importCampaignId
+      ? { importCampaignId: filters.importCampaignId }
+      : {}),
     placement: filters.placement,
-    kind: "image",
     ...(filters.query ? { query: filters.query } : {}),
-    ...(isoDate(filters.capturedFrom)
-      ? { capturedFrom: isoDate(filters.capturedFrom) }
-      : {}),
-    ...(isoDate(filters.capturedTo, true)
-      ? { capturedTo: isoDate(filters.capturedTo, true) }
-      : {}),
+    ...(capturedFrom ? { capturedFrom } : {}),
+    ...(capturedTo ? { capturedTo } : {}),
   };
+}
+
+function filterRequest(filters: Filters, timeZone: string) {
+  return {
+    ...recognitionFilterRequest(filters, timeZone),
+    kind: "image",
+  };
+}
+
+function filterKey(filters: Filters, timeZone: string): string {
+  return JSON.stringify(filterRequest(filters, timeZone));
+}
+
+function hasRetainedOriginal(asset: Asset): boolean {
+  return (asset.storageMode === "managed_original" &&
+    Boolean(asset.managedOriginal?.fileId)) ||
+    (asset.storageMode === "external_reference" &&
+      Boolean(asset.source?.relativePath));
+}
+
+function hasRecognitionPreview(asset: Asset): boolean {
+  return Boolean(asset.preview?.fileId);
+}
+
+function isBatchSelectableAsset(asset: Asset, reanalyze = false): boolean {
+  return (!asset.currentRunId || reanalyze) &&
+    (PROCESSABLE_STATES.has(asset.status) ||
+      (reanalyze && asset.status === "ready")) &&
+    hasRetainedOriginal(asset) &&
+    hasRecognitionPreview(asset);
 }
 
 function formattedDate(value: unknown): string {
@@ -185,28 +267,141 @@ function resultCopy(asset: Asset): string {
       : "No visual description yet");
 }
 
+function singleAssetEligibility(
+  asset: Asset,
+  reanalyze = false,
+): SingleAssetEligibility {
+  if ((asset.status === "ready" || asset.currentRunId) && !reanalyze) {
+    return {
+      eligible: false,
+      title: "Photo analysis is already ready",
+      description:
+        "Ready photos are skipped by recognition batches. Stored provider results and history are shown below; a missing visual description is not queued again while this photo remains ready.",
+    };
+  }
+  if (asset.status === "queued" || asset.status === "processing") {
+    return {
+      eligible: false,
+      title: "Description is already in progress",
+      description:
+        "This photo is already queued or processing, so it cannot be added to another recognition batch.",
+    };
+  }
+  if (asset.status === "source_missing") {
+    return {
+      eligible: false,
+      title: "Original photo is unavailable",
+      description: asset.safeError ??
+        "The mounted original cannot be found. Restore it at the imported path before requesting a description.",
+    };
+  }
+  if (asset.status === "source_changed") {
+    return {
+      eligible: false,
+      title: "Original photo changed",
+      description: asset.safeError ??
+        "The file at the mounted path no longer matches the imported photo. Sync the folder again before requesting a description.",
+    };
+  }
+  if (
+    !PROCESSABLE_STATES.has(asset.status) &&
+    !(reanalyze && asset.status === "ready")
+  ) {
+    return {
+      eligible: false,
+      title: "Photo is not eligible for analysis",
+      description:
+        "Its current state is not accepted by a new recognition batch.",
+    };
+  }
+  if (!hasRetainedOriginal(asset)) {
+    return {
+      eligible: false,
+      title: "No retained original is available",
+      description:
+        "This record has a preview but no managed original or mounted-file reference that recognition can read.",
+    };
+  }
+  if (!hasRecognitionPreview(asset)) {
+    return {
+      eligible: false,
+      title: "Photo preview is unavailable",
+      description:
+        "The derived preview was deleted or is missing. Rebuild it from the retained original before requesting analysis.",
+    };
+  }
+  return {
+    eligible: true,
+    title: "Ready to review one photo",
+    description:
+      "Only this photo is selected. Reviewing creates a local receipt and verifies the original; it does not call the provider.",
+  };
+}
+
 export default function MediaAnalysisPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const defaultTimeZone = useSettingsStore((state) => state.defaultTimeZone);
+  const timeZone = resolveDefaultTimeZone(defaultTimeZone);
   const inventoryFilterParam = searchParams.get("status");
+  const reanalyze = searchParams.get("reanalyze") === "1";
+  const providerFilter = searchParams.get("provider") ?? "";
+  const importFilter = searchParams.get("import") ?? "";
   const placementParam = searchParams.get("placement");
   const queryParam = searchParams.get("query");
   const capturedFromParam = searchParams.get("from");
   const capturedToParam = searchParams.get("to");
   const filters = useMemo<Filters>(() => ({
+    providerProfileId: providerFilter,
+    importCampaignId: importFilter,
     inventoryFilter: parsedInventoryFilter(inventoryFilterParam),
     placement: parsedPlacement(placementParam),
     query: queryParam?.trim() ?? "",
     capturedFrom: capturedFromParam ?? "",
     capturedTo: capturedToParam ?? "",
   }), [
+    providerFilter,
+    importFilter,
     capturedFromParam,
     capturedToParam,
     inventoryFilterParam,
     placementParam,
     queryParam,
   ]);
+  const currentFilterKey = useMemo(
+    () => filterKey(filters, timeZone),
+    [filters, timeZone],
+  );
+  const captureRange = useMemo(() => {
+    const start = zonedDateKeyToDate(filters.capturedFrom, timeZone);
+    if (!start) return undefined;
+    const end = zonedDateKeyToDate(filters.capturedTo, timeZone) ?? undefined;
+    return { start, ...(end ? { end } : {}) };
+  }, [filters.capturedFrom, filters.capturedTo, timeZone]);
   const viewMode = searchParams.get("view") === "table" ? "table" : "grid";
+  const requestedSort = searchParams.get("sort") as MediaSortBy | null;
+  const sortBy: MediaSortBy = requestedSort && [
+      "capturedAt",
+      "createdAt",
+      "fileName",
+      "status",
+      "byteLength",
+      "updatedAt",
+    ].includes(requestedSort)
+    ? requestedSort
+    : "capturedAt";
+  const sortDirection = searchParams.get("direction") === "asc"
+    ? "asc"
+    : "desc";
   const selectedAssetId = searchParams.get("assetId") ?? "";
+  const selectRequested = searchParams.get("select") === "1";
+  const bulkSelectionRequested = searchParams.get("selection") === "all";
+  const requestedAssetIds = useMemo(
+    () =>
+      (searchParams.get("assetIds") ?? "").split(",").filter((value) =>
+        /^[a-f\d]{24}$/i.test(value)
+      ),
+    [searchParams],
+  );
 
   const [queryDraft, setQueryDraft] = useState(filters.query);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -220,6 +415,7 @@ export default function MediaAnalysisPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string>();
+  const [loadedFilterKey, setLoadedFilterKey] = useState("");
 
   const [status, setStatus] = useState<any>();
   const [summary, setSummary] = useState<Record<string, number>>({});
@@ -231,11 +427,59 @@ export default function MediaAnalysisPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [profileId, setProfileId] = useState("");
   const [preview, setPreview] = useState<any>();
+  const [previewReceiptContextKey, setPreviewReceiptContextKey] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [batchAction, setBatchAction] = useState("");
   const [detail, setDetail] = useState<any>();
   const [detailLoading, setDetailLoading] = useState(false);
+  const [pendingAllMatchingFilterKey, setPendingAllMatchingFilterKey] =
+    useState("");
+  const autoSelectionRef = useRef("");
+  const bulkSelectionRef = useRef("");
+  const reviewBatchButtonRef = useRef<HTMLButtonElement>(null);
+  const sortedSelectedIds = useMemo(
+    () => Array.from(selectedIds).sort(),
+    [selectedIds],
+  );
+  const previewSelection = useMemo(() => {
+    const shared = {
+      ...recognitionFilterRequest(filters, timeZone),
+      ...(reanalyze ? { reanalyze: true } : {}),
+    };
+    return selectionMode === "all_matching"
+      ? { mode: "all_matching" as const, ...shared }
+      : {
+        mode: "explicit" as const,
+        ...shared,
+        assetIds: sortedSelectedIds,
+      };
+  }, [filters, selectionMode, sortedSelectedIds, timeZone, reanalyze]);
+  const previewRequestContextKey = useMemo(
+    () =>
+      JSON.stringify({
+        filterKey: currentFilterKey,
+        selection: previewSelection,
+        profileId,
+      }),
+    [currentFilterKey, previewSelection, profileId],
+  );
+  const previewRequestGenerationRef = useRef(0);
+  const latestPreviewRequestContextRef = useRef(previewRequestContextKey);
+  const latestPreviewFilterKeyRef = useRef(currentFilterKey);
+
+  useLayoutEffect(() => {
+    latestPreviewRequestContextRef.current = previewRequestContextKey;
+    latestPreviewFilterKeyRef.current = currentFilterKey;
+    previewRequestGenerationRef.current += 1;
+    setPreview(undefined);
+    setPreviewReceiptContextKey("");
+    setPreviewing(false);
+  }, [previewRequestContextKey]);
+
+  const currentPreview = previewReceiptContextKey === previewRequestContextKey
+    ? preview
+    : undefined;
 
   useEffect(() => setQueryDraft(filters.query), [filters.query]);
 
@@ -254,6 +498,11 @@ export default function MediaAnalysisPage() {
       return next;
     }, { replace: true });
   }, [setSearchParams]);
+
+  const updateFilters = useCallback((changes: Record<string, string>) => {
+    setPendingAllMatchingFilterKey("");
+    updateParams(changes);
+  }, [updateParams]);
 
   const loadAssets = useCallback(async (
     options: { append?: boolean; background?: boolean } = {},
@@ -277,7 +526,9 @@ export default function MediaAnalysisPage() {
         callResource("media", {
           action: "listAssets",
           limit,
-          ...filterRequest(filters),
+          ...filterRequest(filters, timeZone),
+          sortBy,
+          sortDirection,
           ...(pageCursor ? { cursor: pageCursor } : {}),
         }, { signal: controller.signal });
       const loadRefreshedPrefix = async () => {
@@ -320,6 +571,7 @@ export default function MediaAnalysisPage() {
       cursorRef.current = next;
       setNextCursor(next);
       setTotal(Number(result.total ?? page.length));
+      setLoadedFilterKey(currentFilterKey);
     } catch (error) {
       if (
         controller.signal.aborted ||
@@ -340,7 +592,7 @@ export default function MediaAnalysisPage() {
         }
       }
     }
-  }, [filters]);
+  }, [currentFilterKey, filters, sortBy, sortDirection, timeZone]);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -384,7 +636,10 @@ export default function MediaAnalysisPage() {
   useEffect(() => {
     cursorRef.current = undefined;
     loadedAssetCountRef.current = 0;
+    setAssets([]);
+    setTotal(0);
     setNextCursor(undefined);
+    setLoadedFilterKey("");
     setSelectionMode("explicit");
     setSelectedIds(new Set());
     setPreview(undefined);
@@ -393,12 +648,34 @@ export default function MediaAnalysisPage() {
   }, [loadAssets]);
 
   useEffect(() => {
-    void callResource("media", { action: "status" }).then(setStatus).catch(
-      (error) =>
-        toast.error(
-          error instanceof Error ? error.message : "Media settings failed",
-        ),
-    );
+    if (!pendingAllMatchingFilterKey) return;
+    if (pendingAllMatchingFilterKey !== currentFilterKey) return;
+    if (loadError) {
+      setPendingAllMatchingFilterKey("");
+      return;
+    }
+    if (loading || loadedFilterKey !== pendingAllMatchingFilterKey) return;
+    setSelectionMode(total > 0 ? "all_matching" : "explicit");
+    setSelectedIds(new Set());
+    setPreview(undefined);
+    setPendingAllMatchingFilterKey("");
+  }, [
+    currentFilterKey,
+    loadError,
+    loadedFilterKey,
+    loading,
+    pendingAllMatchingFilterKey,
+    total,
+  ]);
+
+  useEffect(() => {
+    void callResource("media", { action: "photoSettings" }).then(setStatus)
+      .catch(
+        (error) =>
+          toast.error(
+            error instanceof Error ? error.message : "Media settings failed",
+          ),
+      );
     void loadSummary();
     void loadBatches();
   }, [loadBatches, loadSummary]);
@@ -442,6 +719,7 @@ export default function MediaAnalysisPage() {
       return;
     }
     let current = true;
+    setDetail(undefined);
     setDetailLoading(true);
     callResource("media", { action: "getAsset", assetId: selectedAssetId })
       .then((result) => current && setDetail(result))
@@ -458,8 +736,61 @@ export default function MediaAnalysisPage() {
     };
   }, [selectedAssetId]);
 
+  useEffect(() => {
+    if (!selectRequested || !selectedAssetId) {
+      autoSelectionRef.current = "";
+      return;
+    }
+    setSelectionMode("explicit");
+    setSelectedIds(new Set());
+    setPreview(undefined);
+    autoSelectionRef.current = "";
+  }, [selectRequested, selectedAssetId]);
+
+  useEffect(() => {
+    if (!selectRequested || !selectedAssetId || !detail?.asset) return;
+    if (idOf(detail.asset._id) !== selectedAssetId) return;
+    const selectionKey = `${selectedAssetId}:select=1:reanalyze=${reanalyze}`;
+    if (autoSelectionRef.current === selectionKey) return;
+    autoSelectionRef.current = selectionKey;
+    const eligibility = singleAssetEligibility(
+      detail.asset as Asset,
+      reanalyze,
+    );
+    setSelectionMode("explicit");
+    setSelectedIds(
+      eligibility.eligible ? new Set([selectedAssetId]) : new Set(),
+    );
+    setPreview(undefined);
+  }, [detail, selectRequested, selectedAssetId, reanalyze]);
+
+  const scopeReady = loadedFilterKey === currentFilterKey && !loading &&
+    !loadError;
+
+  useEffect(() => {
+    if (!scopeReady) return;
+    const key = bulkSelectionRequested
+      ? `all:${currentFilterKey}:${total}`
+      : requestedAssetIds.length > 0
+      ? `ids:${requestedAssetIds.join(",")}`
+      : "";
+    if (!key || bulkSelectionRef.current === key) return;
+    bulkSelectionRef.current = key;
+    setSelectionMode(bulkSelectionRequested ? "all_matching" : "explicit");
+    setSelectedIds(
+      bulkSelectionRequested ? new Set() : new Set(requestedAssetIds),
+    );
+    setPreview(undefined);
+  }, [
+    bulkSelectionRequested,
+    currentFilterKey,
+    requestedAssetIds,
+    scopeReady,
+    total,
+  ]);
+
   const processableAssets = assets.filter((asset) =>
-    PROCESSABLE_STATES.has(asset.status)
+    isBatchSelectableAsset(asset, reanalyze)
   );
   const selectedCount = selectionMode === "all_matching"
     ? total
@@ -482,31 +813,50 @@ export default function MediaAnalysisPage() {
     });
   };
 
+  const selectAllMatchingForReview = () => {
+    const targetFilters: Filters = {
+      ...filters,
+      inventoryFilter: reanalyze ? filters.inventoryFilter : "unprocessed",
+    };
+    const targetFilterKey = filterKey(targetFilters, timeZone);
+    setSelectedIds(new Set());
+    setPreview(undefined);
+
+    if (
+      targetFilterKey === currentFilterKey &&
+      targetFilterKey === loadedFilterKey && scopeReady
+    ) {
+      setSelectionMode(total > 0 ? "all_matching" : "explicit");
+      return;
+    }
+
+    setSelectionMode("explicit");
+    setPendingAllMatchingFilterKey(targetFilterKey);
+    updateParams({ status: targetFilters.inventoryFilter });
+  };
+
   const previewBatch = async () => {
-    if (!profileId || selectedCount === 0) return;
+    if (!scopeReady || !profileId || selectedCount === 0) return;
+    const requestGeneration = ++previewRequestGenerationRef.current;
+    const requestContextKey = previewRequestContextKey;
+    const requestFilterKey = currentFilterKey;
+    const requestProfileId = profileId;
+    const requestSelection = previewSelection;
+    const isCurrentRequest = () =>
+      requestGeneration === previewRequestGenerationRef.current &&
+      requestContextKey === latestPreviewRequestContextRef.current &&
+      requestFilterKey === latestPreviewFilterKeyRef.current;
     setPreviewing(true);
     try {
-      const shared = {
-        inventoryFilter: filters.inventoryFilter,
-        placement: filters.placement,
-        ...(filters.query ? { query: filters.query } : {}),
-        ...(isoDate(filters.capturedFrom)
-          ? { capturedFrom: isoDate(filters.capturedFrom) }
-          : {}),
-        ...(isoDate(filters.capturedTo, true)
-          ? { capturedTo: isoDate(filters.capturedTo, true) }
-          : {}),
-      };
-      const selection = selectionMode === "all_matching"
-        ? { mode: "all_matching", ...shared }
-        : { mode: "explicit", ...shared, assetIds: Array.from(selectedIds) };
       const result = await callResource("media-library", {
         action: "previewRecognitionBatch",
-        profileId,
+        profileId: requestProfileId,
         requestedTasks: RECOGNITION_TASKS,
-        selection,
+        selection: requestSelection,
       });
+      if (!isCurrentRequest()) return;
       setPreview(result);
+      setPreviewReceiptContextKey(requestContextKey);
       const reserved = Number(result.reservedByActiveBatchCount ?? 0);
       toast.success(
         "Prepared " + Number(result.eligibleCount ?? 0) +
@@ -514,21 +864,55 @@ export default function MediaAnalysisPage() {
           (reserved > 0 ? ` · ${reserved} already in another batch` : ""),
       );
     } catch (error) {
+      if (!isCurrentRequest()) return;
       toast.error(
         error instanceof Error ? error.message : "Analysis preview failed",
       );
     } finally {
-      setPreviewing(false);
+      if (isCurrentRequest()) setPreviewing(false);
+    }
+  };
+
+  const setSelectionIgnored = async (ignored: boolean) => {
+    if (!scopeReady || selectedCount === 0) return;
+    if (
+      !globalThis.confirm(
+        ignored
+          ? `Ignore ${selectedCount} selected photo(s) for future analysis? Existing results and files stay unchanged.`
+          : `Return ${selectedCount} selected photo(s) to normal processing selection?`,
+      )
+    ) return;
+    setBatchAction(ignored ? "ignore-selection" : "restore-selection");
+    try {
+      const result = await callResource("media-library", {
+        action: "setRecognitionIgnored",
+        selection: previewSelection,
+        ignored,
+        confirm: true,
+      });
+      toast.success(
+        `${ignored ? "Ignored" : "Returned"} ${
+          Number(result.updated ?? 0)
+        } photo(s)`,
+      );
+      clearSelection();
+      await Promise.all([loadAssets(), loadSummary()]);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Selection update failed",
+      );
+    } finally {
+      setBatchAction("");
     }
   };
 
   const confirmBatch = async () => {
-    if (!preview?.previewId) return;
+    if (!currentPreview?.previewId) return;
     setConfirming(true);
     try {
       const result = await callResource("media-library", {
         action: "confirmRecognitionBatch",
-        previewId: idOf(preview.previewId),
+        previewId: idOf(currentPreview.previewId),
         consent: true,
       });
       setPreview(undefined);
@@ -576,19 +960,37 @@ export default function MediaAnalysisPage() {
     }
   };
 
-  const openAsset = (assetId: string) => updateParams({ assetId });
-  const closeAsset = () => updateParams({ assetId: "" });
+  const openAsset = (assetId: string) => updateParams({ assetId, select: "" });
+  const closeAsset = () => updateParams({ assetId: "", select: "" });
   const selectedIndex = assets.findIndex((asset) =>
     idOf(asset._id) === selectedAssetId
   );
+  const detailEligibility = detail?.asset
+    ? singleAssetEligibility(detail.asset as Asset, reanalyze)
+    : undefined;
+
+  const continueToBatchReview = () => {
+    closeAsset();
+    globalThis.setTimeout(() => {
+      reviewBatchButtonRef.current?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "center",
+      });
+      reviewBatchButtonRef.current?.focus();
+    }, 0);
+  };
 
   const assetCheckbox = (asset: Asset) => {
     const assetId = idOf(asset._id);
     return (
       <Checkbox
         aria-label={"Select " + asset.fileName}
-        checked={selectionMode === "all_matching" || selectedIds.has(assetId)}
-        disabled={!PROCESSABLE_STATES.has(asset.status) ||
+        checked={selectionMode === "all_matching"
+          ? isBatchSelectableAsset(asset, reanalyze)
+          : selectedIds.has(assetId)}
+        disabled={!scopeReady ||
+          !(isBatchSelectableAsset(asset, reanalyze) ||
+            asset.recognitionIgnoredAt) ||
           selectionMode === "all_matching"}
         onCheckedChange={(checked) => toggleAsset(assetId, checked === true)}
       />
@@ -603,21 +1005,20 @@ export default function MediaAnalysisPage() {
   ] as const;
 
   return (
-    <div className="container mx-auto space-y-6 p-4">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-2">
-          <h1 className="flex items-center gap-2 text-3xl font-bold">
-            <Sparkles className="h-7 w-7 text-primary" />Photo analysis
+    <div className="container mx-auto space-y-4 p-4">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+            <Sparkles className="h-6 w-6 text-primary" />Analysis
           </h1>
-          <p className="max-w-3xl text-sm text-muted-foreground">
-            Filter every imported photo, inspect stored results, and prepare one
-            durable provider batch for an exact selection.
-          </p>
           <MediaSectionNav />
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
-            variant="outline"
+            size="icon"
+            variant="ghost"
+            aria-label="Refresh photo analysis"
+            title="Refresh"
             onClick={() => {
               void loadAssets();
               void loadSummary();
@@ -625,44 +1026,94 @@ export default function MediaAnalysisPage() {
             }}
           >
             <RefreshCw
-              className={cn("mr-2 h-4 w-4", loading && "animate-spin")}
-            />Refresh
+              className={cn("h-4 w-4", loading && "animate-spin")}
+            />
           </Button>
-          <Button asChild variant="outline">
+          <Button asChild size="sm" variant="ghost">
             <Link to="/timeline">Timeline</Link>
           </Button>
-          <Button asChild variant="outline">
+          <Button asChild size="sm" variant="ghost">
             <Link to="/map">Map</Link>
+          </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/settings/photo-analysis">Photo analysis settings</Link>
           </Button>
         </div>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-md border bg-muted/20 px-3 py-2">
         {metrics.map(([label, value, Icon]) => (
-          <Card key={label}>
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <div className="text-2xl font-semibold">{Number(value)}</div>
-                <div className="text-xs text-muted-foreground">{label}</div>
-              </div>
-              <Icon className="h-5 w-5 text-muted-foreground" />
-            </CardContent>
-          </Card>
+          <div key={label} className="flex items-center gap-2 text-sm">
+            <Icon className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">{Number(value)}</span>
+            <span className="text-muted-foreground">{label}</span>
+          </div>
         ))}
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
+        <nav
+          aria-label="Analysis views"
+          className="flex flex-wrap gap-1 px-3 pt-3"
+        >
+          {([["unprocessed", "To analyze"], ["ready", "Results"], [
+            "needs_attention",
+            "Needs attention",
+          ]] as const).map(([value, label]) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={filters.inventoryFilter === value
+                ? "secondary"
+                : "ghost"}
+              onClick={() => updateFilters({ status: value })}
+            >
+              {label}
+            </Button>
+          ))}
+        </nav>
+        <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <select
+            aria-label="Result provider"
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={providerFilter}
+            onChange={(event) =>
+              updateFilters({ provider: event.target.value })}
+          >
+            <option value="">All result providers</option>
+            {(status?.profiles ?? []).map((entry: any) => (
+              <option key={entry.id} value={entry.id}>{entry.name}</option>
+            ))}
+          </select>
+          <select
+            aria-label="Import batch"
+            className="h-9 max-w-80 rounded-md border bg-background px-2 text-sm"
+            value={importFilter}
+            onChange={(event) => updateFilters({ import: event.target.value })}
+          >
+            <option value="">All imports</option>
+            {(status?.importBatches ?? []).map((entry: any) => (
+              <option key={idOf(entry._id)} value={idOf(entry._id)}>
+                {entry.relativePath ?? "Import"} ·{" "}
+                {formattedDate(entry.createdAt)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <CardHeader className="p-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <CardTitle>Photos and analysis</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Filters are stored in the URL and can be bookmarked.
-              </p>
+            <div className="flex items-center gap-1">
+              <CardTitle className="text-base">Photos</CardTitle>
+              <MediaHint label="About analysis filters">
+                Filters and sorting are stored in the URL. Batch review verifies
+                originals and shows the exact eligible count and maximum cost
+                before any provider call.
+              </MediaHint>
             </div>
-            <div className="inline-flex rounded-md border p-1">
+            <div className="inline-flex rounded-md border p-0.5">
               <Button
-                size="sm"
+                size="icon"
+                className="h-8 w-8"
                 variant={viewMode === "grid" ? "secondary" : "ghost"}
                 aria-label="Grid view"
                 aria-pressed={viewMode === "grid"}
@@ -671,7 +1122,8 @@ export default function MediaAnalysisPage() {
                 <LayoutGrid className="h-4 w-4" />
               </Button>
               <Button
-                size="sm"
+                size="icon"
+                className="h-8 w-8"
                 variant={viewMode === "table" ? "secondary" : "ghost"}
                 aria-label="Table view"
                 aria-pressed={viewMode === "table"}
@@ -682,89 +1134,125 @@ export default function MediaAnalysisPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3 p-3 pt-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 p-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Batch current filters
+              <MediaHint label="About selecting all matching photos">
+                Selects every matching unprocessed photo across all server
+                pages, not only the loaded page. No provider is called until you
+                review and confirm the exact batch.
+              </MediaHint>
+            </div>
+            <Button
+              size="sm"
+              className="shrink-0"
+              aria-label="Select all matching for review"
+              disabled={!scopeReady ||
+                Boolean(pendingAllMatchingFilterKey) ||
+                (filters.inventoryFilter === "unprocessed" && total === 0)}
+              onClick={selectAllMatchingForReview}
+            >
+              {pendingAllMatchingFilterKey && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Select all matches
+            </Button>
+          </div>
+
           <div className="grid gap-3 lg:grid-cols-[1.3fr_repeat(4,minmax(0,0.7fr))]">
             <form
-              className="flex gap-2"
+              className="space-y-1.5"
               onSubmit={(event) => {
                 event.preventDefault();
-                updateParams({ query: queryDraft.trim() });
+                updateFilters({ query: queryDraft.trim() });
               }}
             >
-              <Input
-                aria-label="Search imported photos"
-                value={queryDraft}
-                onChange={(event) => setQueryDraft(event.target.value)}
-                placeholder="Filename or imported source path"
-              />
-              <Button type="submit" size="icon" aria-label="Apply photo search">
-                <Search className="h-4 w-4" />
-              </Button>
+              <Label htmlFor="analysis-search">Search</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="analysis-search"
+                  aria-label="Search imported photos"
+                  value={queryDraft}
+                  onChange={(event) => setQueryDraft(event.target.value)}
+                  placeholder="Filename or imported source path"
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  aria-label="Apply photo search"
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </div>
             </form>
-            <div>
-              <Label htmlFor="analysis-status" className="sr-only">
-                Status
-              </Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="analysis-status">Status</Label>
               <select
                 id="analysis-status"
                 aria-label="Status"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={filters.inventoryFilter}
                 onChange={(event) =>
-                  updateParams({ status: event.target.value })}
+                  updateFilters({ status: event.target.value })}
               >
                 <option value="all">Any status</option>
                 <option value="unprocessed">Unprocessed</option>
                 <option value="processing">Queued / processing</option>
                 <option value="ready">Ready</option>
                 <option value="needs_attention">Needs attention</option>
+                <option value="ignored">Ignored</option>
               </select>
             </div>
-            <div>
-              <Label htmlFor="analysis-placement" className="sr-only">
-                Placement
-              </Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="analysis-placement">Placement</Label>
               <select
                 id="analysis-placement"
                 aria-label="Placement"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={filters.placement}
                 onChange={(event) =>
-                  updateParams({ placement: event.target.value })}
+                  updateFilters({ placement: event.target.value })}
               >
                 <option value="all">Any placement</option>
                 <option value="missing_time">Missing time</option>
                 <option value="missing_location">Missing location</option>
               </select>
             </div>
-            <div className="relative">
-              <CalendarDays className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="date"
-                aria-label="Captured from"
-                className="pl-9"
-                value={filters.capturedFrom}
-                onChange={(event) => updateParams({ from: event.target.value })}
+            <div className="space-y-1.5 lg:col-span-2">
+              <DateRangePicker
+                label="Captured from / to"
+                placeholder="Any capture date"
+                precision="date"
+                allowOpenEnd
+                value={captureRange}
+                onChange={(value) => updateFilters({
+                  from: zonedDateKey(value.start, timeZone),
+                  to: value.end ? zonedDateKey(value.end, timeZone) : "",
+                })}
               />
-            </div>
-            <div className="relative">
-              <CalendarDays className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="date"
-                aria-label="Captured to"
-                className="pl-9"
-                value={filters.capturedTo}
-                onChange={(event) => updateParams({ to: event.target.value })}
-              />
+              {(filters.capturedFrom || filters.capturedTo) && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => updateFilters({ from: "", to: "" })}
+                >
+                  Clear capture dates
+                </Button>
+              )}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/25 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 p-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="outline"
-                disabled={processableAssets.length === 0}
+                aria-label={`Select loaded (${processableAssets.length})`}
+                disabled={!scopeReady || processableAssets.length === 0}
                 onClick={() => {
                   setSelectionMode("explicit");
                   setSelectedIds(
@@ -775,21 +1263,7 @@ export default function MediaAnalysisPage() {
                   setPreview(undefined);
                 }}
               >
-                Select loaded ({processableAssets.length})
-              </Button>
-              <Button
-                size="sm"
-                variant={selectionMode === "all_matching"
-                  ? "default"
-                  : "outline"}
-                disabled={total === 0}
-                onClick={() => {
-                  setSelectionMode("all_matching");
-                  setSelectedIds(new Set());
-                  setPreview(undefined);
-                }}
-              >
-                Select all {total} matching
+                Page ({processableAssets.length})
               </Button>
               <Button
                 size="sm"
@@ -799,11 +1273,22 @@ export default function MediaAnalysisPage() {
               >
                 Clear
               </Button>
-              <span className="text-sm text-muted-foreground">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!scopeReady || selectedCount === 0 ||
+                  Boolean(batchAction)}
+                onClick={() => void setSelectionIgnored(
+                  filters.inventoryFilter !== "ignored",
+                )}
+              >
+                {filters.inventoryFilter === "ignored" ? "Return" : "Ignore"}
+              </Button>
+              <Badge variant="secondary">
                 {selectionMode === "all_matching"
-                  ? "All " + total + " matching photos selected"
-                  : selectedIds.size + " explicit photo(s) selected"}
-              </span>
+                  ? total + " selected"
+                  : selectedIds.size + " selected"}
+              </Badge>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
@@ -820,47 +1305,80 @@ export default function MediaAnalysisPage() {
                   <option key={entry.id} value={entry.id}>{entry.name}</option>
                 ))}
               </select>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={reanalyze}
+                  onChange={(event) => {
+                    clearSelection();
+                    updateParams({
+                      reanalyze: event.target.checked ? "1" : "",
+                    });
+                  }}
+                />Reanalyze ready photos
+              </label>
+              <MediaHint label="About the analysis package">
+                {selectedProfile?.providerType !== "google-cloud"
+                  ? `Descriptions and visible text use the selected model. External pricing may be unknown. Reanalysis retains the previous successful result.`
+                  : "Google batches use Vertex visual understanding and embedding plus strict-EU Vision OCR. Global Vision labels and objects stay off."}
+              </MediaHint>
               <Button
+                ref={reviewBatchButtonRef}
                 size="sm"
-                disabled={previewing || !profileId || selectedCount === 0}
+                aria-label={`Review analysis batch (${selectedCount})`}
+                disabled={!scopeReady || previewing || !profileId ||
+                  selectedCount === 0}
                 onClick={previewBatch}
               >
                 {previewing
                   ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   : <Sparkles className="mr-2 h-4 w-4" />}
-                Review analysis batch ({selectedCount})
+                Review batch ({selectedCount})
               </Button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-5 text-sm">
-            <span className="text-muted-foreground">
-              {selectedProfile?.providerType === "self-hosted"
-                ? `Fixed bulk package: visual understanding + OCR on ${selectedProfile.name}. Google is not called.`
-                : "Fixed Google package: Vertex visual understanding + embedding and strict-EU Vision OCR. Global Vision labels/objects stay off."}
-            </span>
-            {hasActiveBatch && (
-              <span className="text-xs text-muted-foreground">
-                Existing batches continue in the background; browsing and a new
-                exact selection remain available.
-              </span>
-            )}
-          </div>
+          {hasActiveBatch && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Badge variant="outline">Batch running</Badge>
+              <MediaHint label="About the active batch">
+                Existing batches continue in the background. You can keep
+                browsing and prepare another exact selection.
+              </MediaHint>
+            </div>
+          )}
 
-          {preview && (
+          {currentPreview && (
             <div className="flex flex-col gap-3 rounded-lg border border-primary/40 bg-primary/5 p-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="font-medium">Exact provider preview</div>
                 <div className="text-sm text-muted-foreground">
-                  {Number(preview.eligibleCount ?? 0)}{" "}
-                  eligible photo(s) · maximum
-                  {" $"}
-                  {Number(preview.authorizedGrossUsd ?? 0).toFixed(2)}{" "}
-                  · no provider call yet
+                  {Number(currentPreview.eligibleCount ?? 0)}{" "}
+                  eligible photo(s) · {currentPreview.costKnown === false
+                    ? "cost unknown — provider charges may apply; no monetary ceiling enforced"
+                    : `maximum $${
+                      Number(currentPreview.authorizedGrossUsd ?? 0).toFixed(2)
+                    }`} · no provider call yet
                 </div>
-                {Number(preview.reservedByActiveBatchCount ?? 0) > 0 && (
+                {currentPreview.profile?.endpoint && (
+                  <div className="mt-1 break-all text-sm">
+                    {currentPreview.profile.endpoint} ·{" "}
+                    {currentPreview.profile.model} ·{" "}
+                    {currentPreview.profile.language} · up to{" "}
+                    {currentPreview.profile.maxOutputTokens} output tokens/photo
+                  </div>
+                )}
+                {Number(currentPreview.missingOriginalCount ?? 0) > 0 && (
                   <div className="text-sm text-amber-700 dark:text-amber-300">
-                    {Number(preview.reservedByActiveBatchCount)}{" "}
+                    {Number(currentPreview.missingOriginalCount)} selected{" "}
+                    original(s){" "}
+                    could not be read and were excluded. No provider call was
+                    made.
+                  </div>
+                )}
+                {Number(currentPreview.reservedByActiveBatchCount ?? 0) > 0 && (
+                  <div className="text-sm text-amber-700 dark:text-amber-300">
+                    {Number(currentPreview.reservedByActiveBatchCount)}{" "}
                     matching photo(s){" "}
                     are already reserved by another active batch and were
                     excluded.
@@ -868,12 +1386,16 @@ export default function MediaAnalysisPage() {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setPreview(undefined)}>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setPreview(undefined)}
+                >
                   Cancel
                 </Button>
                 <Button
                   disabled={confirming ||
-                    Number(preview.eligibleCount ?? 0) === 0}
+                    Number(currentPreview.eligibleCount ?? 0) === 0}
                   onClick={confirmBatch}
                 >
                   {confirming && (
@@ -884,7 +1406,7 @@ export default function MediaAnalysisPage() {
             </div>
           )}
 
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Showing {assets.length} of {total} matching photo(s)</span>
             {loading && assets.length > 0 && (
               <span>
@@ -909,11 +1431,11 @@ export default function MediaAnalysisPage() {
 
           {loading && assets.length === 0
             ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5">
                 {Array.from({ length: 8 }).map((_, index) => (
                   <div
                     key={index}
-                    className="h-60 animate-pulse rounded-xl bg-muted"
+                    className="h-52 animate-pulse rounded-lg bg-muted"
                   />
                 ))}
               </div>
@@ -930,14 +1452,14 @@ export default function MediaAnalysisPage() {
             )
             : viewMode === "grid"
             ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {assets.map((asset) => {
                   const assetId = idOf(asset._id);
                   return (
                     <article
                       key={assetId}
                       className={cn(
-                        "group overflow-hidden rounded-xl border bg-card shadow-sm transition hover:shadow-md",
+                        "group overflow-hidden rounded-lg border bg-card transition hover:border-primary/40 hover:shadow-sm",
                         selectionMode === "explicit" &&
                           selectedIds.has(assetId) &&
                           "border-primary ring-1 ring-primary",
@@ -956,21 +1478,22 @@ export default function MediaAnalysisPage() {
                             className="h-full w-full object-cover transition group-hover:scale-[1.02]"
                           />
                         </button>
-                        <div className="absolute left-3 top-3 rounded bg-background/90 p-1 shadow">
+                        <div className="absolute left-2 top-2 rounded bg-background/90 p-1 shadow">
                           {assetCheckbox(asset)}
                         </div>
                         <Badge
-                          className="absolute right-3 top-3"
+                          className="absolute right-2 top-2"
                           variant={statusTone(asset.status)}
                         >
                           {asset.status}
+                          {asset.recognitionIgnoredAt ? " · ignored" : ""}
                         </Badge>
                       </div>
-                      <div className="space-y-2 p-4">
+                      <div className="space-y-1.5 p-3">
                         <div className="truncate font-medium">
                           {asset.fileName}
                         </div>
-                        <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
+                        <p className="line-clamp-1 text-sm text-muted-foreground">
                           {resultCopy(asset)}
                         </p>
                         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -987,14 +1510,38 @@ export default function MediaAnalysisPage() {
               </div>
             )
             : (
-              <div className="overflow-x-auto rounded-lg border">
-                <Table>
+              <div className="overflow-x-auto rounded-md border">
+                <Table className="text-sm">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-12">Select</TableHead>
-                      <TableHead>Photo</TableHead>
-                      <TableHead>Captured</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead className="w-10">
+                        <span className="sr-only">Select</span>
+                      </TableHead>
+                      {([
+                        ["fileName", "Photo"],
+                        ["capturedAt", "Captured"],
+                        ["status", "Status"],
+                      ] as Array<[MediaSortBy, string]>).map(([key, label]) => (
+                        <TableHead key={key}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="-ml-3"
+                            onClick={() =>
+                              updateParams({
+                                sort: key,
+                                direction: sortBy === key &&
+                                    sortDirection === "asc"
+                                  ? "desc"
+                                  : "asc",
+                              })}
+                          >
+                            {label}
+                            <ArrowUpDown className="ml-2 h-3.5 w-3.5" />
+                          </Button>
+                        </TableHead>
+                      ))}
                       <TableHead>Analysis result</TableHead>
                       <TableHead className="text-right">View</TableHead>
                     </TableRow>
@@ -1004,13 +1551,15 @@ export default function MediaAnalysisPage() {
                       const assetId = idOf(asset._id);
                       return (
                         <TableRow key={assetId}>
-                          <TableCell>{assetCheckbox(asset)}</TableCell>
-                          <TableCell>
-                            <div className="flex min-w-[220px] items-center gap-3">
+                          <TableCell className="py-2">
+                            {assetCheckbox(asset)}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <div className="flex min-w-[210px] items-center gap-2">
                               <AuthenticatedMediaImage
                                 path={asset.thumbnailUrl}
                                 alt={asset.fileName}
-                                className="h-14 w-14 rounded border object-cover"
+                                className="h-10 w-10 rounded border object-cover"
                               />
                               <div>
                                 <div className="max-w-[260px] truncate font-medium">
@@ -1023,26 +1572,30 @@ export default function MediaAnalysisPage() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="py-2 text-xs">
                             {formattedDate(asset.capturedAt)}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="py-2">
                             <Badge variant={statusTone(asset.status)}>
                               {asset.status}
+                              {asset.recognitionIgnoredAt ? " · ignored" : ""}
                             </Badge>
                           </TableCell>
-                          <TableCell className="max-w-[360px]">
-                            <div className="line-clamp-2">
+                          <TableCell className="max-w-[340px] py-2">
+                            <div className="line-clamp-1">
                               {resultCopy(asset)}
                             </div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-2 text-right">
                             <Button
-                              size="sm"
-                              variant="outline"
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              aria-label={`Open details for ${asset.fileName}`}
+                              title="Open details"
                               onClick={() => openAsset(assetId)}
                             >
-                              <Eye className="mr-2 h-4 w-4" />Details
+                              <Eye className="h-4 w-4" />
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -1236,21 +1789,61 @@ export default function MediaAnalysisPage() {
                     </Badge>
                   </div>
                   <div className="flex gap-2">
-                    {PROCESSABLE_STATES.has(detail.asset.status) && (
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setSelectionMode("explicit");
-                          setSelectedIds((current) =>
-                            new Set(current).add(idOf(detail.asset._id))
-                          );
-                          setPreview(undefined);
-                          closeAsset();
-                        }}
-                      >
-                        Select this photo
-                      </Button>
+                    {detail.asset.kind === "image" && (
+                      <>
+                        {detail.asset.location && (
+                          <Button asChild size="sm" variant="outline">
+                            <Link
+                              to={`/map?photoAssetId=${idOf(detail.asset._id)}`}
+                            >
+                              Map
+                            </Link>
+                          </Button>
+                        )}
+                        {detail.asset.capturedAt && (
+                          <Button asChild size="sm" variant="outline">
+                            <Link
+                              to={`/timeline?photoAssetId=${
+                                idOf(detail.asset._id)
+                              }`}
+                            >
+                              Timeline
+                            </Link>
+                          </Button>
+                        )}
+                        {(detail.asset.currentRunId ||
+                          detail.asset.status === "ready") && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              updateParams({
+                                reanalyze: "1",
+                                select: "1",
+                                status: "all",
+                              })}
+                          >
+                            Reanalyze
+                          </Button>
+                        )}
+                      </>
                     )}
+                    {isBatchSelectableAsset(detail.asset as Asset, reanalyze) &&
+                      (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSelectionMode("explicit");
+                            setSelectedIds((current) =>
+                              new Set(current).add(idOf(detail.asset._id))
+                            );
+                            setPreview(undefined);
+                            closeAsset();
+                          }}
+                        >
+                          Select this photo
+                        </Button>
+                      )}
                     <Button
                       size="icon"
                       variant="outline"
@@ -1274,55 +1867,52 @@ export default function MediaAnalysisPage() {
                     </Button>
                   </div>
                 </div>
-                {detail.visual?.visualUnderstanding && (
-                  <section className="space-y-3 rounded-xl border p-4">
-                    <div className="font-semibold">AI analysis</div>
-                    <div className="text-lg font-medium">
-                      {detail.visual.visualUnderstanding.shortCaption}
-                    </div>
-                    <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                      {detail.visual.visualUnderstanding.description}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {(detail.visual.visualUnderstanding.keywords ?? []).map(
-                        (keyword: string) => (
-                          <Badge key={keyword} variant="secondary">
-                            {keyword}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
-                  </section>
-                )}
-                {detail.pages?.length > 0 && (
-                  <section className="space-y-3 rounded-xl border p-4">
-                    <div className="font-semibold">OCR text</div>
-                    {detail.pages.map((page: any) => (
-                      <div
-                        key={idOf(page._id)}
-                        className="rounded bg-muted p-3"
-                      >
-                        <div className="mb-2 text-xs text-muted-foreground">
-                          Page {page.pageNumber}
+                {selectRequested && detailEligibility && (
+                  <section
+                    className={cn(
+                      "space-y-3 rounded-xl border p-4",
+                      detailEligibility.eligible
+                        ? "border-primary/40 bg-primary/5"
+                        : "border-amber-500/40 bg-amber-500/5",
+                    )}
+                    aria-label="Single photo description request"
+                  >
+                    <div className="flex items-start gap-3">
+                      {detailEligibility.eligible
+                        ? <Sparkles className="mt-0.5 h-5 w-5 text-primary" />
+                        : (
+                          <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />
+                        )}
+                      <div className="space-y-1">
+                        <div className="font-semibold">
+                          {detailEligibility.title}
                         </div>
-                        <div className="whitespace-pre-wrap text-sm">
-                          {page.text || "No text detected"}
-                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {detailEligibility.description}
+                        </p>
                       </div>
-                    ))}
+                    </div>
+                    {detailEligibility.eligible && (
+                      <div className="space-y-2">
+                        <Button
+                          className="w-full sm:w-auto"
+                          disabled={!profileId}
+                          onClick={continueToBatchReview}
+                        >
+                          <Sparkles className="mr-2 h-4 w-4" />
+                          Continue to Review analysis batch (1)
+                        </Button>
+                        {!profileId && (
+                          <p className="text-xs text-amber-700 dark:text-amber-300">
+                            Enable an analysis provider in Settings before
+                            preparing the local review.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </section>
                 )}
-                <details className="rounded-xl border p-4">
-                  <summary className="cursor-pointer font-medium">
-                    Local metadata and provenance
-                  </summary>
-                  <pre className="mt-3 max-h-80 overflow-auto rounded bg-muted p-3 text-xs">
-                    {JSON.stringify({
-                      metadata: detail.asset.metadata ?? {},
-                      runs: detail.runs ?? [],
-                    }, null, 2)}
-                  </pre>
-                </details>
+                <MediaResultPanel detail={detail} />
               </div>
             )
             : (

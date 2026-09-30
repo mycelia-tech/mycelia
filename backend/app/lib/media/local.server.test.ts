@@ -1,5 +1,11 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.15";
+import {
+  assertEquals,
+  assertRejects,
+  assertThrows,
+} from "jsr:@std/assert@^1.0.15";
 import { PDFDocument } from "pdf-lib";
+import { stub } from "@std/testing/mock";
+import { env } from "#/env.ts";
 import {
   assertSafeMediaRelativePath,
   detectMediaMime,
@@ -7,7 +13,142 @@ import {
   listMediaSourceFolders,
   mediaLocationFromMetadata,
   prepareUploadedMedia,
+  readExifMetadata,
+  readMediaSourceDirectoryPage,
+  resolveMediaSourcePath,
+  scanMediaSourceInventory,
 } from "./local.server.ts";
+
+// Folder fixtures must not inherit the developer's configured physical disks.
+env.MEDIA_SOURCE_ALIASES = "{}";
+env.MEDIA_SOURCE_DISKS_DIR = "";
+
+Deno.test("optional disks reconnect without changing stored alias paths or scanning other sources", async () => {
+  const root = await Deno.realPath(await Deno.makeTempDir());
+  const previous = {
+    root: env.MEDIA_SOURCE_ROOT,
+    disks: env.MEDIA_SOURCE_DISKS_DIR,
+    aliases: env.MEDIA_SOURCE_ALIASES,
+  };
+  env.MEDIA_SOURCE_ROOT = root;
+  env.MEDIA_SOURCE_DISKS_DIR = "disks";
+  env.MEDIA_SOURCE_ALIASES = JSON.stringify({
+    "icloud-backup": "disks/TestDisk/photos",
+  });
+  try {
+    await Deno.mkdir(`${root}/disks`);
+    await Deno.writeTextFile(`${root}/local.jpg`, "local");
+    const offline = await listMediaSourceFolders(".");
+    assertEquals(
+      Boolean(
+        offline.folders.find((f) => f.relativePath === "icloud-backup")
+          ?.unavailableReason,
+      ),
+      true,
+    );
+    assertEquals(
+      (await listMediaSourceFolders("disks")).scanUnavailableReason,
+      "Choose a disk or a folder before scanning",
+    );
+    await assertRejects(
+      () => readMediaSourceDirectoryPage("./disks/"),
+      Error,
+      "Choose a disk",
+    );
+
+    await Deno.mkdir(`${root}/disks/TestDisk/photos/nested`, {
+      recursive: true,
+    });
+    await Deno.writeTextFile(
+      `${root}/disks/TestDisk/photos/nested/photo.jpg`,
+      "external",
+    );
+    const online = await listMediaSourceFolders(".");
+    assertEquals(
+      online.folders.find((f) => f.relativePath === "icloud-backup")
+        ?.unavailableReason,
+      undefined,
+    );
+    assertEquals(
+      (await listMediaSourceFolders("icloud-backup")).folders[0].relativePath,
+      "icloud-backup/nested",
+    );
+    assertEquals(
+      (await listMediaSourceFolders("icloud-backup")).parentPath,
+      ".",
+    );
+    assertEquals(
+      (await readMediaSourceDirectoryPage("icloud-backup/nested")).entries[0]
+        .relativePath,
+      "icloud-backup/nested/photo.jpg",
+    );
+    assertEquals((await scanMediaSourceInventory("icloud-backup", 10)).paths, [
+      "icloud-backup/nested/photo.jpg",
+    ]);
+    assertEquals(
+      (await resolveMediaSourcePath("icloud-backup/nested/photo.jpg")).realPath,
+      `${root}/disks/TestDisk/photos/nested/photo.jpg`,
+    );
+    assertEquals((await scanMediaSourceInventory(".", 10)).paths, [
+      "local.jpg",
+    ]);
+    assertEquals(
+      (await readMediaSourceDirectoryPage(".")).entries.map((e) =>
+        e.relativePath
+      ),
+      ["local.jpg"],
+    );
+
+    await Deno.rename(`${root}/disks/TestDisk`, `${root}/disconnected`);
+    await assertRejects(
+      () => resolveMediaSourcePath("icloud-backup/nested/photo.jpg"),
+      Error,
+      "Connect the external disk",
+    );
+    await Deno.rename(`${root}/disconnected`, `${root}/disks/TestDisk`);
+    assertEquals(
+      (await resolveMediaSourcePath("icloud-backup/nested/photo.jpg"))
+        .relativePath,
+      "icloud-backup/nested/photo.jpg",
+    );
+  } finally {
+    env.MEDIA_SOURCE_ROOT = previous.root;
+    env.MEDIA_SOURCE_DISKS_DIR = previous.disks;
+    env.MEDIA_SOURCE_ALIASES = previous.aliases;
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("media aliases preserve traversal and symlink protection", async () => {
+  const root = await Deno.makeTempDir();
+  const outside = await Deno.makeTempDir();
+  const previous = env.MEDIA_SOURCE_ALIASES;
+  try {
+    await Deno.symlink(outside, `${root}/linked`);
+    env.MEDIA_SOURCE_ALIASES = JSON.stringify({ archive: "linked" });
+    await assertRejects(
+      () => resolveMediaSourcePath("archive", root),
+      Error,
+      "symlinks are not allowed",
+    );
+    env.MEDIA_SOURCE_ALIASES = JSON.stringify({ archive: "../outside" });
+    await assertRejects(
+      () => resolveMediaSourcePath("archive", root),
+      Error,
+      '".." are not allowed',
+    );
+    env.MEDIA_SOURCE_ALIASES = JSON.stringify({ archive: outside });
+    await assertRejects(
+      () => resolveMediaSourcePath("archive", root),
+      Error,
+      "absolute paths",
+    );
+  } finally {
+    env.MEDIA_SOURCE_ALIASES = previous;
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
 
 Deno.test("mounted media paths must stay relative to the configured root", () => {
   assertSafeMediaRelativePath(".");
@@ -22,6 +163,72 @@ Deno.test("mounted media paths must stay relative to the configured root", () =>
     Error,
     '".." are not allowed',
   );
+});
+
+Deno.test("missing exiftool fails visibly instead of importing silently without GPS or time", async () => {
+  const command = stub(
+    Deno,
+    "Command",
+    function () {
+      throw new Deno.errors.NotFound("exiftool is not installed");
+    },
+  );
+  try {
+    await assertRejects(
+      () => readExifMetadata("photo.jpg"),
+      Error,
+      "EXIF_METADATA_TOOL_UNAVAILABLE",
+    );
+  } finally {
+    command.restore();
+  }
+});
+
+Deno.test("directory inventory pages over 20000 files without following symlinks or losing names", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    for (let index = 0; index < 20_025; index++) {
+      await Deno.writeTextFile(
+        `${root}/${String(index).padStart(6, "0")}.jpg`,
+        "",
+      );
+    }
+    await Deno.mkdir(`${root}/nested`);
+    await Deno.writeTextFile(`${root}/sidecar.xmp`, "");
+    await Deno.symlink(`${root}/nested`, `${root}/linked-folder`);
+    await Deno.symlink(`${root}/000000.jpg`, `${root}/linked-photo.jpg`);
+    const seen = new Set<string>();
+    let afterName: string | undefined;
+    do {
+      const page = await readMediaSourceDirectoryPage(
+        ".",
+        afterName,
+        1_000,
+        root,
+      );
+      assertEquals(page.entries.length <= 1_000, true);
+      for (const entry of page.entries) {
+        assertEquals(seen.has(entry.relativePath), false);
+        seen.add(entry.relativePath);
+      }
+      afterName = page.nextAfterName;
+    } while (afterName);
+    assertEquals(seen.size, 20_027);
+    assertEquals(seen.has("linked-photo.jpg"), false);
+    assertEquals(seen.has("linked-folder"), false);
+    await assertRejects(
+      () => resolveMediaSourcePath("linked-folder", root),
+      Error,
+      "symlinks are not allowed",
+    );
+    await assertRejects(
+      () => readMediaSourceDirectoryPage("missing-disk", "", 1_000, root),
+      Error,
+      "Connect the external disk",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
 
 Deno.test("mounted media folder browser lists directories without following symlinks", async () => {

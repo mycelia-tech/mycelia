@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chatStatusLabel,
+  isChatRunActive,
   isNearBottom,
   shouldNotifyForChatEvent,
 } from "./chat";
@@ -12,6 +13,17 @@ describe("chatStatusLabel", () => {
     expect(chatStatusLabel("submitted")).toBe("Sending");
     expect(chatStatusLabel("streaming")).toBe("Answering");
     expect(chatStatusLabel("ready", { state: "failed" })).toBe("Error");
+  });
+});
+
+describe("isChatRunActive", () => {
+  it("locks controls for every non-terminal response state", () => {
+    expect(isChatRunActive("submitted")).toBe(true);
+    expect(isChatRunActive("streaming")).toBe(true);
+    expect(isChatRunActive("needs_approval")).toBe(true);
+    expect(isChatRunActive("completed")).toBe(false);
+    expect(isChatRunActive("failed")).toBe(false);
+    expect(isChatRunActive()).toBe(false);
   });
 });
 

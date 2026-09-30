@@ -194,6 +194,59 @@ Deno.test("an active response prevents archiving", async () => {
   }, auth)).rejects.toThrow("An active chat cannot be archived");
 });
 
+Deno.test("an active response rejects a different tool policy", async () => {
+  const chatId = new ObjectId();
+  const resource = new ChatResource(() => async (request: any) => {
+    if (request.collection === "chats" && request.action === "findOne") {
+      return {
+        _id: chatId,
+        userId: "owner-a",
+        platform: "mycelia",
+        toolMode: "auto",
+        enabledTools: [],
+        lastRun: { state: "streaming" },
+      };
+    }
+    throw new Error(`Unexpected request ${request.action}`);
+  });
+  const auth = new Auth({ principal: "owner-a", policies: [] });
+
+  await expect(resource.use({
+    action: "setPreferences",
+    chatId,
+    preferences: { toolPolicy: { mode: "none", enabledTools: [] } },
+  }, auth)).rejects.toThrow(
+    "Tool selection cannot change while a response is active",
+  );
+});
+
+Deno.test("an active response accepts the same tool policy as a no-op", async () => {
+  const chatId = new ObjectId();
+  const calls: any[] = [];
+  const resource = new ChatResource(() => async (request: any) => {
+    calls.push(request);
+    if (request.collection === "chats" && request.action === "findOne") {
+      return {
+        _id: chatId,
+        userId: "owner-a",
+        platform: "mycelia",
+        toolMode: "none",
+        enabledTools: [],
+        lastRun: { state: "streaming" },
+      };
+    }
+    throw new Error(`Unexpected request ${request.action}`);
+  });
+  const auth = new Auth({ principal: "owner-a", policies: [] });
+
+  await expect(resource.use({
+    action: "setPreferences",
+    chatId,
+    preferences: { toolPolicy: { mode: "none", enabledTools: [] } },
+  }, auth)).resolves.toEqual({ updated: true });
+  expect(calls).toHaveLength(1);
+});
+
 Deno.test({
   name: "pin mutations update the materialized count only on transition",
   fn: async () => {

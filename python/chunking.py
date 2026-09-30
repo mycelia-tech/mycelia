@@ -1,29 +1,24 @@
-from datetime import datetime, timedelta
+import base64
 import io
-
+import logging
+import os
 import shutil
-from pytz import UTC
+import subprocess
+import wave
+from datetime import datetime, timedelta
 
 import ffmpeg
-import wave
-
 import numpy as np
-
-import os
-import logging
-
-import base64
+from pytz import UTC
+from tqdm import tqdm
 
 from lib.resources import call_resource
-
-from utils import sample_rate, sha, TMP_DIR
-
-from tqdm import tqdm
-import subprocess
+from utils import TMP_DIR, sample_rate, sha
 
 logger = logging.getLogger('chunking')
 
 CHUNK_MAX_LEN = timedelta(seconds=10)
+CHUNK_WRITE_BATCH_SIZE = 50
 
 
 def get_tmp_dir(original):
@@ -62,9 +57,9 @@ def split_to_opus_chunks(original, *, quiet=False):
         details = (error.stderr or error.stdout or "").strip()
         if "Operation not permitted" in details:
             details += (
-                "\nmacOS denied access to the audio source. Grant Full Disk "
-                "Access to the terminal or service that starts Mycelia, then "
-                "retry ingestion."
+                "\nmacOS denied access to the live audio source. Refresh the "
+                "verified Voice Memos staging archive from an authorized "
+                "interactive terminal, then retry from that readable copy."
             )
         if not details:
             details = "ffmpeg did not provide diagnostic output"
@@ -89,19 +84,18 @@ def get_os_metadata(file):
 
 
 def wav_to_array(source: io.BytesIO) -> np.ndarray:
-    wav_file = wave.open(source, 'rb')
+    with wave.open(source, 'rb') as wav_file:
+        if wav_file.getnchannels() != 1:
+            raise ValueError("WAV file must be mono")
+        frames = wav_file.readframes(wav_file.getnframes())
 
-    if wav_file.getnchannels() != 1:
-        raise ValueError("WAV file must be mono")
-    frames = wav_file.readframes(wav_file.getnframes())
-
-    # Get sample width to determine dtype
-    if wav_file.getsampwidth() == 2:
-        data = np.frombuffer(frames, dtype=np.int16)
-    elif wav_file.getsampwidth() == 4:
-        data = np.frombuffer(frames, dtype=np.int32)
-    else:
-        raise ValueError("Unsupported sample width")
+        # Get sample width to determine dtype
+        if wav_file.getsampwidth() == 2:
+            data = np.frombuffer(frames, dtype=np.int16)
+        elif wav_file.getsampwidth() == 4:
+            data = np.frombuffer(frames, dtype=np.int32)
+        else:
+            raise ValueError("Unsupported sample width")
 
     # Normalize to float between -1.0 and 1.0
     return data.astype(np.float32) / np.iinfo(data.dtype).max
@@ -155,7 +149,7 @@ def read_codec(source: bytes, codec: str, sample_rate: int = sample_rate) -> np.
     output_data, stderr = process.communicate(input=source)
 
     if process.returncode != 0:
-        raise Exception(f"ffmpeg failed with: {stderr.decode()}")
+        raise RuntimeError(f"ffmpeg failed with: {stderr.decode()}")
     return wav_to_array(io.BytesIO(output_data))
 
 
@@ -184,8 +178,7 @@ def server_side_cursor_find(
         docs = batch["documents"]
         if not docs:
             break
-        for doc in docs:
-            yield doc
+        yield from docs
     
 
 
@@ -207,15 +200,15 @@ class AudioChunkReader:
         elif isinstance(start_at, datetime):
             self.cursor = start_at
         else:
-            raise ValueError("start_at must be a float (UTC timestamp) or datetime object.")
-        self.chunks = db_collection.find(
+            raise TypeError("start_at must be a float (UTC timestamp) or datetime object.")
+        self.chunks = db_collection.find(  # noqa: F821 - legacy injected collection
             {
                 **filter_chunks,
                 "start": {"$gt": self.cursor - CHUNK_MAX_LEN - timedelta(seconds=1)}
             }
         ).sort("start", 1).batch_size(fetch_batch_size)
 
-    def read(self, duration: int | float | timedelta = None, **kwargs) -> np.array:
+    def read(self, duration: float | timedelta | None = None, **kwargs) -> np.array:
         """
         Read audio chunks from the database and concatenate them into a single array.
 
@@ -292,32 +285,57 @@ def ingest_source(original: dict):
         start: datetime = original["start"]
         logger.info("ingesting %s chunks of '%s'",len(chunk_files), path)
 
-        for i, [offset, file] in tqdm(enumerate(chunk_files)):
+        operations = []
+        for i, [offset, file] in tqdm(
+            enumerate(chunk_files),
+            total=len(chunk_files),
+        ):
             with open(file, "rb") as f:
-                call_resource('mongo', {
-                    # A crash before the source is marked ingested can retry
-                    # this loop. The source/index pair must remain unique.
-                    "action": "updateOne",
-                    "collection": "audio_chunks",
-                    "query": {
-                        "original_id": original["_id"],
-                        "index": i,
-                    },
-                    "update": {
-                        "$setOnInsert": {
-                            "format": "opus",
+                operations.append({
+                    "updateOne": {
+                        # A crash before the source is marked ingested can
+                        # retry this batch. The source/index pair remains the
+                        # idempotent identity.
+                        "filter": {
                             "original_id": original["_id"],
                             "index": i,
-                            "ingested_at": {
-                                "$date": datetime.now(tz=UTC).isoformat()
-                            },
-                            "start": start + offset,
-                            "data": {
-                                "$binary": { "base64": base64.b64encode(f.read()).decode(), "subType": "00"}
+                        },
+                        "update": {
+                            "$setOnInsert": {
+                                "format": "opus",
+                                "original_id": original["_id"],
+                                "index": i,
+                                "ingested_at": {
+                                    "$date": datetime.now(tz=UTC).isoformat()
+                                },
+                                "start": start + offset,
+                                "data": {
+                                    "$binary": {
+                                        "base64": base64.b64encode(f.read()).decode(),
+                                        "subType": "00",
+                                    }
+                                },
                             },
                         },
+                        "upsert": True,
                     },
-                    "options": { "upsert": True },
                 })
+
+            if len(operations) >= CHUNK_WRITE_BATCH_SIZE:
+                call_resource('mongo', {
+                    "action": "bulkWrite",
+                    "collection": "audio_chunks",
+                    "operations": operations,
+                    "options": {"ordered": False},
+                })
+                operations = []
+
+        if operations:
+            call_resource('mongo', {
+                "action": "bulkWrite",
+                "collection": "audio_chunks",
+                "operations": operations,
+                "options": {"ordered": False},
+            })
     finally:
         shutil.rmtree(tmp_dir)

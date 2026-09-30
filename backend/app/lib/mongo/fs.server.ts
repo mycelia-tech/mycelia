@@ -1,16 +1,15 @@
 import { z } from "zod";
 import { Resource } from "@/lib/auth/resources.ts";
 import { Auth } from "../auth/index.ts";
-import { Db, GridFSBucket, MongoClient, ObjectId } from "mongodb";
+import { Db, GridFSBucket, ObjectId } from "mongodb";
 import { Buffer } from "node:buffer";
 import crypto from "node:crypto";
-import { env } from "#/env.ts";
+import { getRootDB as getSharedRootDB } from "./core.server.ts";
 
-export const getRootDB = async (): Promise<Db> => {
-  const client = new MongoClient(env.MONGO_URL);
-  await client.connect();
-  return client.db(env.DATABASE_NAME);
-};
+// Keep this export for callers that imported it from this module, but delegate
+// to the application's shared MongoClient instead of creating an unclosed
+// client for every GridFS operation.
+export const getRootDB = getSharedRootDB;
 
 const zObjectId = () =>
   z.string().refine((val) => ObjectId.isValid(val), {
@@ -29,6 +28,7 @@ const downloadSchema = z.object({
   action: z.literal("download"),
   bucket: z.string(),
   id: zObjectId(),
+  stream: z.boolean().optional(),
 });
 
 const findSchema = z.object({
@@ -60,9 +60,8 @@ export class FsResource implements Resource<FsRequest, FsResponse> {
     request: fsRequestSchema,
     response: z.any(),
   };
-  async getRootDB(): Promise<Db> {
-    return getRootDB();
-  }
+  getRootDB: () => Promise<Db> = getRootDB;
+
   async getBucket(bucket: string): Promise<GridFSBucket> {
     const db = await this.getRootDB();
     return new GridFSBucket(db, { bucketName: bucket });
@@ -88,6 +87,8 @@ export class FsResource implements Resource<FsRequest, FsResponse> {
           ? new ObjectId(input.id)
           : input.id;
         const downloadStream = bucket.openDownloadStream(id);
+        if (input.stream) return downloadStream;
+
         return new Promise<Uint8Array>((resolve, reject) => {
           const chunks: Uint8Array[] = [];
           downloadStream.on("data", (chunk) => chunks.push(chunk));

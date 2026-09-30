@@ -4,6 +4,7 @@ import { getMongoResource } from "@/lib/mongo/core.server.ts";
 import { EJSON } from "bson";
 import { ObjectId } from "mongodb";
 import { getServerConfig } from "@/lib/config/serverConfig.server.ts";
+import { saveAudioOperations } from "@/lib/audio-operations.ts";
 
 const PIPELINE_STAGES = [
   { type: "ingestion", label: "Ingestion" },
@@ -929,6 +930,7 @@ export async function apiAudioPipelineHandler(req: Request, res: Response) {
     }
     const mongo = getMongoResource(auth);
     const warnings: string[] = [];
+    const failedStatsLabels: string[] = [];
     const safeStat = async <T>(
       label: string,
       promise: Promise<T>,
@@ -939,6 +941,7 @@ export async function apiAudioPipelineHandler(req: Request, res: Response) {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         warnings.push(`${label}: ${message}`);
+        failedStatsLabels.push(label);
         console.warn(`[audio-pipeline] ${label} unavailable: ${message}`);
         return fallback;
       }
@@ -1670,6 +1673,12 @@ export async function apiAudioPipelineHandler(req: Request, res: Response) {
         result: job.result,
       })),
     };
+
+    if (!includeSources) {
+      await saveAudioOperations(mongo, stats, failedStatsLabels).catch((error) => {
+        console.warn("[audio-pipeline] could not save operations snapshot", error);
+      });
+    }
 
     // Serialize dates properly
     const response = EJSON.serialize({

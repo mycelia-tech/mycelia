@@ -16,6 +16,7 @@ import {
   type PhotoCollectionItem,
   PhotoCollectionSheet,
 } from "@/components/media/PhotoCollectionSheet";
+import type { PhotoTimelineFocus } from "@/lib/photoTimelineDeepLink";
 import { BaseTrack } from "./BaseTrack";
 
 export const PHOTOS_CONFIG: TrackConfig = {
@@ -71,7 +72,7 @@ interface PhotoMarkerGroup {
 
 interface PhotoSheetState {
   key: string;
-  kind: "markers" | "bucket";
+  kind: "markers" | "bucket" | "focus";
   title: string;
   description?: string;
   items: PhotoCollectionItem[];
@@ -81,6 +82,12 @@ interface PhotoSheetState {
   bucketStart?: Date;
   bucketEnd?: Date;
   error?: string;
+}
+
+export interface PhotosTrackProps extends Omit<TrackRenderProps, "items"> {
+  items?: TrackRenderProps["items"];
+  focusedPhoto?: PhotoTimelineFocus;
+  onFocusedPhotoDismiss?: () => void;
 }
 
 function validDate(value: string | Date): Date | undefined {
@@ -178,7 +185,9 @@ export const PhotosTrack = memo(function PhotosTrack({
   transform,
   width,
   height,
-}: Omit<TrackRenderProps, "items"> & { items?: TrackRenderProps["items"] }) {
+  focusedPhoto,
+  onFocusedPhotoDismiss,
+}: PhotosTrackProps) {
   const navigate = useNavigate();
   const { start, end } = useTimelineRange();
   const [data, setData] = useState<TimelinePhotoData>();
@@ -188,6 +197,7 @@ export const PhotosTrack = memo(function PhotosTrack({
   const [sheet, setSheet] = useState<PhotoSheetState>();
   const timelineRequestSerial = useRef(0);
   const sheetRequestSerial = useRef(0);
+  const openedFocusKey = useRef<string | undefined>(undefined);
   const returnFocusElement = useRef<SVGGElement | null>(null);
   const detailLimit = Math.max(100, Math.min(2_000, Math.floor(width / 22)));
 
@@ -244,6 +254,30 @@ export const PhotosTrack = memo(function PhotosTrack({
       ),
     [data],
   );
+
+  useEffect(() => {
+    if (!focusedPhoto) {
+      openedFocusKey.current = undefined;
+      return;
+    }
+    const key = `focus:${focusedPhoto.item.assetId}`;
+    if (openedFocusKey.current === key) return;
+    openedFocusKey.current = key;
+    returnFocusElement.current = null;
+    sheetRequestSerial.current += 1;
+    setSheet({
+      key,
+      kind: "focus",
+      title: focusedPhoto.item.fileName,
+      description: focusedPhoto.capturedAt
+        ? `Captured ${focusedPhoto.capturedAt.toLocaleString()}`
+        : "Missing capture time. This photo is unplaced and cannot appear on the Timeline until a time is assigned in Media.",
+      items: [focusedPhoto.item],
+      total: 1,
+      loading: false,
+    });
+    setSheetOpen(true);
+  }, [focusedPhoto]);
 
   const openMarkerGroup = useCallback((
     group: PhotoMarkerGroup,
@@ -367,12 +401,14 @@ export const PhotosTrack = memo(function PhotosTrack({
   }, [loadBucketPage, sheet]);
 
   const handleSheetOpenChange = useCallback((open: boolean) => {
+    const dismissedFocusedPhoto = !open && sheet?.kind === "focus";
     setSheetOpen(open);
     if (!open) {
       sheetRequestSerial.current += 1;
       globalThis.setTimeout(() => returnFocusElement.current?.focus(), 0);
+      if (dismissedFocusedPhoto) onFocusedPhotoDismiss?.();
     }
-  }, []);
+  }, [onFocusedPhotoDismiss, sheet?.kind]);
 
   return (
     <>

@@ -39,7 +39,10 @@ Deno.test("chunk creator is non-routed and ingestion is daemon-managed", () => {
   const ingestion = catalog.find((entry) => entry.type === "ingestion");
   expect(creator?.routingKind).toBe("none");
   expect(ingestion?.availability).toBe("daemon-managed");
-  expect(ingestion?.capabilities.manualRun).toBe(false);
+  expect(ingestion?.capabilities.manualRun).toBe(true);
+  expect(ingestion?.capabilities.schedule).toBe(false);
+  expect(ingestion?.capabilities.pause).toBe(false);
+  expect(ingestion?.capabilities.concurrency).toBe(false);
 });
 
 Deno.test("python availability follows executable capabilities", () => {

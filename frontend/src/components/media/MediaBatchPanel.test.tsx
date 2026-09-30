@@ -41,6 +41,69 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
   });
 
+  it("keeps available folders selectable and shows discovery without a false percentage", async () => {
+    const user = userEvent.setup();
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listMountedFolders") {
+        return Promise.resolve({
+          listing: {
+            currentPath: ".",
+            folders: [
+              { name: "local-photos", relativePath: "local-photos" },
+              {
+                name: "external-photos",
+                relativePath: "external-photos",
+                unavailableReason: "Disk unavailable — reconnect and refresh",
+              },
+            ],
+          },
+        });
+      }
+      if (
+        input.action === "getActiveFolderCampaign" ||
+        input.action === "getFolderCampaign"
+      ) {
+        return Promise.resolve({
+          campaign: {
+            _id: "68a000000000000000000004",
+            relativePath: "local-photos",
+            status: "queued",
+            counts: { total: 21_042 },
+            progress: {
+              stage: "inventory",
+              processed: 21_042,
+              total: 21_042,
+              totalKnown: false,
+              percent: 0,
+              remaining: 0,
+              currentPath: "local-photos/2026",
+              message: "Discovering files and folders locally",
+            },
+          },
+        });
+      }
+      return Promise.resolve({});
+    });
+    renderPanel();
+    expect(await screen.findByText("21042 files discovered")).toBeTruthy();
+    expect(screen.queryByText("0.0%")).toBeNull();
+    expect(screen.getByText(/Total and ETA available after discovery/))
+      .toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Choose mounted folder" }),
+    );
+    expect(
+      screen.getByRole("button", { name: /external-photos/ }).hasAttribute(
+        "disabled",
+      ),
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "local-photos" }).hasAttribute(
+        "disabled",
+      ),
+    ).toBe(false);
+  });
+
   it("scans the mounted root by default and shows durable progress", async () => {
     const user = userEvent.setup();
     mockCallResource.mockImplementation((_resource, input) => {
@@ -68,6 +131,7 @@ describe("MediaBatchPanel mounted-folder sync", () => {
               ready: 24,
               unsupported: 103,
             },
+            reusedHashCount: 24,
             progress: {
               stage: "metadata_scan",
               processed: 25,
@@ -89,8 +153,9 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     });
     renderPanel();
 
-    expect(await screen.findByText("Mounted folder browser")).toBeTruthy();
-    expect(screen.getByText(/Root is/).textContent).toContain("/media-source");
+    expect(await screen.findByText("Folder sync")).toBeTruthy();
+    expect(screen.getByText("Local import folder")).toBeTruthy();
+    expect(screen.queryByText("Mounted folders")).toBeNull();
     expect(
       screen.queryByRole("button", { name: /Process all with Google Cloud/i }),
     ).toBeNull();
@@ -107,6 +172,48 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     expect(screen.getByText(/about 9 min remaining/)).toBeTruthy();
     expect(screen.getByText(/pending 775/)).toBeTruthy();
     expect(screen.getByText(/ready 24/)).toBeTruthy();
+    expect(screen.getByText(/reused SHA 24/)).toBeTruthy();
+  });
+
+  it("requires selecting a disk before scanning connected sources", async () => {
+    const user = userEvent.setup();
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listMountedFolders") {
+        return Promise.resolve({
+          listing: input.relativePath === "."
+            ? {
+              currentPath: ".",
+              folders: [{ name: "Connected disks", relativePath: "disks" }],
+            }
+            : {
+              currentPath: "disks",
+              parentPath: ".",
+              folders: [],
+              scanUnavailableReason:
+                "Choose a disk or a folder before scanning",
+            },
+        });
+      }
+      return Promise.resolve({ campaign: null });
+    });
+    renderPanel();
+    await user.click(
+      await screen.findByRole("button", { name: "Choose mounted folder" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Connected disks" }),
+    );
+    expect(await screen.findByText("Choose a disk or a folder before scanning"))
+      .toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Scan selected folder recursively" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      mockCallResource.mock.calls.some(([, input]) =>
+        input.action === "startFolderScan"
+      ),
+    ).toBe(false);
   });
 
   it("chooses a visible mounted subfolder without typing a path", async () => {
@@ -139,6 +246,9 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     });
     renderPanel();
 
+    await user.click(
+      await screen.findByRole("button", { name: "Choose mounted folder" }),
+    );
     await user.click(await screen.findByRole("button", { name: "Trips" }));
     expect(screen.getByLabelText("Selected mounted folder").textContent)
       .toContain("Trips");

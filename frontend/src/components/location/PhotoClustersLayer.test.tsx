@@ -6,14 +6,32 @@ import {
   shouldOpenPhotoCluster,
 } from "./PhotoClustersLayer";
 
-const mocks = vi.hoisted(() => ({
-  zoom: 18,
-  maxZoom: 18,
-  fitBounds: vi.fn(),
-  callResource: vi.fn(),
-  toastError: vi.fn(),
-  toastDismiss: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const state = { zoom: 18, maxZoom: 18 };
+  const fitBounds = vi.fn();
+  const flyTo = vi.fn();
+  return {
+    state,
+    fitBounds,
+    flyTo,
+    map: {
+      getBounds: () => ({
+        getWest: () => 44,
+        getSouth: () => 40,
+        getEast: () => 45,
+        getNorth: () => 41,
+      }),
+      getZoom: () => state.zoom,
+      getMaxZoom: () => state.maxZoom,
+      fitBounds,
+      flyTo,
+      latLngToContainerPoint: () => ({ x: 100, y: 100 }),
+    },
+    callResource: vi.fn(),
+    toastError: vi.fn(),
+    toastDismiss: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/api", () => ({ callResource: mocks.callResource }));
 vi.mock("sonner", () => ({
@@ -23,18 +41,7 @@ vi.mock("sonner", () => ({
   },
 }));
 vi.mock("react-leaflet", () => ({
-  useMap: () => ({
-    getBounds: () => ({
-      getWest: () => 44,
-      getSouth: () => 40,
-      getEast: () => 45,
-      getNorth: () => 41,
-    }),
-    getZoom: () => mocks.zoom,
-    getMaxZoom: () => mocks.maxZoom,
-    fitBounds: mocks.fitBounds,
-    latLngToContainerPoint: () => ({ x: 100, y: 100 }),
-  }),
+  useMap: () => mocks.map,
   useMapEvents: vi.fn(),
   Marker: forwardRef((props: any, ref) => {
     const elementRef = useRef<HTMLButtonElement | null>(null);
@@ -123,13 +130,13 @@ async function renderLayer(options?: { truncated?: boolean }) {
 describe("PhotoClustersLayer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.zoom = 18;
-    mocks.maxZoom = 18;
+    mocks.state.zoom = 18;
+    mocks.state.maxZoom = 18;
   });
 
   it("zooms a merged low-zoom marker to its bounded cluster", async () => {
-    mocks.zoom = 12;
-    mocks.maxZoom = 18;
+    mocks.state.zoom = 12;
+    mocks.state.maxZoom = 18;
     mocks.fitBounds.mockClear();
     const marker = await renderLayer();
     await waitFor(() => expect(mocks.fitBounds).toHaveBeenCalled());
@@ -153,8 +160,8 @@ describe("PhotoClustersLayer", () => {
   });
 
   it("opens a close cluster with mouse, Space, and Enter and restores focus", async () => {
-    mocks.zoom = 18;
-    mocks.maxZoom = 18;
+    mocks.state.zoom = 18;
+    mocks.state.maxZoom = 18;
     mocks.fitBounds.mockClear();
     const marker = await renderLayer();
     await waitFor(() => expect(mocks.fitBounds).toHaveBeenCalled());
@@ -177,8 +184,8 @@ describe("PhotoClustersLayer", () => {
   });
 
   it("warns when the bounded viewport response is truncated", async () => {
-    mocks.zoom = 18;
-    mocks.maxZoom = 18;
+    mocks.state.zoom = 18;
+    mocks.state.maxZoom = 18;
     const marker = await renderLayer({ truncated: true });
     fireEvent.click(marker);
 
@@ -192,7 +199,7 @@ describe("PhotoClustersLayer", () => {
   });
 
   it("catches viewport errors and exposes a retry action", async () => {
-    mocks.zoom = 18;
+    mocks.state.zoom = 18;
     mocks.callResource.mockRejectedValueOnce(new Error("Map request failed"));
     render(<PhotoClustersLayer />);
 
@@ -212,6 +219,98 @@ describe("PhotoClustersLayer", () => {
     });
     options.action.onClick();
     await waitFor(() => expect(mocks.callResource).toHaveBeenCalledTimes(2));
+  });
+
+  it("opens an owner-scoped photo deep link at its real coordinates", async () => {
+    const onFocusedAssetClose = vi.fn();
+    mocks.callResource.mockImplementation((resource, input) => {
+      if (resource === "media" && input.action === "getAsset") {
+        return Promise.resolve({
+          asset: {
+            _id: "photo-one",
+            kind: "image",
+            fileName: "one.jpg",
+            status: "ready",
+            capturedAt: "2026-08-25T10:00:00.000Z",
+            thumbnailUrl: "/api/files/one",
+            location: { latitude: 40.1, longitude: 44.5 },
+          },
+          visual: {
+            visualUnderstanding: {
+              shortCaption: "A person beside a lake",
+            },
+          },
+        });
+      }
+      return Promise.resolve({
+        points,
+        totalPlaced: points.length,
+        unplacedLocationCount: 0,
+        truncated: false,
+      });
+    });
+
+    render(
+      <PhotoClustersLayer
+        focusedAssetId="photo-one"
+        onFocusedAssetClose={onFocusedAssetClose}
+      />,
+    );
+
+    expect(
+      await screen.findByLabelText("Photo on the map"),
+    ).toBeTruthy();
+    await screen.findByRole("button", {
+      name: /2 photos near this location/i,
+    });
+    expect(screen.getByText("A person beside a lake")).toBeTruthy();
+    expect(screen.getByText("40.10000, 44.50000")).toBeTruthy();
+    expect(mocks.callResource).toHaveBeenCalledWith("media", {
+      action: "getAsset",
+      assetId: "photo-one",
+    });
+    expect(mocks.flyTo).toHaveBeenCalledWith(
+      [40.1, 44.5],
+      16,
+      { animate: true },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Close photo list" }));
+    expect(onFocusedAssetClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an unplaced deep-linked photo off the map and explains why", async () => {
+    mocks.callResource.mockImplementation((resource, input) => {
+      if (resource === "media" && input.action === "getAsset") {
+        return Promise.resolve({
+          asset: {
+            _id: "photo-unplaced",
+            kind: "image",
+            fileName: "unplaced.jpg",
+            status: "staged",
+            location: null,
+          },
+          visual: null,
+        });
+      }
+      return Promise.resolve({
+        points: [],
+        totalPlaced: 0,
+        unplacedLocationCount: 1,
+        truncated: false,
+      });
+    });
+
+    render(<PhotoClustersLayer focusedAssetId="photo-unplaced" />);
+
+    expect(
+      await screen.findByLabelText("Photo is not placed on the map"),
+    ).toBeTruthy();
+    await waitFor(() => expect(mocks.callResource).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/No GPS or manual coordinates are stored/i))
+      .toBeTruthy();
+    expect(screen.getByText("unplaced.jpg")).toBeTruthy();
+    expect(mocks.flyTo).not.toHaveBeenCalled();
   });
 });
 

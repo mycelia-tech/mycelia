@@ -28,6 +28,7 @@ export const zMediaInventoryFilter = z.enum([
   "processing",
   "ready",
   "needs_attention",
+  "ignored",
 ]);
 
 export const zMediaPlacementFilter = z.enum([
@@ -42,6 +43,10 @@ const zMediaAssetIdString = z.string().regex(
 );
 
 export const zMediaRecognitionSelection = z.object({
+  reanalyze: z.boolean().optional(),
+  providerProfileId: z.string().trim().min(1).optional(),
+  importCampaignId: z.string().refine((value) => /^[a-f0-9]{24}$/i.test(value))
+    .optional(),
   mode: z.enum(["all_matching", "explicit"]),
   inventoryFilter: zMediaInventoryFilter.default("unprocessed"),
   placement: zMediaPlacementFilter.default("all"),
@@ -106,6 +111,7 @@ export const zMediaFolderCampaignProgress = z.object({
     "metadata_scan",
     "awaiting_confirmation",
     "creating_previews",
+    "streaming",
     "completed",
     "failed",
     "cancelled",
@@ -117,6 +123,8 @@ export const zMediaFolderCampaignProgress = z.object({
   filesPerSecond: z.number().nonnegative().optional(),
   etaSeconds: z.number().int().nonnegative().optional(),
   waitingForRecovery: z.boolean().optional(),
+  totalKnown: z.boolean().optional(),
+  currentPath: z.string().optional(),
   chunkSize: z.number().int().positive(),
   message: z.string().min(1),
   nextStep: z.string().min(1),
@@ -127,9 +135,11 @@ export const zMediaFolderCampaignProgress = z.object({
 export const zMediaSourceFolderListing = z.object({
   currentPath: z.string().min(1),
   parentPath: z.string().min(1).optional(),
+  scanUnavailableReason: z.string().optional(),
   folders: z.array(z.object({
     name: z.string().min(1),
     relativePath: z.string().min(1),
+    unavailableReason: z.string().optional(),
   })),
 });
 
@@ -140,6 +150,24 @@ export const zMediaFolderCampaign = z.object({
   status: zMediaFolderCampaignStatus,
   counts: zMediaBatchCounts,
   progress: zMediaFolderCampaignProgress.optional(),
+  streaming: z.object({
+    state: z.enum(["running", "paused", "budget_exhausted", "completed"]),
+    counts: zMediaBatchCounts,
+    profileName: z.string(),
+    batchSize: z.number().int().positive(),
+    authorizedGrossUsd: z.number().nonnegative(),
+    allocatedGrossUsd: z.number().nonnegative(),
+    lastBatchId: zObjectId().optional(),
+    safeError: z.string().nullable().optional(),
+    nextCheckAt: zDateOrString().optional(),
+    batches: z.array(
+      z.object({
+        _id: zObjectId(),
+        status: z.string(),
+        counts: zMediaBatchCounts,
+      }),
+    ).optional(),
+  }).optional(),
   safeError: z.string().optional(),
   createdAt: zDateOrString(),
   updatedAt: zDateOrString(),

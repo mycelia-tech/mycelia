@@ -28,7 +28,7 @@ export function MediaSectionNav() {
           end={to === "/media"}
           className={({ isActive }) =>
             cn(
-              "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
+              "inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
               isActive
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-background/70 hover:text-foreground",

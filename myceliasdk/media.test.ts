@@ -1,11 +1,43 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { ObjectId } from "bson";
+import { zServerConfig } from "./config.ts";
 import {
   zMediaAsset,
   zMediaKnowledgeConfig,
   zMediaRecognitionProfile,
   zMediaVisualUnderstanding,
 } from "./media.ts";
+
+Deno.test("general photo profiles reference a provider without carrying credentials", () => {
+  const parsed = zMediaRecognitionProfile.safeParse({
+    id: "photo-local",
+    name: "Local vision",
+    providerType: "openai-compatible",
+    enabled: true,
+    connectionId: "local",
+    model: "vision-model",
+    apiKey: "must-not-survive",
+  });
+  assertEquals(parsed.success, true);
+  if (!parsed.success || parsed.data.providerType !== "openai-compatible") {
+    throw new Error("Expected a general photo profile");
+  }
+  assertEquals(parsed.data.language, "Russian");
+  assertEquals("apiKey" in parsed.data, false);
+  assertEquals(
+    zMediaRecognitionProfile.safeParse({ ...parsed.data, model: "" }).success,
+    false,
+  );
+});
+
+Deno.test("Google services default off independently of configured credentials", () => {
+  const config = zServerConfig.parse({
+    features: { enable_experimental_processing: false },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  assertEquals(config.externalServices.google.enabled, false);
+});
 
 Deno.test("media asset accepts normalized capture timezone and location", () => {
   const parsed = zMediaAsset.parse({
@@ -54,6 +86,22 @@ Deno.test("media event aggregation defaults are bounded and opt-in ready", () =>
     maxPreviewsPerAnalysis: 8,
     perEventGrossLimitUsd: 0.02,
   });
+});
+
+Deno.test("only explicit null disables the daily stop without changing other caps", () => {
+  const parsed = zMediaKnowledgeConfig.parse({
+    promoGuard: { dailyGrossLimitUsd: null },
+  });
+  assertEquals(parsed.promoGuard.dailyGrossLimitUsd, null);
+  assertEquals(parsed.promoGuard.monthlyGrossLimitUsd, 1);
+  assertEquals(parsed.promoGuard.perImportGrossLimitUsd, 0.01);
+  for (const invalid of [0, -1, 51, "", "unlimited"]) {
+    assertThrows(() =>
+      zMediaKnowledgeConfig.parse({
+        promoGuard: { dailyGrossLimitUsd: invalid },
+      })
+    );
+  }
 });
 
 Deno.test("self-hosted media URLs cannot embed credentials or query secrets", () => {

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useMap } from "react-leaflet";
 import { toast } from "sonner";
 import {
@@ -8,6 +8,7 @@ import {
   Clock,
   Crosshair,
   Database,
+  Images,
   Link as LinkIcon,
   Loader2,
   MapPin,
@@ -45,6 +46,7 @@ import {
   RouteProjectionLayer,
 } from "@/components/location/MapProjectionLayers";
 import { ConversationMapPanel } from "@/components/location/ConversationMapPanel";
+import { PhotoClustersLayer } from "@/components/location/PhotoClustersLayer";
 import { MapTimeNavigator } from "@/components/location/MapTimeNavigator";
 import { ImportTracksDialog } from "@/components/location/ImportTracksDialog";
 import {
@@ -70,6 +72,7 @@ export const MAP_LAYERS = [
   "routes",
   "connectors",
   "sourceTracks",
+  "photos",
 ] as const;
 export type MapLayer = (typeof MAP_LAYERS)[number];
 
@@ -91,7 +94,12 @@ export function readMapUrlState() {
   if (typeof window === "undefined") {
     return {
       viewport: null,
-      layers: new Set<MapLayer>(["presence", "conversations", "routes"]),
+      layers: new Set<MapLayer>([
+        "presence",
+        "conversations",
+        "routes",
+        "photos",
+      ]),
       at: undefined as Date | undefined,
     };
   }
@@ -118,10 +126,16 @@ export function readMapUrlState() {
     layers: new Set<MapLayer>(
       layersParam !== null
         ? requestedLayers
-        : ["presence", "conversations", "routes"],
+        : ["presence", "conversations", "routes", "photos"],
     ),
     at: Number.isFinite(atValue) && atValue > 0 ? new Date(atValue) : undefined,
   };
+}
+
+export function mapUrlWithoutPhotoFocus(href: string): string {
+  const url = new URL(href);
+  url.searchParams.delete("photoAssetId");
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 export function normalizeBounds(bounds: MapBounds): MapBounds {
@@ -194,7 +208,14 @@ function LayerButton({
 
 const MapExperiencePage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const initialUrl = useMemo(readMapUrlState, []);
+  const focusedPhotoAssetId = useMemo(
+    () =>
+      new URLSearchParams(location.search).get("photoAssetId")?.trim() ||
+      undefined,
+    [location.search],
+  );
   const { start, end, setRange } = useTimelineRange();
   const [layers, setLayers] = useState(initialUrl.layers);
   const [viewport, setViewport] = useState<
@@ -210,9 +231,10 @@ const MapExperiencePage = () => {
     zoom: number;
     key: number;
   }>();
-  const [fitRequestKey, setFitRequestKey] = useState(
-    initialUrl.viewport ? -1 : 0,
+  const [fitToSegments, setFitToSegments] = useState(
+    !initialUrl.viewport && !focusedPhotoAssetId,
   );
+  const [fitRequestKey, setFitRequestKey] = useState(0);
   const [cursorTime, setCursorTime] = useState<Date | undefined>(initialUrl.at);
   const [selectedCluster, setSelectedCluster] = useState<
     ConversationMapCluster | null
@@ -237,6 +259,11 @@ const MapExperiencePage = () => {
     } | null
   >(null);
   const [downloadingGeonames, setDownloadingGeonames] = useState(false);
+
+  const closeFocusedPhoto = useCallback(() => {
+    setFlyTarget(null);
+    navigate(mapUrlWithoutPhotoFocus(window.location.href), { replace: true });
+  }, [navigate]);
 
   const { data: status } = useLocationStatus();
   const rangeMs = end.getTime() - start.getTime();
@@ -300,7 +327,21 @@ const MapExperiencePage = () => {
   ]);
 
   useEffect(() => {
-    if (!cursorTime || locationAt.isLoading || !locationAt.data) return;
+    if (!focusedPhotoAssetId) return;
+    setFitToSegments(false);
+    setLayers((current) => {
+      if (current.has("photos")) return current;
+      const next = new Set(current);
+      next.add("photos");
+      return next;
+    });
+  }, [focusedPhotoAssetId]);
+
+  useEffect(() => {
+    if (
+      focusedPhotoAssetId || !cursorTime || locationAt.isLoading ||
+      !locationAt.data
+    ) return;
     const segment = locationAt.data.segment;
     if (segment?.type === "gap") {
       toast.info("No GPS near this time");
@@ -320,6 +361,7 @@ const MapExperiencePage = () => {
       setLayers(next.layers);
       setCursorTime(next.at);
       if (next.viewport) {
+        setFitToSegments(false);
         setViewport(next.viewport);
         setViewportRequest({ ...next.viewport, key: Date.now() });
       }
@@ -336,6 +378,11 @@ const MapExperiencePage = () => {
   }, [setRange]);
 
   const toggleLayer = (layer: MapLayer) => {
+    if (
+      layer === "photos" && layers.has("photos") && focusedPhotoAssetId
+    ) {
+      closeFocusedPhoto();
+    }
     setLayers((current) => {
       const next = new Set(current);
       if (next.has(layer)) next.delete(layer);
@@ -422,7 +469,11 @@ const MapExperiencePage = () => {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setFitRequestKey((key) => key + 1)}
+          onClick={() => {
+            if (focusedPhotoAssetId) closeFocusedPhoto();
+            setFitToSegments(true);
+            setFitRequestKey((key) => key + 1);
+          }}
         >
           <Crosshair className="mr-1.5 h-4 w-4" /> Fit selected data
         </Button>
@@ -478,7 +529,7 @@ const MapExperiencePage = () => {
           <div className="relative isolate min-h-0 flex-1 overflow-hidden rounded-lg border">
             <LocationMap
               segments={mapPresenceSegments}
-              fitToSegments
+              fitToSegments={fitToSegments && !focusedPhotoAssetId}
               fitRequestKey={fitRequestKey}
               initialCenter={initialUrl.viewport?.center ?? [20, 0]}
               initialZoom={initialUrl.viewport?.zoom ?? 2}
@@ -494,6 +545,12 @@ const MapExperiencePage = () => {
               showMoves={false}
               showGaps={false}
             >
+              {(layers.has("photos") || focusedPhotoAssetId) && (
+                <PhotoClustersLayer
+                  focusedAssetId={focusedPhotoAssetId}
+                  onFocusedAssetClose={closeFocusedPhoto}
+                />
+              )}
               {layers.has("presence") && showPresenceClusters && (
                 <PresenceDensityLayer
                   clusters={density.data?.presenceClusters ?? []}
@@ -534,7 +591,7 @@ const MapExperiencePage = () => {
                   setSelectedSavedPlace(place);
                 }}
               />
-              <FlyTo target={flyTarget} />
+              <FlyTo target={focusedPhotoAssetId ? null : flyTarget} />
             </LocationMap>
 
             <div className="pointer-events-none absolute inset-x-2 bottom-2 z-[1000] flex flex-wrap justify-center gap-1.5 [&>*]:pointer-events-auto">
@@ -567,6 +624,12 @@ const MapExperiencePage = () => {
                 onClick={() => toggleLayer("sourceTracks")}
               >
                 Source tracks
+              </LayerButton>
+              <LayerButton
+                active={layers.has("photos")}
+                onClick={() => toggleLayer("photos")}
+              >
+                <Images className="mr-1 h-3.5 w-3.5" /> Photos
               </LayerButton>
             </div>
 
