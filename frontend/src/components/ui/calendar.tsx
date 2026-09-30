@@ -1,4 +1,5 @@
 import * as React from "react";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -9,6 +10,7 @@ import {
   DayPicker,
   type DropdownProps,
   getDefaultClassNames,
+  type RootProps,
 } from "react-day-picker";
 
 import { cn } from "@/lib/utils";
@@ -25,79 +27,164 @@ function CalendarDropdown({
   const listboxId = React.useId();
   const selectedValue = Number(value);
   const selected = options?.find((option) => option.value === selectedValue);
-  const selectedOptionRef = React.useRef<HTMLButtonElement>(null);
+  const [activeValue, setActiveValue] = React.useState(selectedValue);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const listboxRef = React.useRef<HTMLDivElement>(null);
+  const activeOptionRef = React.useRef<HTMLButtonElement>(null);
+  const enabledOptions = options?.filter((option) => !option.disabled) ?? [];
+
+  const changeOpen = (nextOpen: boolean) => {
+    if (nextOpen) {
+      setActiveValue(
+        enabledOptions.find((option) => option.value === selectedValue)
+          ?.value ??
+          enabledOptions[0]?.value ?? selectedValue,
+      );
+    }
+    setOpen(nextOpen);
+  };
+
+  const scrollActiveOptionIntoView = React.useCallback(() => {
+    const list = listboxRef.current;
+    const option = activeOptionRef.current;
+    if (!list || !option) return;
+    // Keep scrolling local: scrollIntoView can also move the enclosing dialog.
+    if (option.offsetTop < list.scrollTop) {
+      list.scrollTop = option.offsetTop;
+    } else if (
+      option.offsetTop + option.offsetHeight >
+        list.scrollTop + list.clientHeight
+    ) {
+      list.scrollTop = option.offsetTop + option.offsetHeight -
+        list.clientHeight;
+    }
+  }, []);
 
   React.useEffect(() => {
-    if (open) selectedOptionRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [open]);
+    if (open) scrollActiveOptionIntoView();
+  }, [open, activeValue, scrollActiveOptionIntoView]);
 
   const choose = (nextValue: number) => {
+    if (!enabledOptions.some((option) => option.value === nextValue)) return;
     onChange?.({
       target: { value: String(nextValue) },
       currentTarget: { value: String(nextValue) },
     } as React.ChangeEvent<HTMLSelectElement>);
     setOpen(false);
+    triggerRef.current?.focus({ preventScroll: true });
   };
 
   return (
-    <div
-      className="relative"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-      }}
-    >
-      <button
-        type="button"
-        role="combobox"
-        aria-label={ariaLabel}
-        aria-controls={listboxId}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        disabled={disabled}
-        className="flex h-9 min-w-[5.25rem] items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground shadow-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (
-            event.key === "ArrowDown" || event.key === "Enter" ||
-            event.key === " "
-          ) {
-            event.preventDefault();
-            setOpen(true);
-          } else if (event.key === "Escape") {
-            setOpen(false);
-          }
-        }}
-      >
-        <span>{selected?.label ?? value}</span>
-        <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
-      </button>
-      {open && (
-        <div
+    <PopoverPrimitive.Root open={open} onOpenChange={changeOpen}>
+      <div className="relative">
+        <PopoverPrimitive.Trigger asChild>
+          <button
+            ref={triggerRef}
+            type="button"
+            role="combobox"
+            aria-label={ariaLabel}
+            aria-controls={listboxId}
+            aria-expanded={open}
+            aria-haspopup="listbox"
+            aria-activedescendant={open
+              ? `${listboxId}-${activeValue}`
+              : undefined}
+            disabled={disabled}
+            className="flex h-9 min-w-[5.25rem] items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground shadow-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                setOpen(false);
+                return;
+              }
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                if (open) choose(activeValue);
+                else changeOpen(true);
+                return;
+              }
+              if (
+                !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+              ) return;
+              event.preventDefault();
+              if (!open) {
+                changeOpen(true);
+                if (event.key !== "Home" && event.key !== "End") return;
+              }
+              const index = enabledOptions.findIndex((option) =>
+                option.value === activeValue
+              );
+              const nextIndex = event.key === "Home"
+                ? 0
+                : event.key === "End"
+                ? enabledOptions.length - 1
+                : Math.max(
+                  0,
+                  Math.min(
+                    enabledOptions.length - 1,
+                    index + (event.key === "ArrowDown" ? 1 : -1),
+                  ),
+                );
+              const nextOption = enabledOptions[nextIndex];
+              if (nextOption) setActiveValue(nextOption.value);
+            }}
+          >
+            <span>{selected?.label ?? value}</span>
+            <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
+          </button>
+        </PopoverPrimitive.Trigger>
+        <PopoverPrimitive.Content
+          ref={listboxRef}
           id={listboxId}
           role="listbox"
           aria-label={ariaLabel}
-          className="absolute left-1/2 top-[calc(100%+0.25rem)] z-[70] max-h-56 min-w-full -translate-x-1/2 overflow-y-auto overscroll-contain rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl"
+          sideOffset={4}
+          className="relative z-[70] max-h-56 min-w-[var(--radix-popover-trigger-width)] overflow-y-auto overscroll-contain rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            triggerRef.current?.focus({ preventScroll: true });
+            // Radix mounts Content after the opening render's effect has run.
+            scrollActiveOptionIntoView();
+          }}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => {
+            event.preventDefault();
+            setOpen(false);
+            triggerRef.current?.focus({ preventScroll: true });
+          }}
           onWheel={(event) => event.stopPropagation()}
         >
           {options?.map((option) => (
             <button
               key={option.value}
-              ref={option.value === selectedValue
-                ? selectedOptionRef
-                : undefined}
+              id={`${listboxId}-${option.value}`}
+              ref={option.value === activeValue ? activeOptionRef : undefined}
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={option.value === selectedValue}
+              data-active={option.value === activeValue}
               disabled={option.disabled}
-              className="flex w-full items-center rounded-sm px-3 py-2 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground aria-selected:bg-primary aria-selected:text-primary-foreground disabled:pointer-events-none disabled:opacity-40"
+              className="flex w-full items-center rounded-sm px-3 py-2 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground data-[active=true]:bg-accent data-[active=true]:text-accent-foreground aria-selected:bg-primary aria-selected:text-primary-foreground disabled:pointer-events-none disabled:opacity-40"
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => choose(option.value)}
             >
               {option.label}
             </button>
           ))}
-        </div>
-      )}
-    </div>
+        </PopoverPrimitive.Content>
+      </div>
+    </PopoverPrimitive.Root>
+  );
+}
+
+function CalendarRoot({ className, rootRef, ...props }: RootProps) {
+  return (
+    <div
+      data-slot="calendar"
+      ref={rootRef}
+      className={cn(className)}
+      {...props}
+    />
   );
 }
 
@@ -216,16 +303,7 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        Root: ({ className, rootRef, ...props }) => {
-          return (
-            <div
-              data-slot="calendar"
-              ref={rootRef}
-              className={cn(className)}
-              {...props}
-            />
-          );
-        },
+        Root: CalendarRoot,
         Chevron: ({ className, orientation, ...props }) => {
           if (orientation === "left") {
             return (
@@ -262,6 +340,10 @@ function Calendar({
       {...props}
       style={{
         ...style,
+        "--rdp-day-width": "var(--cell-size)",
+        "--rdp-day-height": "var(--cell-size)",
+        "--rdp-day_button-width": "var(--cell-size)",
+        "--rdp-day_button-height": "var(--cell-size)",
         "--rdp-accent-color": "var(--primary)",
         "--rdp-accent-background-color":
           "color-mix(in oklab, var(--primary) 30%, var(--background))",

@@ -29,7 +29,7 @@ interface DateTimePickerProps {
   placeholder?: string;
   disabled?: boolean;
   nullable?: boolean;
-  precision?: Exclude<DatePickerPrecision, "date">;
+  precision?: DatePickerPrecision;
   timeZone?: string;
 }
 
@@ -59,7 +59,16 @@ export function DateTimePicker({
 
   const apply = () => {
     if (!draft || !Number.isFinite(draft.getTime())) return;
-    onChange(draft);
+    onChange(
+      precision === "date"
+        ? replaceZonedCalendarDate(
+          draft,
+          calendarDateInTimeZone(draft, timeZone),
+          timeZone,
+          precision,
+        )
+        : draft,
+    );
     setOpen(false);
   };
 
@@ -108,28 +117,30 @@ export function DateTimePicker({
             captionLayout="dropdown"
             startMonth={new Date(1900, 0, 1)}
             endMonth={new Date(new Date().getFullYear() + 20, 11, 31)}
-            className="mx-auto [--cell-size:2.25rem]"
+            className="mx-auto max-w-full [--cell-size:clamp(1.75rem,calc((100vw-6rem)/7),2.25rem)]"
           />
-          <label className="grid gap-1 border-t pt-3 text-xs text-muted-foreground">
-            Time
-            <Input
-              type="time"
-              step={precision === "second" ? 1 : 60}
-              value={draft
-                ? zonedTimeInputValue(draft, timeZone, precision)
-                : ""}
-              onChange={(event) => {
-                if (!draft) return;
-                const next = replaceZonedTime(
-                  draft,
-                  event.target.value,
-                  timeZone,
-                  precision,
-                );
-                if (next) setDraft(next);
-              }}
-            />
-          </label>
+          {precision !== "date" && (
+            <label className="grid gap-1 border-t pt-3 text-xs text-muted-foreground">
+              Time
+              <Input
+                type="time"
+                step={precision === "second" ? 1 : 60}
+                value={draft
+                  ? zonedTimeInputValue(draft, timeZone, precision)
+                  : ""}
+                onChange={(event) => {
+                  if (!draft) return;
+                  const next = replaceZonedTime(
+                    draft,
+                    event.target.value,
+                    timeZone,
+                    precision,
+                  );
+                  if (next) setDraft(next);
+                }}
+              />
+            </label>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
             <span className="text-xs text-muted-foreground">
               {pickerTimeZoneLabel(draft ?? new Date(), timeZone)}

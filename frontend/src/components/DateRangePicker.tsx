@@ -32,6 +32,7 @@ import { resolveDefaultTimeZone } from "@/lib/timeZones";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useHistogramItems } from "@/modules/histogram/useHistogramItems";
 import { cn } from "@/lib/utils";
+import { snapAudioRange } from "@/lib/audioRangeSelection";
 
 type DateRangePickerProps = {
   value?: DateRangeValue;
@@ -66,18 +67,6 @@ function useDesktopCalendar(): boolean {
   }, []);
 
   return desktop;
-}
-
-function closestAvailableBoundary(
-  timestamp: number,
-  candidates: number[],
-): number {
-  if (candidates.length === 0) return timestamp;
-  return candidates.reduce((best, candidate) =>
-    Math.abs(candidate - timestamp) < Math.abs(best - timestamp)
-      ? candidate
-      : best
-  );
 }
 
 function AudioRangeTimeline({
@@ -120,12 +109,18 @@ function AudioRangeTimeline({
   );
 
   const commit = (next: number[]) => {
-    const starts = available.map((item) => item.start.getTime());
-    const ends = available.map((item) => item.end.getTime());
-    const snappedStart = closestAvailableBoundary(next[0], starts);
-    const snappedEnd = closestAvailableBoundary(next[1], ends);
-    if (snappedEnd <= snappedStart) return;
-    onChange({ start: new Date(snappedStart), end: new Date(snappedEnd) });
+    const snapped = snapAudioRange(
+      [next[0], next[1]],
+      [domainStart, domainEnd],
+      available.map((item) => ({
+        start: item.start.getTime(),
+        end: item.end.getTime(),
+      })),
+      precision === "second" ? 1_000 : 60_000,
+      [value.start.getTime(), value.end.getTime()],
+    );
+    setSliderValue(snapped);
+    onChange({ start: new Date(snapped[0]), end: new Date(snapped[1]) });
   };
 
   return (
@@ -133,7 +128,9 @@ function AudioRangeTimeline({
       <div className="flex items-center justify-between gap-3">
         <Label className="text-sm">Timeline range</Label>
         <span className="text-xs text-muted-foreground">
-          Drag an edge; it snaps to available audio
+          {available.length > 0
+            ? "Drag an edge; it snaps to available audio"
+            : "Drag an edge to refine the range"}
         </span>
       </div>
       <div className="relative h-16 overflow-hidden rounded-md bg-muted/40 px-2 pt-2">
@@ -158,7 +155,7 @@ function AudioRangeTimeline({
           })}
           {available.length === 0 && (
             <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-              No indexed audio in this period
+              Audio density is not available for this period
             </span>
           )}
         </div>
@@ -204,13 +201,32 @@ export function DateRangePicker({
 }: DateRangePickerProps) {
   const defaultTimeZone = useSettingsStore((state) => state.defaultTimeZone);
   const timeZone = requestedTimeZone ?? resolveDefaultTimeZone(defaultTimeZone);
+  const prepareDraft = (next: DateRangeValue): DateRangeValue => {
+    if (precision !== "date") return next;
+    const dayOnly = (date: Date) =>
+      replaceZonedCalendarDate(
+        date,
+        calendarDateInTimeZone(date, timeZone),
+        timeZone,
+        "date",
+      );
+    return {
+      start: dayOnly(next.start),
+      end: next.end ? dayOnly(next.end) : undefined,
+    };
+  };
   const [open, setOpen] = useState(false);
   const [activeBoundary, setActiveBoundary] = useState<ActiveBoundary>("start");
+  const [month, setMonth] = useState(() =>
+    calendarDateInTimeZone(value?.start ?? new Date(), timeZone)
+  );
   const [draft, setDraft] = useState<DateRangeValue>(() =>
-    value ?? {
-      start: new Date(Date.now() - 86_400_000),
-      end: new Date(),
-    }
+    prepareDraft(
+      value ?? {
+        start: new Date(Date.now() - 86_400_000),
+        end: new Date(),
+      },
+    )
   );
   const [timelineDomain, setTimelineDomain] = useState<
     {
@@ -241,8 +257,34 @@ export function DateRangePicker({
       : undefined,
   };
   const duration = value ? formatPickerDuration(value, precision) : null;
+  const calendarMin = minDate
+    ? calendarDateInTimeZone(minDate, timeZone)
+    : undefined;
+  const calendarMax = maxDate
+    ? calendarDateInTimeZone(maxDate, timeZone)
+    : undefined;
   const draftError = (() => {
     if (!isValidPickerDate(draft.start)) return "Choose a start date.";
+    for (const date of [draft.start, draft.end]) {
+      if (!isValidPickerDate(date)) continue;
+      const comparable = precision === "date"
+        ? calendarDateInTimeZone(date, timeZone)
+        : date;
+      if (
+        minDate && comparable < (precision === "date" ? calendarMin! : minDate)
+      ) {
+        return `Choose a date${
+          precision === "date" ? "" : " and time"
+        } on or after ${formatPickerDateTime(minDate, timeZone, precision)}.`;
+      }
+      if (
+        maxDate && comparable > (precision === "date" ? calendarMax! : maxDate)
+      ) {
+        return `Choose a date${
+          precision === "date" ? "" : " and time"
+        } on or before ${formatPickerDateTime(maxDate, timeZone, precision)}.`;
+      }
+    }
     if (!draft.end) return allowOpenEnd ? null : "Choose the finish date.";
     if (!isValidPickerDate(draft.end)) return "Choose a valid finish date.";
     const difference = draft.end.getTime() - draft.start.getTime();
@@ -259,17 +301,34 @@ export function DateRangePicker({
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
-      const nextDraft = value ?? {
-        start: new Date(Date.now() - 86_400_000),
-        end: new Date(),
-      };
+      const nextDraft = prepareDraft(
+        value ?? {
+          start: new Date(Date.now() - 86_400_000),
+          end: new Date(),
+        },
+      );
       setDraft(nextDraft);
+      setMonth(calendarDateInTimeZone(nextDraft.start, timeZone));
       setTimelineDomain(
         nextDraft.end ? { start: nextDraft.start, end: nextDraft.end } : null,
       );
       setActiveBoundary("start");
     }
     setOpen(nextOpen);
+  };
+
+  const activateBoundary = (boundary: ActiveBoundary) => {
+    setActiveBoundary(boundary);
+    const date = boundary === "start" ? draft.start : draft.end ?? draft.start;
+    setMonth(calendarDateInTimeZone(date, timeZone));
+  };
+
+  const updateExactTime = (boundary: ActiveBoundary, next: Date) => {
+    const nextDraft = { ...draft, [boundary]: next };
+    setDraft(nextDraft);
+    if (nextDraft.end && nextDraft.end > nextDraft.start) {
+      setTimelineDomain({ start: nextDraft.start, end: nextDraft.end });
+    }
   };
 
   const handleCalendarDayClick = (calendarDate: Date) => {
@@ -342,7 +401,8 @@ export function DateRangePicker({
           <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
             <DialogTitle>{label ?? "Choose date range"}</DialogTitle>
             <DialogDescription>
-              Select Start or End, then choose its date and time.
+              Select Start or End, then choose its{" "}
+              {precision === "date" ? "date." : "date and time."}
             </DialogDescription>
           </DialogHeader>
 
@@ -361,7 +421,7 @@ export function DateRangePicker({
                     ? "border-primary bg-primary/15 ring-1 ring-primary"
                     : "border-border bg-card",
                 )}
-                onClick={() => setActiveBoundary("start")}
+                onClick={() => activateBoundary("start")}
               >
                 <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Start
@@ -379,7 +439,7 @@ export function DateRangePicker({
                     ? "border-primary bg-primary/15 ring-1 ring-primary"
                     : "border-border bg-card",
                 )}
-                onClick={() => setActiveBoundary("end")}
+                onClick={() => activateBoundary("end")}
               >
                 <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   End
@@ -395,19 +455,22 @@ export function DateRangePicker({
             <Calendar
               mode="range"
               selected={selected}
+              // onSelect makes DayPicker controlled; edits target the active boundary below.
+              onSelect={() => {}}
               onDayClick={handleCalendarDayClick}
               numberOfMonths={desktopCalendar ? 2 : 1}
               captionLayout="dropdown"
-              defaultMonth={selected.from}
-              startMonth={minDate ?? new Date(1900, 0, 1)}
-              endMonth={maxDate ??
+              month={month}
+              onMonthChange={setMonth}
+              startMonth={calendarMin ?? new Date(1900, 0, 1)}
+              endMonth={calendarMax ??
                 new Date(new Date().getFullYear() + 20, 11, 31)}
-              disabled={minDate && maxDate
-                ? [{ before: minDate }, { after: maxDate }]
-                : minDate
-                ? { before: minDate }
-                : maxDate
-                ? { after: maxDate }
+              disabled={calendarMin && calendarMax
+                ? [{ before: calendarMin }, { after: calendarMax }]
+                : calendarMin
+                ? { before: calendarMin }
+                : calendarMax
+                ? { after: calendarMax }
                 : undefined}
               classNames={{
                 months: desktopCalendar
@@ -422,9 +485,9 @@ export function DateRangePicker({
               }}
               modifiersClassNames={{
                 activeBoundary:
-                  "relative z-20 rounded-md ring-2 ring-primary ring-offset-1 ring-offset-background",
+                  "relative z-10 rounded-md ring-2 ring-primary ring-offset-1 ring-offset-background",
               }}
-              className="mx-auto [--cell-size:2.25rem]"
+              className="mx-auto max-w-full [--cell-size:clamp(1.75rem,calc((100vw-6rem)/7),2.25rem)]"
             />
 
             {precision !== "date" && (
@@ -438,7 +501,7 @@ export function DateRangePicker({
                         ? "border-primary bg-primary/10"
                         : "border-border",
                     )}
-                    onClick={() => setActiveBoundary("start")}
+                    onFocus={() => setActiveBoundary("start")}
                   >
                     Start
                     <Input
@@ -457,7 +520,7 @@ export function DateRangePicker({
                           precision,
                         );
                         if (next) {
-                          setDraft((current) => ({ ...current, start: next }));
+                          updateExactTime("start", next);
                         }
                       }}
                     />
@@ -469,7 +532,7 @@ export function DateRangePicker({
                         ? "border-primary bg-primary/10"
                         : "border-border",
                     )}
-                    onClick={() => setActiveBoundary("end")}
+                    onFocus={() => setActiveBoundary("end")}
                   >
                     End
                     <Input
@@ -490,7 +553,7 @@ export function DateRangePicker({
                           precision,
                         );
                         if (next) {
-                          setDraft((current) => ({ ...current, end: next }));
+                          updateExactTime("end", next);
                         }
                       }}
                     />
@@ -500,6 +563,8 @@ export function DateRangePicker({
             )}
 
             {showAudioTimeline && precision !== "date" && draft.end &&
+              isValidPickerDate(draft.start) && isValidPickerDate(draft.end) &&
+              draft.end > draft.start &&
               timelineDomain && (
               <AudioRangeTimeline
                 domain={timelineDomain}
@@ -516,13 +581,15 @@ export function DateRangePicker({
             className="shrink-0 space-y-2 border-t bg-background px-4 py-3"
           >
             {draftError && (
-              <p className="text-xs text-destructive">{draftError}</p>
+              <p role="alert" className="text-xs text-destructive">
+                {draftError}
+              </p>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-muted-foreground">
                 {pickerTimeZoneLabel(draft.start, timeZone)}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {allowOpenEnd && draft.end && (
                   <Button
                     type="button"

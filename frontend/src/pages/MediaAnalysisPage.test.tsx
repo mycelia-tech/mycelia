@@ -356,6 +356,70 @@ describe("MediaAnalysisPage", () => {
     );
   });
 
+  it("edits an end-only capture filter without adding a start date", async () => {
+    const user = userEvent.setup();
+    settings.defaultTimeZone = "Asia/Yerevan";
+    mockCallResource.mockImplementation((resource, input) => {
+      const base = baseResponse(resource, input);
+      if (base) return base;
+      if (resource === "media" && input.action === "listAssets") {
+        return Promise.resolve({ total: 2, assets: stagedAssets });
+      }
+      return Promise.resolve({});
+    });
+
+    renderPage("/media/analysis?status=unprocessed&to=2026-08-26");
+    await screen.findByText("first.jpg");
+    expect(screen.getByText("Captured through")).toBeInTheDocument();
+    expect(screen.getByText("No start date")).toBeInTheDocument();
+    expect(screen.queryByText("Any capture date")).not.toBeInTheDocument();
+    const initialListInput = mockCallResource.mock.calls.find(([, input]) =>
+      input.action === "listAssets"
+    )?.[1];
+    expect(initialListInput).toMatchObject({
+      capturedTo: "2026-08-26T19:59:59.999Z",
+    });
+    expect(initialListInput).not.toHaveProperty("capturedFrom");
+
+    await user.click(screen.getByRole("button", { name: "Aug 26, 2026" }));
+    await user.click(screen.getByRole("button", {
+      name: /Thursday, August 27th, 2026/,
+    }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Aug 26, 2026" }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Aug 26, 2026" }));
+    await user.click(screen.getByRole("button", {
+      name: /Thursday, August 27th, 2026/,
+    }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      const params = new URLSearchParams(
+        screen.getByTestId("analysis-location").textContent ?? "",
+      );
+      expect(params.get("to")).toBe("2026-08-27");
+      expect(params.has("from")).toBe(false);
+      const updatedListInput = mockCallResource.mock.calls.find(([, input]) =>
+        input.action === "listAssets" &&
+        input.capturedTo === "2026-08-27T19:59:59.999Z"
+      )?.[1];
+      expect(updatedListInput).toBeDefined();
+      expect(updatedListInput).not.toHaveProperty("capturedFrom");
+    });
+
+    await user.click(screen.getByRole("button", {
+      name: "Clear capture dates",
+    }));
+    expect(screen.getByText("Any capture date")).toBeInTheDocument();
+    const params = new URLSearchParams(
+      screen.getByTestId("analysis-location").textContent ?? "",
+    );
+    expect(params.has("to")).toBe(false);
+    expect(params.has("from")).toBe(false);
+  });
+
   it("turns every date-filtered unprocessed match into one durable preview and confirmation", async () => {
     mockCallResource.mockImplementation((resource, input) => {
       const base = baseResponse(resource, input);

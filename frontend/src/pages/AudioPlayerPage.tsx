@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { Volume2, Gauge } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Gauge, Volume2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -28,8 +28,11 @@ const SPEED_OPTIONS = [
 
 export default function AudioPlayerPage() {
   const { currentDate, isPlaying, resetDate } = useAudioPlayer();
-  const { volume, setVolume, playbackRate, setPlaybackRate } = useSettingsStore();
-  const [jumpToDate, setJumpToDate] = useState<Date | null>(currentDate || new Date());
+  const { volume, setVolume, playbackRate, setPlaybackRate } =
+    useSettingsStore();
+  const [jumpToDate, setJumpToDate] = useState<Date | null>(
+    currentDate || new Date(),
+  );
   const prevIsPlayingRef = useRef(isPlaying);
 
   useEffect(() => {
@@ -39,13 +42,16 @@ export default function AudioPlayerPage() {
   }, [currentDate]);
 
   useEffect(() => {
-    if (!prevIsPlayingRef.current && isPlaying && jumpToDate) {
-      if (!currentDate || jumpToDate.getTime() !== currentDate.getTime()) {
-        resetDate(jumpToDate);
-      }
+    if (!prevIsPlayingRef.current && isPlaying && !currentDate && jumpToDate) {
+      resetDate(jumpToDate);
     }
     prevIsPlayingRef.current = isPlaying;
   }, [isPlaying, jumpToDate, currentDate, resetDate]);
+
+  const handleJumpToDateChange = (date: Date | null) => {
+    setJumpToDate(date);
+    if (date) resetDate(date);
+  };
 
   const handleVolumeChange = (value: number[]) => {
     setVolume(value[0]);
@@ -85,19 +91,21 @@ export default function AudioPlayerPage() {
               </SelectTrigger>
               <SelectContent>
                 {SPEED_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value.toString()}>
+                  <SelectItem
+                    key={option.value}
+                    value={option.value.toString()}
+                  >
                     {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-            
 
           <div className="space-y-4">
-          <DateTimePicker
+            <DateTimePicker
               value={jumpToDate || undefined}
-              onChange={(date) => setJumpToDate(date)}
+              onChange={handleJumpToDateChange}
               placeholder="Select date and time"
             />
           </div>

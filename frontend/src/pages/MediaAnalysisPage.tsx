@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { callResource } from "@/lib/api";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { cn } from "@/lib/utils";
 import { getMediaRecognitionBatchProgress } from "@/lib/mediaRecognitionBatchProgress";
 import { zonedDateKey, zonedDateKeyToDate } from "@/lib/datePicker";
@@ -377,6 +378,9 @@ export default function MediaAnalysisPage() {
     const end = zonedDateKeyToDate(filters.capturedTo, timeZone) ?? undefined;
     return { start, ...(end ? { end } : {}) };
   }, [filters.capturedFrom, filters.capturedTo, timeZone]);
+  const captureEndOnly = !filters.capturedFrom
+    ? zonedDateKeyToDate(filters.capturedTo, timeZone)
+    : null;
   const viewMode = searchParams.get("view") === "table" ? "table" : "grid";
   const requestedSort = searchParams.get("sort") as MediaSortBy | null;
   const sortBy: MediaSortBy = requestedSort && [
@@ -1221,17 +1225,45 @@ export default function MediaAnalysisPage() {
               </select>
             </div>
             <div className="space-y-1.5 lg:col-span-2">
-              <DateRangePicker
-                label="Captured from / to"
-                placeholder="Any capture date"
-                precision="date"
-                allowOpenEnd
-                value={captureRange}
-                onChange={(value) => updateFilters({
-                  from: zonedDateKey(value.start, timeZone),
-                  to: value.end ? zonedDateKey(value.end, timeZone) : "",
-                })}
-              />
+              {captureEndOnly
+                ? (
+                  <div
+                    role="group"
+                    aria-labelledby="analysis-captured-through-label"
+                    className="space-y-2"
+                  >
+                    <Label id="analysis-captured-through-label">
+                      Captured through
+                    </Label>
+                    <DateTimePicker
+                      value={captureEndOnly}
+                      precision="date"
+                      timeZone={timeZone}
+                      onChange={(value) => {
+                        if (value) {
+                          updateFilters({ to: zonedDateKey(value, timeZone) });
+                        }
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      No start date
+                    </p>
+                  </div>
+                )
+                : (
+                  <DateRangePicker
+                    label="Captured from / to"
+                    placeholder="Any capture date"
+                    precision="date"
+                    allowOpenEnd
+                    value={captureRange}
+                    onChange={(value) =>
+                      updateFilters({
+                        from: zonedDateKey(value.start, timeZone),
+                        to: value.end ? zonedDateKey(value.end, timeZone) : "",
+                      })}
+                  />
+                )}
               {(filters.capturedFrom || filters.capturedTo) && (
                 <Button
                   type="button"

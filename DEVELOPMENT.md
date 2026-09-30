@@ -995,11 +995,27 @@ Start or End boundary before editing its date or time. Use `precision="date"`
 for date-only filters and opt into `precision="second"` only when the workflow
 requires exact seconds.
 
-Use `DateTimePicker` from `frontend/src/components/ui/datetime-picker.tsx` only
-for a single instant. Do not assemble new range controls from separate native
+Clicking Start or End also brings that boundary's month into view. Month/year
+dropdowns support Arrow keys, Home/End, Enter/Space, Tab, and Escape; Escape
+closes the dropdown without discarding the range. Date-only drafts are normalized
+in the chosen timezone, so a same-day selection is valid even when incoming
+timestamps contain a clock time. Exact-time edits respect `minDate`/`maxDate`.
+Audio timeline handles preserve the untouched boundary and cannot snap outside
+the visible timeline or collapse the range. At narrow widths the calendar shrinks
+and the dialog body scrolls independently of its Apply/Cancel footer.
+
+Use `DateTimePicker` from `frontend/src/components/ui/datetime-picker.tsx` for
+a single instant, or `precision="date"` for a single calendar boundary (such as
+an existing end-only capture filter). Date-only Apply returns midnight in the
+configured timezone, with no clock fields. The standalone audio player's Apply
+seeks immediately whether playback is paused or running; Cancel never seeks.
+Do not assemble new range controls from separate native
 `date`, `time`, or `datetime-local` inputs. Both shared controls use the
 configured app timezone unless the caller explicitly supplies a contextual
 Timeline timezone or UTC for a maintenance boundary.
+
+See the [date-picker UAT report](docs/testing/date-picker-uat-2026-10-01.md)
+for scenario coverage and the remaining runtime acceptance boundary.
 
 ## Backend Development
 

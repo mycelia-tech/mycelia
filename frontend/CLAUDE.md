@@ -156,8 +156,9 @@ const form = useForm({
   month/year dropdowns, optional minute/second precision, configured-timezone
   conversion, validation, explicit Start/End boundary editing, a scroll-contained
   dialog, and optional audio-density fine tuning.
-- Use `DateTimePicker` from `@/components/ui/datetime-picker` only for a single
-  instant.
+- Use `DateTimePicker` from `@/components/ui/datetime-picker` for a single
+  instant, or `precision="date"` for a single calendar boundary such as an
+  existing end-only filter. Date-only Apply normalizes to zoned midnight.
 - Never assemble range controls from separate native `date`, `time`, or
   `datetime-local` inputs.
 - Seconds are opt-in with `precision="second"`; ordinary ranges default to
