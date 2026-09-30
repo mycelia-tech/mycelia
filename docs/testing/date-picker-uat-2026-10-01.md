@@ -1,7 +1,7 @@
 # Shared date picker UAT — 2026-10-01
 
 Implementation checks pass; full end-to-end UAT acceptance remains incomplete
-because the backend became unavailable during the session. No audio processing,
+after intermittent backend/frontend unavailability during the session. No audio processing,
 exports, rebuilds, or data edits were submitted during browser testing.
 
 ## Verified scenarios
@@ -17,7 +17,8 @@ exports, rebuilds, or data edits were submitted during browser testing.
 | Seconds, reversed ranges, exact min/max and processing duration limits | Live seconds fields; component regression tests |
 | Open end and nested Cancel/Apply/Save isolation | Actual TimeRangeEditDialog integration test |
 | Timeline edge adjustment without audio density | Live ArrowRight changed start by 1000ms and left end unchanged |
-| Snapping with audio intervals, gaps and domain boundaries | 15 helper tests; loaded real density could not be verified while API returned 502 |
+| Snapping with audio intervals, gaps and domain boundaries | 15 helper tests; real density later loaded for August 9–18 |
+| Repeated keyboard steps with loaded density | Regression reproduced live: snapping erased small steps. The fix uses exact keyboard steps while preserving pointer snapping; real Slider regression test verifies repeated movement and unchanged opposite edge |
 | Legacy end-only photo filter | MediaAnalysisPage integration test: edit only `to`, keep `from` absent, Cancel and Clear |
 | Single-instant Apply while paused/playing | AudioPlayerPage tests with real player store and picker; no physical playback engine mounted |
 
@@ -30,8 +31,10 @@ data-dependent dialog was opened successfully in the browser.
 
 ## Automated verification
 
-- Final combined targeted run: 8 files, 62 tests passed; 12 edited TypeScript files
+- Final combined targeted run: 8 files, 63 tests passed; 12 edited TypeScript files
   passed lint and formatting checks; all 6 edited production modules type-checked.
+- The final keyboard fix also passed its 25-test focused regression group and
+  fresh formatting, lint and DateRangePicker type checking.
 - Earlier full frontend run: 511/512 tests passed. The one baseline failure is
   `audioPipelineStats.test.ts`: its expected fallback omits `blocked: 0` already
   present since commit `f56a523f`. This run predates the last caller regressions.
@@ -71,7 +74,12 @@ container remained running. `/readiness` returned 502. The frontend subsequently
 rendered the corrected picker, but histogram API requests still returned 502.
 Loading a form is not proof that data-backed workflows are ready.
 
-Before full acceptance: restore stable UAT backend/database responsiveness,
-verify fresh readiness and actual data requests, then repeat density snapping,
-data-dependent launch/object dialogs, and real playback seeking. Database or
-unrelated workload restarts were not performed by this task.
+At a later check readiness returned 200 again and backend/frontend/MongoDB/Redis
+were all healthy. Real density subsequently loaded for the historical August
+9–18 range. The frontend became temporarily blank again during subsequent
+source reloads, so a stable full-session acceptance result is not claimed.
+
+Before full acceptance: verify stable readiness and actual data requests, then
+repeat final pointer/keyboard behavior with loaded density, data-dependent
+launch/object dialogs, and real playback seeking. Database or unrelated workload
+restarts were not performed by this task.

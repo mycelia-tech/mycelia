@@ -6,7 +6,56 @@ import { TimeRangeEditDialog } from "./TimeRangeEditDialog";
 
 const userEvent = (userEventLib as any).default || userEventLib;
 
+vi.mock("@/modules/histogram/useHistogramItems", () => ({
+  useHistogramItems: () => ({
+    resolution: "1hour",
+    items: [{
+      id: "audio-hour",
+      start: new Date("2026-08-24T10:00:00Z"),
+      end: new Date("2026-08-24T11:00:00Z"),
+      stale: false,
+      totals: { seconds: 3600, audio_chunks: { count: 60 } },
+    }],
+  }),
+}));
+
 describe("DateRangePicker", () => {
+  it("advances the timeline start one second per arrow without snapping back to audio bins", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <DateRangePicker
+        value={{
+          start: new Date("2026-08-24T10:00:00Z"),
+          end: new Date("2026-08-24T11:00:00Z"),
+        }}
+        precision="second"
+        timeZone="UTC"
+        showAudioTimeline
+        onChange={onChange}
+      />,
+    );
+    await user.click(screen.getByRole("button"));
+    const start = screen.getByRole("slider", { name: "Range start" });
+    const end = screen.getByRole("slider", { name: "Range end" });
+    start.focus();
+
+    for (const seconds of ["01", "02", "03"]) {
+      await user.keyboard("{ArrowRight}");
+      expect(screen.getByLabelText("Start", { selector: "input" }))
+        .toHaveValue(`10:00:${seconds}`);
+      expect(end).toHaveAttribute("aria-valuenow", "1787569200000");
+      expect(onChange).not.toHaveBeenCalled();
+    }
+
+    await user.click(screen.getByRole("button", { name: "Apply range" }));
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith({
+      start: new Date("2026-08-24T10:00:03Z"),
+      end: new Date("2026-08-24T11:00:00Z"),
+    });
+  });
+
   it("keeps navigation and scrollable month/year dropdowns inside the dialog", async () => {
     const user = userEvent.setup();
     const view = render(

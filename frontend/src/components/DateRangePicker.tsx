@@ -87,6 +87,7 @@ function AudioRangeTimeline({
     value.start.getTime(),
     value.end.getTime(),
   ]);
+  const keyboardAdjustmentRef = useRef(false);
   const domainStart = domain.start.getTime();
   const domainEnd = domain.end.getTime();
   const domainDuration = Math.max(1, domainEnd - domainStart);
@@ -112,7 +113,8 @@ function AudioRangeTimeline({
     const snapped = snapAudioRange(
       [next[0], next[1]],
       [domainStart, domainEnd],
-      available.map((item) => ({
+      // Keyboard steps must remain precise even inside a coarse audio bin.
+      keyboardAdjustmentRef.current ? [] : available.map((item) => ({
         start: item.start.getTime(),
         end: item.end.getTime(),
       })),
@@ -168,6 +170,12 @@ function AudioRangeTimeline({
           value={sliderValue}
           onValueChange={setSliderValue}
           onValueCommit={commit}
+          onKeyDownCapture={() => {
+            keyboardAdjustmentRef.current = true;
+          }}
+          onPointerDownCapture={() => {
+            keyboardAdjustmentRef.current = false;
+          }}
           thumbLabels={["Range start", "Range end"]}
           aria-label="Selected audio range"
         />
