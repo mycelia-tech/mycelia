@@ -11,9 +11,9 @@ import { enqueueJob } from "@/lib/jobs/queue.ts";
 import {
   type MediaKnowledgeConfig,
   type MediaRecognitionProfile,
-  zMediaKnowledgeConfig,
   zMediaRecognitionProfile,
 } from "@myceliasdk/media.ts";
+import { bindMediaConfig } from "@/lib/media/provider-settings.server.ts";
 import type {
   MediaEvent,
   MediaEventLink,
@@ -409,7 +409,7 @@ export function mediaEventJobId(input: {
 
 async function loadConfig(): Promise<MediaKnowledgeConfig> {
   const config = await getServerConfig();
-  return zMediaKnowledgeConfig.parse(config.mediaKnowledge ?? {});
+  return bindMediaConfig(config);
 }
 
 function selectProfile(
@@ -419,6 +419,11 @@ function selectProfile(
   const id = requestedId ?? config.activeProfileId;
   const profile = config.profiles.find((entry) => entry.id === id);
   if (!profile) throw new Error("Media event provider profile was not found");
+  if (profile.providerType === "openai-compatible") {
+    throw new Error(
+      "This profile supports individual photo analysis, not multi-photo event analysis",
+    );
+  }
   if (!profile.enabled) {
     throw new Error("Media event provider profile is disabled");
   }
@@ -431,6 +436,10 @@ function maybeSelectProfile(
 ): MediaRecognitionProfile | undefined {
   if (requestedId) return selectProfile(config, requestedId);
   if (!config.enabled || !config.activeProfileId) return undefined;
+  if (
+    config.profiles.find((profile) => profile.id === config.activeProfileId)
+      ?.providerType === "openai-compatible"
+  ) return undefined;
   return selectProfile(config);
 }
 

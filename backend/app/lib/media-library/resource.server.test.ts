@@ -43,6 +43,27 @@ const googleProfile = {
   allowGlobalPhotoAnalysis: false,
 };
 
+Deno.test("ready photos require explicit reanalysis selection", () => {
+  assertEquals(
+    recognitionEligibilityQuery("owner").status.$in.includes("ready"),
+    false,
+  );
+  assertEquals(
+    recognitionEligibilityQuery("owner", true).status.$in.includes("ready"),
+    true,
+  );
+});
+
+Deno.test("ordinary recognition excludes published results even after a failed replacement", () => {
+  assertEquals(recognitionEligibilityQuery("owner").currentRunId, {
+    $exists: false,
+  });
+  assertEquals(
+    recognitionEligibilityQuery("owner", true).currentRunId,
+    undefined,
+  );
+});
+
 const selfHostedProfile = {
   id: "self-hosted-media",
   name: "Self-hosted Photo Knowledge",
@@ -417,6 +438,7 @@ Deno.test("ignore processing accepts explicit and all-matching selections", () =
 Deno.test("recognition eligibility excludes ready, active, deleting, and ignored assets", () => {
   assertEquals(recognitionEligibilityQuery("admin"), {
     owner: "admin",
+    currentRunId: { $exists: false },
     kind: "image",
     "preview.fileId": { $type: "objectId" },
     derivedDeletionPending: { $exists: false },
@@ -490,6 +512,7 @@ Deno.test("media summary exposes mutually observable queue and attention counts"
   });
   assertEquals(queries.unprocessed, {
     owner: "alice",
+    currentRunId: { $exists: false },
     kind: "image",
     recognitionIgnoredAt: { $exists: false },
     status: { $nin: ["ready", "queued", "processing"] },

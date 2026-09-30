@@ -142,6 +142,28 @@ profiles use Vertex visual understanding/embedding plus strict-EU Vision OCR;
 self-hosted profiles receive the same fixed visual-understanding + OCR request
 without a Google call. Global labels/objects are excluded from this bulk path.
 
+General vision connections are configured at `/settings/photo-analysis`.
+They reference `llmProfiles.profiles[].id`, share the text-provider limiter,
+and use an explicit model rather than text aliases. New photo-only connections
+are excluded from text routing. Metadata-only settings/history reads never
+test an external model. **Test image** requires explicit consent and sends a
+synthetic PNG. Photo jobs send sanitized previews, accept descriptions without
+embeddings, store unknown monetary cost as `null`, and retry only HTTP 429
+(at most three requests). Timeouts remain outcome-unknown, with no automatic
+billable repetition. Explicit reanalysis binds its new run to the immutable
+batch receipt while leaving the old accepted projection intact until success.
+The exact batch preview displays the bound endpoint, model, language and output
+token limit. Unknown-priced providers have no enforced monetary ceiling; the
+photo-count and token limits are not a dollar budget. Results remain visible
+after a failed replacement and are excluded from ordinary unprocessed batches.
+
+`externalServices.google.enabled` defaults to `false`, independently of ADC or
+provider configuration. It gates Google token acquisition and direct/brokered
+Gemini inference; enabling media analysis does not enable Google. The optional
+Google settings page has a separate explicit opt-in. No credentials, originals,
+or historical results are removed by this switch. Existing paused recognition
+workers remain paused until resumed in Jobs; saving a provider starts no batch.
+
 The dependency watchdog uses its own one-connection MongoDB pool. Long-running
 imports and worker rebuilds may make ordinary queries slower, but they must not
 starve the watchdog or cause `[SELF-HEAL]` restarts from an application-pool
@@ -339,8 +361,10 @@ merely by starting a local scan.
 
 #### Disabling Google without deleting media
 
-An expired credit is not an application-level stop switch. To stop the existing
-Google photo path, disable its profile in Google Cloud settings. If it is the
+An expired credit is not an application-level stop switch. Set the global
+Google switch off in optional Google settings (`externalServices.google.enabled:
+false`) and disable its photo profile. On older deployments without this switch,
+disable all Google/Gemini profiles and environment fallbacks; if Google is the
 only recognition provider, also set `mediaKnowledge.enabled` to false. Local
 uploads, folder import, previews and stored results remain available.
 
@@ -349,12 +373,13 @@ When no non-Google photo work shares the queues, pause `mediaRecognition` and
 `mediaRecognitionBatch` through Jobs as an additional durable safeguard. Pause
 stops new work; a provider request that already started may still finish. Do not
 clear queues, delete history, remove originals or restart MongoDB/Redis to stop
-cloud processing. Disable Google/Gemini text profiles separately, including any
-Google environment fallback. This does not disable APIs in the Google account.
+cloud processing. The global switch gates token acquisition and the final Google
+network boundary, including photo events with a previously prepared token.
+This does not disable APIs in the Google account.
 
 Re-enabling photo queues later requires a deliberate review of their pending
 provider snapshots; an old Google batch must not silently become a local-model
-batch. The proposed general connection and results-review feature is described
+batch. The general connection and results-review feature is described
 in the [provider-neutral photo design](docs/superpowers/specs/2026-09-30-provider-neutral-photo-analysis-design.md);
 that document is a design, not a claim that the new adapter is deployed.
 

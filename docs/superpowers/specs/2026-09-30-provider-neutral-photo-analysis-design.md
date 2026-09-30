@@ -1,6 +1,8 @@
 # Provider-neutral photo analysis and review
 
-Status: proposed implementation design; awaiting written-spec review.
+Status: implemented and reviewed in the feature worktree. Focused verification
+passes; the full frontend suite retains one unrelated pre-existing audio stats
+test failure. Not merged into UAT or deployed by this implementation.
 
 ## Intent and agreed scope
 
@@ -15,7 +17,7 @@ previews, EXIF/GPS, Google results, analysis history, Timeline and Map links. Do
 not reimport, regenerate, delete, or send existing photos to another provider
 merely because configuration changes.
 
-## Current implementation
+## Baseline before implementation
 
 - `/media` supports uploads, mounted-folder sync, hash deduplication and local
   metadata/previews independently of recognition being enabled.

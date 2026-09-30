@@ -59,13 +59,17 @@ your own words.
   interrupted confirmation has a bounded seven-day recovery lease. Originals
   can later be removed with a preview-and-confirm receipt while previews,
   metadata, and analysis remain.
-- Recognition is provider-neutral and can be queued separately from import. Its
-  primary Google preset uses multimodal Gemini Flash-Lite through Vertex AI in
-  the EU multi-region for Russian structured visual descriptions, plus
-  `gemini-embedding-001` in `europe-west4` for semantic search. The same Open
-  Media API contract supports a self-hosted visual model.
+- Recognition is provider-neutral and can be queued separately from import.
+  **Settings → Photo analysis** reuses an existing LLM connection or creates a
+  photo-only OpenAI-compatible vision connection, with an optional API key,
+  explicit model, output language, and bounded concurrency. Google is optional
+  and disabled by default through `externalServices.google.enabled`; saved
+  Google results remain readable and locally searchable. The custom self-hosted
+  Open Media API remains supported.
 - Bulk Photo analysis uses one fixed package: visual understanding plus OCR. A
-  Google profile runs Vertex visual understanding/embedding and strict-EU Cloud
+  general vision profile returns a description and model-extracted visible text
+  without requiring embeddings. Its price is shown as unknown, not zero. An
+  explicitly enabled Google profile runs Vertex visual understanding/embedding and strict-EU Cloud
   Vision OCR; a self-hosted profile requests the same two features only from its
   configured endpoint and does not call Google. Global Vision labels/objects are
   excluded from this batch action. Versioned descriptions, embeddings, OCR
@@ -76,6 +80,10 @@ your own words.
   analysis while the read-only mounted original is never deleted. Photos can
   also be ignored for future recognition and later returned without changing
   files or existing results.
+- **Analysis & results** includes result-provider and import-batch filters,
+  server-side select-all, and explicit **Reanalyze ready photos**. Reanalysis
+  creates a new version; failed attempts never replace the accepted result.
+  Photo details have Description, Text, Metadata, and History sections.
   Recognition reservations temporarily block these storage mutations. The main
   UAT stack opts into read-only source and ADC mounts with
   `docker-compose.media-uat.yml`; real host paths remain in `.env`. See
@@ -96,7 +104,9 @@ your own words.
   shared capture-date range picker. Its **Unprocessed by
   capture-date range** workflow can target every eligible asset matching the
   server-side filters without being limited to the visible page, then shows an
-  exact preview and ceiling before confirmation. Unmatched event candidates
+  exact preview and, where pricing is known, a ceiling before confirmation.
+  General model previews state when no monetary ceiling can be enforced.
+  Unmatched event candidates
   remain visible as single photos instead of being silently omitted.
 - Large mounted folders use a visual folder picker and resumable scan → review →
   confirm campaigns. The local root is selected by default; separately configured

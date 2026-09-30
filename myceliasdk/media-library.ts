@@ -43,6 +43,10 @@ const zMediaAssetIdString = z.string().regex(
 );
 
 export const zMediaRecognitionSelection = z.object({
+  reanalyze: z.boolean().optional(),
+  providerProfileId: z.string().trim().min(1).optional(),
+  importCampaignId: z.string().refine((value) => /^[a-f0-9]{24}$/i.test(value))
+    .optional(),
   mode: z.enum(["all_matching", "explicit"]),
   inventoryFilter: zMediaInventoryFilter.default("unprocessed"),
   placement: zMediaPlacementFilter.default("all"),

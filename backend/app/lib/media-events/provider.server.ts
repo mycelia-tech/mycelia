@@ -7,6 +7,7 @@ import {
 } from "@myceliasdk/media-events.ts";
 import { env } from "#/env.ts";
 import {
+  fetchGoogleWithPolicy,
   getGoogleAccessToken,
   sanitizeGoogleError,
 } from "@/lib/gcp/auth.server.ts";
@@ -380,7 +381,7 @@ async function withTimeout<T>(
   timeoutMs: number,
   message: string,
 ): Promise<T> {
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
   });
@@ -398,6 +399,11 @@ async function withTimeout<T>(
 export async function prepareMediaEventProviderCall(
   profile: MediaRecognitionProfile,
 ): Promise<PreparedMediaEventProviderCall> {
+  if (profile.providerType === "openai-compatible") {
+    throw new Error(
+      "General vision profiles analyze individual photos; event analysis requires a compatible event connector",
+    );
+  }
   if (profile.providerType === "self-hosted") {
     return { providerType: "self-hosted" };
   }
@@ -423,7 +429,7 @@ async function analyzeGoogle(
   },
 ): Promise<NormalizedMediaEventAnalysis> {
   await boundary.assertPermission();
-  const response = await fetch(
+  const response = await fetchGoogleWithPolicy(
     googleVertexModelUrl(
       input.profile.projectId,
       input.profile.vertexModel,

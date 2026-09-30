@@ -22,6 +22,8 @@ import {
   reconcileRecognitionBatch,
   releaseRecognitionReservations,
   reserveRecognitionAssets,
+  resolvedRecognitionSelectionScope,
+  stageRecognitionAssetAfterCancellation,
 } from "./resource.server.ts";
 import {
   activateSingleMediaRecognitionReservation,
@@ -36,6 +38,170 @@ import {
 } from "./recognition-reservation-fence.server.ts";
 
 const COLLECTION = "media_recognition_asset_reservations";
+
+Deno.test(
+  "bulk inventory scope keeps provider, import duplicates and owner boundaries",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const campaignId = new ObjectId();
+    const selected = new ObjectId(),
+      otherImport = new ObjectId(),
+      otherProvider = new ObjectId(),
+      otherOwner = new ObjectId();
+    const createdAt = new Date("2026-01-01");
+    await db.collection("media_folder_campaigns").insertOne({
+      _id: campaignId,
+      owner: "alice",
+    });
+    await db.collection("media_analysis_runs").insertMany([
+      {
+        _id: "provider-a-run" as any,
+        state: "ready",
+        providerSnapshot: { id: "provider-a" },
+      },
+      {
+        _id: "provider-b-run" as any,
+        state: "ready",
+        providerSnapshot: { id: "provider-b" },
+      },
+    ]);
+    await db.collection("media_assets").insertMany([
+      {
+        _id: selected,
+        owner: "alice",
+        kind: "image",
+        currentRunId: "provider-a-run",
+        createdAt,
+      },
+      {
+        _id: otherImport,
+        owner: "alice",
+        kind: "image",
+        currentRunId: "provider-a-run",
+        createdAt,
+      },
+      {
+        _id: otherProvider,
+        owner: "alice",
+        kind: "image",
+        currentRunId: "provider-b-run",
+        createdAt,
+      },
+      {
+        _id: otherOwner,
+        owner: "bob",
+        kind: "image",
+        currentRunId: "provider-a-run",
+        createdAt,
+      },
+    ]);
+    await db.collection("media_folder_items").insertMany([
+      { campaignId, state: "duplicate", duplicateAssetId: selected },
+      { campaignId, state: "imported", assetId: otherProvider },
+      { campaignId, state: "imported", assetId: otherOwner },
+    ]);
+    const selection = {
+      mode: "all_matching" as const,
+      inventoryFilter: "all" as const,
+      providerProfileId: "provider-a",
+      importCampaignId: String(campaignId),
+    };
+    const scope = await resolvedRecognitionSelectionScope(
+      db,
+      "alice",
+      new Date(),
+      selection,
+    );
+    assertEquals(
+      (await db.collection("media_assets").find(scope).toArray()).map((a) =>
+        String(a._id)
+      ),
+      [String(selected)],
+    );
+    await db.collection("media_assets").updateMany(scope, {
+      $set: { recognitionIgnoredAt: new Date() },
+    });
+    assertEquals(
+      await db.collection("media_assets").countDocuments({
+        recognitionIgnoredAt: { $exists: true },
+      }),
+      1,
+    );
+    const foreignScope = await resolvedRecognitionSelectionScope(
+      db,
+      "bob",
+      new Date(),
+      selection,
+    );
+    assertEquals(
+      await db.collection("media_assets").countDocuments(foreignScope),
+      0,
+    );
+  }),
+);
+
+Deno.test(
+  "cancelled reanalysis restores the accepted result instead of leaving queued",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const assetId = new ObjectId();
+    await db.collection("media_assets").insertOne({
+      _id: assetId,
+      owner: "review-owner",
+      status: "queued",
+      currentRunId: "old-success",
+    });
+    assertEquals(
+      await stageRecognitionAssetAfterCancellation(db, {
+        owner: "review-owner",
+      }, { assetId }),
+      true,
+    );
+    const asset = await db.collection("media_assets").findOne({ _id: assetId });
+    assertEquals(asset?.status, "ready");
+    assertEquals(asset?.currentRunId, "old-success");
+  }),
+);
+
+Deno.test(
+  "a failed reanalysis does not count the older ready projection as success",
+  withFixtures(["Mongo"], async ({ db }) => {
+    const assetId = new ObjectId(),
+      batchId = new ObjectId(),
+      jobId = new ObjectId();
+    const now = new Date();
+    const batch = {
+      _id: batchId,
+      owner: "review-owner",
+      status: "running",
+      selection: { reanalyze: true },
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.collection("media_recognition_batches").insertOne(batch);
+    await db.collection("media_assets").insertOne({
+      _id: assetId,
+      owner: batch.owner,
+      status: "ready",
+      currentRunId: "old-success",
+    });
+    await db.collection("jobs").insertOne({
+      _id: jobId,
+      state: "failed",
+      failedReason: "new attempt failed",
+    });
+    await db.collection("media_recognition_batch_items").insertOne({
+      _id: new ObjectId(),
+      owner: batch.owner,
+      batchId,
+      assetId,
+      jobId,
+      state: "processing",
+      updatedAt: now,
+    });
+    const result = await reconcileRecognitionBatch(db, batch);
+    assertEquals(result.counts.ready, 0);
+    assertEquals(result.counts.failed, 1);
+  }),
+);
 
 type TestIndex = {
   name?: string;

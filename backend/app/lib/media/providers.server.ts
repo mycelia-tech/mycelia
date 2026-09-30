@@ -6,7 +6,14 @@ import type {
 } from "@myceliasdk/media.ts";
 import { zMediaVisualUnderstanding } from "@myceliasdk/media.ts";
 import { env } from "#/env.ts";
+import { getServerConfig } from "@/lib/config/serverConfig.server.ts";
+import { assertGoogleAccess } from "@myceliasdk/google-policy.ts";
 import {
+  analyzeGeneralPhoto,
+  resolvePhotoConnection,
+} from "./general-provider.ts";
+import {
+  fetchGoogleWithPolicy,
   getGoogleAccessToken,
   sanitizeGoogleError,
 } from "@/lib/gcp/auth.server.ts";
@@ -59,9 +66,16 @@ export type NormalizedMediaAnalysis = {
     modelVersion?: string;
     responseId?: string;
     processedAt: string;
+    promptVersion?: string;
+    schemaVersion?: string;
   };
   usage: {
-    service: "google-cloud" | "vision" | "document-ai" | "self-hosted";
+    service:
+      | "google-cloud"
+      | "vision"
+      | "document-ai"
+      | "self-hosted"
+      | "openai-compatible";
     ocrUnits: number;
     labelUnits: number;
     objectUnits: number;
@@ -69,7 +83,7 @@ export type NormalizedMediaAnalysis = {
     outputTokens: number;
     reasoningTokens: number;
     embeddingTokens: number;
-    grossListPriceUsd: number;
+    grossListPriceUsd: number | null;
   };
 };
 
@@ -81,7 +95,8 @@ export type MediaQueryEmbedding = {
   grossListPriceUsd: number;
 };
 
-type AnalyzeInput = {
+export type AnalyzeInput = {
+  beforeDispatch?: () => Promise<void>;
   profile: MediaRecognitionProfile;
   bytes: Uint8Array;
   mimeType: string;
@@ -289,8 +304,12 @@ function normalizeDocumentAi(response: any): NormalizedMediaPage[] {
 }
 
 async function googleRequest(url: string, projectId: string, body: unknown) {
+  assertGoogleAccess(await getServerConfig(), {
+    baseUrl: url,
+    providerType: "google-cloud",
+  });
   const token = await getGoogleAccessToken();
-  const response = await fetch(url, {
+  const response = await fetchGoogleWithPolicy(url, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${token}`,
@@ -299,6 +318,7 @@ async function googleRequest(url: string, projectId: string, body: unknown) {
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(90_000),
+    redirect: "error",
   });
   const text = await response.text();
   if (!response.ok) {
@@ -759,6 +779,11 @@ export async function embedMediaQuery(
   profile: MediaRecognitionProfile,
   query: string,
 ): Promise<MediaQueryEmbedding> {
+  if (profile.providerType === "openai-compatible") {
+    throw new Error(
+      "This photo provider uses local text search; embeddings are not configured",
+    );
+  }
   return profile.providerType === "google-cloud"
     ? await embedGoogleText(profile, query, "RETRIEVAL_QUERY")
     : await embedSelfHostedQuery(profile, query);
@@ -767,6 +792,19 @@ export async function embedMediaQuery(
 export async function analyzeWithMediaProvider(
   input: AnalyzeInput,
 ): Promise<NormalizedMediaAnalysis> {
+  if (input.profile.providerType === "openai-compatible") {
+    const profile = input.profile;
+    const connection = resolvePhotoConnection(await getServerConfig(), profile);
+    return await analyzeGeneralPhoto(input, connection, {
+      beforeDispatch: async () => {
+        await input.beforeDispatch?.();
+        Object.assign(
+          connection,
+          resolvePhotoConnection(await getServerConfig(), profile),
+        );
+      },
+    });
+  }
   return input.profile.providerType === "google-cloud"
     ? await analyzeGoogle({ ...input, profile: input.profile })
     : await analyzeSelfHosted({ ...input, profile: input.profile });

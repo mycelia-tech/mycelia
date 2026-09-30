@@ -31,7 +31,7 @@ const capability: JobCapability = {
   policies: [
     { resource: "media/processAsset", action: "process", effect: "allow" },
   ],
-  maxConcurrency: 1,
+  maxConcurrency: 8,
   use: async (job: Job<JobData>) => {
     const jwt = Deno.env.get("MYCELIA_JWT");
     const myceliaUrl = Deno.env.get("MYCELIA_URL");

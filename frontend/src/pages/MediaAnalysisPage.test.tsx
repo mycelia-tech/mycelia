@@ -88,7 +88,7 @@ function LocationProbe() {
 }
 
 function baseResponse(resource: string, input: any) {
-  if (resource === "media" && input.action === "status") {
+  if (resource === "media" && input.action === "photoSettings") {
     return Promise.resolve(status);
   }
   if (resource === "media-library" && input.action === "summary") {
@@ -138,6 +138,82 @@ describe("MediaAnalysisPage", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("requires explicit reanalysis for ready photos and shows unknown external cost", async () => {
+    mockCallResource.mockImplementation((resource, input) => {
+      if (resource === "media" && input.action === "photoSettings") {
+        return Promise.resolve({
+          enabled: true,
+          activeProfileId: "local",
+          profiles: [{
+            id: "local",
+            name: "Local vision",
+            providerType: "openai-compatible",
+            enabled: true,
+          }],
+        });
+      }
+      const base = baseResponse(resource, input);
+      if (base) return base;
+      if (input.action === "listAssets") {
+        return Promise.resolve({
+          total: 1,
+          assets: [{
+            ...stagedAssets[0],
+            status: "failed",
+            currentRunId: "old-success",
+          }],
+        });
+      }
+      if (input.action === "previewRecognitionBatch") {
+        return Promise.resolve({
+          previewId: "333333333333333333333333",
+          eligibleCount: 1,
+          costKnown: false,
+          authorizedGrossUsd: 0,
+          profile: {
+            endpoint: "http://local.test/v1",
+            model: "vision-test",
+            maxOutputTokens: 1600,
+            language: "Russian",
+          },
+        });
+      }
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    renderPage("/media/analysis?status=ready");
+    const photo = await screen.findByRole("checkbox", {
+      name: "Select first.jpg",
+    });
+    expect(photo).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Photo analysis settings" }))
+      .toHaveAttribute("href", "/settings/photo-analysis");
+    await user.click(
+      screen.getByRole("checkbox", { name: "Reanalyze ready photos" }),
+    );
+    await waitFor(() => expect(photo).toBeEnabled());
+    await user.click(photo);
+    await user.click(
+      screen.getByRole("button", { name: "Review analysis batch (1)" }),
+    );
+    await screen.findByText(/cost unknown/);
+    expect(screen.getByText(/no monetary ceiling enforced/))
+      .toBeInTheDocument();
+    expect(screen.getByText(/http:\/\/local.test\/v1.*vision-test.*1600/))
+      .toBeInTheDocument();
+    expect(mockCallResource).toHaveBeenCalledWith(
+      "media-library",
+      expect.objectContaining({
+        action: "previewRecognitionBatch",
+        selection: expect.objectContaining({
+          reanalyze: true,
+          inventoryFilter: "ready",
+        }),
+      }),
+    );
+    expect(screen.queryByText(/maximum \$0.00/)).not.toBeInTheDocument();
   });
 
   it("does not let a stale filter response replace the newest result", async () => {
@@ -472,7 +548,7 @@ describe("MediaAnalysisPage", () => {
         ],
       };
       mockCallResource.mockImplementation((resource, input) => {
-        if (resource === "media" && input.action === "status") {
+        if (resource === "media" && input.action === "photoSettings") {
           return Promise.resolve(statusWithAlternateProfile);
         }
         const base = baseResponse(resource, input);
