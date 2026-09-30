@@ -12,6 +12,12 @@ file or `gpu/docker-compose.portainer.yml` to create a remote diarization stack.
 
 ## Services
 
+For one Whisper model shared between existing file transcription and Omi live
+audio, see [SHARED_AUDIO.md](SHARED_AUDIO.md). The opt-in
+`docker-compose.shared-live.yml` overlay adds scheduling and an internal live
+adapter; WhisperLiveKit remains a separate Compose project. The existing
+Portainer compose by itself retains the batch-only deployment.
+
 ### Whisper ASR
 - **Image**: `onerahmet/openai-whisper-asr-webservice:v1.9.1-gpu`
 - **Purpose**: Audio transcription using OpenAI Whisper

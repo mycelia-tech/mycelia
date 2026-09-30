@@ -1,0 +1,7 @@
+services:
+  app:
+    image: mycelia/omiloc-app-audio-compat-r4:2026-10-01
+    restart: unless-stopped
+    build:
+      context: ${OMI_COMPAT_CONTEXT:?Set OMI_COMPAT_CONTEXT to the absolute gpu/omi directory}
+      dockerfile: Dockerfile

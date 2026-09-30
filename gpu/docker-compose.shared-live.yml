@@ -1,0 +1,48 @@
+# Overlay for docker-compose.portainer.yml. Keep the existing project/volume name.
+# WLK is a separate project, joined through the private sky-audio network.
+services:
+  whisper:
+    image: ${SHARED_WHISPER_IMAGE:-sky-mycelia-whisper:shared-live-v1}
+    build:
+      context: ./whisper_shared
+    environment:
+      LIVE_ASR_TOKEN: ${LIVE_ASR_TOKEN:?Set a separate internal live ASR token}
+      ASR_QUANTIZATION: ${ASR_QUANTIZATION:?Set the existing Whisper precision}
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      start_period: 90s
+      retries: 3
+  proxy:
+    image: ${SHARED_PROXY_IMAGE:-sky-mycelia-stt-proxy:shared-live-v1}
+  live-proxy:
+    image: ${SHARED_PROXY_IMAGE:-sky-mycelia-stt-proxy:shared-live-v1}
+    build:
+      context: ./proxy
+    command: [uvicorn, live_server:app, --host, 0.0.0.0, --port, '8002']
+    environment:
+      LIVE_ASR_TOKEN: ${LIVE_ASR_TOKEN:?Set a separate internal live ASR token}
+      WHISPER_SERVICE_URL: http://whisper:9000
+      ASR_MODEL: ${ASR_MODEL:-large-v3-turbo}
+      LIVE_ASR_TIMEOUT_SECONDS: '60'
+    depends_on:
+      - whisper
+    networks:
+      default: {}
+      shared-audio:
+        aliases: [live-asr]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+    restart: unless-stopped
+networks:
+  shared-audio:
+    external: true
+    name: sky-audio
+volumes:
+  whisper_cache:
+    external: true
+    name: ${WHISPER_CACHE_VOLUME:?Set the existing Whisper cache volume name}

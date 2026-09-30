@@ -5,6 +5,19 @@ development mode with hot reload.
 
 ## Development Setup
 
+### Shared GPU audio service
+
+The optional [shared audio deployment](gpu/SHARED_AUDIO.md) adds WhisperLiveKit
+without loading another Whisper model. Its source is in `gpu/whisper_shared`,
+`gpu/livekit`, and the private adapter `gpu/proxy/live_server.py`. The standard
+file API remains on port 8001; live PCM uses authenticated WebSocket port 8010
+over Tailscale. The live adapter's port 8002 is Docker-internal only.
+
+GPU service code is built into release images and does not reload from this
+checkout. Use the shared-audio deployment and drain procedure; restarting the
+Mycelia frontend/backend does not update these services. Verify real batch and
+streaming inference in addition to health, scheduler status, and readiness.
+
 ### Option A: Docker with Hot Reload
 
 The fastest way to get a development environment with hot reload:
