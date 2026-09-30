@@ -130,7 +130,9 @@ your own words.
   rebuild operations. Chat receives only the read-only search tool.
 - Separate `mycelia-rag` Compose project and volumes; Qdrant is additional
   rebuildable storage and never replaces canonical MongoDB. See
-  [RAG_QDRANT.md](docs/RAG_QDRANT.md).
+  [RAG_QDRANT.md](docs/RAG_QDRANT.md) for architecture and
+  [RAG_UI_MANUAL.md](docs/RAG_UI_MANUAL.md) for the Russian operator/UI
+  walkthrough and acceptance checks.
 
 ### Object Management
 

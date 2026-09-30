@@ -406,6 +406,10 @@ documented in `DEVELOPMENT.md`. Qdrant/RAG remain in their separate project.
 
 ## Product surfaces
 
+For a screen-by-screen operator walkthrough, status interpretation, and a
+privacy-safe acceptance checklist, see the Russian
+[RAG UI manual](RAG_UI_MANUAL.md).
+
 - **Search** (`/search`) runs hybrid, semantic-only, or lexical-only queries,
   applies source/time filters, displays scores and projection freshness, and
   links each result to canonical Mycelia data.
