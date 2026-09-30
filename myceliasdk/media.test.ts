@@ -32,7 +32,7 @@ Deno.test("general photo profiles reference a provider without carrying credenti
 
 Deno.test("Google services default off independently of configured credentials", () => {
   const config = zServerConfig.parse({
-    features: { enable_experimental_processing: false },
+    features: { enable_speaker_identification: false },
     createdAt: new Date(),
     updatedAt: new Date(),
   });

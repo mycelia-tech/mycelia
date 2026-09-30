@@ -1,14 +1,21 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "@std/assert";
 import { zServerConfig } from "./config.ts";
 
 const base = {
   features: {
-    enable_experimental_processing: false,
     enable_speaker_identification: true,
   },
   createdAt: new Date(),
   updatedAt: new Date(),
 };
+
+Deno.test("server config ignores retired flags in saved configurations", () => {
+  const parsed = zServerConfig.parse({
+    ...base,
+    features: { ...base.features, enable_experimental_processing: true },
+  });
+  assertEquals(parsed.features, { enable_speaker_identification: true });
+});
 
 Deno.test("server config accepts diarization provider profiles", () => {
   const parsed = zServerConfig.parse({

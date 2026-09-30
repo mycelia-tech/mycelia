@@ -14,7 +14,7 @@ import {
 } from "./general-provider.ts";
 
 const server = zServerConfig.parse({
-  features: { enable_experimental_processing: false },
+  features: { enable_speaker_identification: false },
   createdAt: new Date(),
   updatedAt: new Date(),
   llmProfiles: {

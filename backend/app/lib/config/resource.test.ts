@@ -26,7 +26,6 @@ Deno.test(
     }) as ServerConfig;
 
     // When DB is empty, config.yml values take precedence over schema defaults
-    // config.yml has enable_experimental_processing: true
     expect(result).toBeDefined();
     expect(result.features).toBeDefined();
   }),
@@ -43,7 +42,7 @@ Deno.test(
         apiKey: "sk-test",
       },
       features: {
-        enable_experimental_processing: true,
+        enable_speaker_identification: true,
       },
       workers: {},
       createdAt: new Date(),
@@ -59,7 +58,7 @@ Deno.test(
       action: "get",
     }) as ServerConfig;
 
-    expect(result.features.enable_experimental_processing).toBe(true);
+    expect(result.features.enable_speaker_identification).toBe(true);
     expect(result.inference?.baseUrl).toBe("https://api.bigbrother.com");
   }),
 );
@@ -73,13 +72,13 @@ Deno.test(
       action: "patch",
       path: "features",
       updates: {
-        enable_experimental_processing: true,
+        enable_speaker_identification: true,
       },
     });
 
     const result = await configResource({
       action: "get",
-      path: "features.enable_experimental_processing",
+      path: "features.enable_speaker_identification",
     });
 
     expect(result).toBe(true);

@@ -240,9 +240,6 @@ export const zServerConfig = z.object({
   // Deprecated: kept for backward compatibility
   inference: zInferenceProviderConfig.optional().nullable(),
   features: z.object({
-    enable_experimental_processing: z.boolean().describe(
-      "Enable experimental processing of conversations. This feature is currently in development and may not work as expected.",
-    ),
     enable_speaker_identification: z.boolean().default(false).describe(
       "Enable speaker identification to recognize enrolled voices in diarization results. When enabled, diarization will match segments against enrolled speaker profiles.",
     ),

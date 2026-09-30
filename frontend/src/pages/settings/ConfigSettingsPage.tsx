@@ -4,31 +4,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Save, Loader2, Settings, Database, FileText, Zap, RefreshCw } from "lucide-react";
+import { Save, Loader2, Settings, FileText, Zap, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ServerConfig } from "@/types/config";
 
 const configFormSchema = z.object({
   inference: z.object({
     baseUrl: z.string().url("Must be a valid URL").optional(),
     apiKey: z.string().optional(),
   }).optional(),
-  features: z.object({
-    enable_experimental_processing: z.boolean(),
-  }),
   rawConfig: z.string().optional(),
 });
 
 type ConfigFormData = z.infer<typeof configFormSchema>;
 
 const ConfigSettingsPage = () => {
-  const [config, setConfig] = useState<ServerConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,9 +33,6 @@ const ConfigSettingsPage = () => {
       inference: {
         baseUrl: "",
         apiKey: "",
-      },
-      features: {
-        enable_experimental_processing: false,
       },
       rawConfig: "",
     },
@@ -57,15 +47,10 @@ const ConfigSettingsPage = () => {
         action: "get",
       });
 
-      setConfig(result);
-      
       form.reset({
         inference: {
           baseUrl: result.inference?.baseUrl || "",
           apiKey: result.inference?.apiKey || "",
-        },
-        features: {
-          enable_experimental_processing: result.features?.enable_experimental_processing || false,
         },
         rawConfig: JSON.stringify(result, null, 2),
       });
@@ -94,9 +79,7 @@ const ConfigSettingsPage = () => {
         });
       } else {
         // Save form data as patches
-        const updates: any = {
-          features: data.features,
-        };
+        const updates: { inference?: ConfigFormData["inference"] } = {};
 
         if (data.inference?.baseUrl || data.inference?.apiKey) {
           updates.inference = data.inference;
@@ -206,35 +189,6 @@ const ConfigSettingsPage = () => {
                     type="password"
                     placeholder="Your API key"
                     {...form.register("inference.apiKey")}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Feature Flags */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Database className="w-5 h-5" />
-                  Feature Flags
-                </CardTitle>
-                <CardDescription>
-                  Enable or disable experimental features
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Experimental Processing</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Enable experimental processing of conversations
-                    </p>
-                  </div>
-                  <Switch
-                    checked={form.watch("features.enable_experimental_processing")}
-                    onCheckedChange={(checked) =>
-                      form.setValue("features.enable_experimental_processing", checked)
-                    }
                   />
                 </div>
               </CardContent>

@@ -2,12 +2,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { callResource } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, UserRound, FlaskConical } from "lucide-react";
+import { Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 interface ServerConfig {
   features: {
-    enable_experimental_processing?: boolean;
     enable_speaker_identification?: boolean;
   };
 }
@@ -89,35 +88,6 @@ const FeatureFlagsPage = () => {
             <p className="text-sm text-muted-foreground">
               When enabled, the diarization process will match audio segments against enrolled speaker profiles 
               and automatically label them in transcripts. Enroll voices in Settings → Voice Profiles.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <FlaskConical className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <CardTitle className="text-base">Experimental Processing</CardTitle>
-                  <CardDescription>
-                    Enable experimental conversation processing
-                  </CardDescription>
-                </div>
-              </div>
-              <Switch
-                checked={config?.features?.enable_experimental_processing ?? false}
-                onCheckedChange={(checked) => handleToggle("enable_experimental_processing", checked)}
-                disabled={updateMutation.isPending}
-              />
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <p className="text-sm text-muted-foreground">
-              Enable experimental features for conversation processing. These features are in development 
-              and may not work as expected.
             </p>
           </CardContent>
         </Card>

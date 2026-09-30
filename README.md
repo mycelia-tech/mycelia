@@ -233,6 +233,8 @@ your own words.
   configuration.
 - OpenTelemetry observability (optional).
 - Feature flags, access logging, and server configuration UI.
+  Feature Flags controls live speaker identification. The unused Experimental
+  Processing switch has been removed; legacy saved values are ignored.
 
 ### Integrations
 
