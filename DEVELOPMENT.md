@@ -337,6 +337,27 @@ record daily usage. Missing values retain the guarded default. Per-photo ledger
 reservations remain the final race-safe limit. No Google request is authorized
 merely by starting a local scan.
 
+#### Disabling Google without deleting media
+
+An expired credit is not an application-level stop switch. To stop the existing
+Google photo path, disable its profile in Google Cloud settings. If it is the
+only recognition provider, also set `mediaKnowledge.enabled` to false. Local
+uploads, folder import, previews and stored results remain available.
+
+Pause Google folder streams and cancel any unstarted confirmed Google batches.
+When no non-Google photo work shares the queues, pause `mediaRecognition` and
+`mediaRecognitionBatch` through Jobs as an additional durable safeguard. Pause
+stops new work; a provider request that already started may still finish. Do not
+clear queues, delete history, remove originals or restart MongoDB/Redis to stop
+cloud processing. Disable Google/Gemini text profiles separately, including any
+Google environment fallback. This does not disable APIs in the Google account.
+
+Re-enabling photo queues later requires a deliberate review of their pending
+provider snapshots; an old Google batch must not silently become a local-model
+batch. The proposed general connection and results-review feature is described
+in the [provider-neutral photo design](docs/superpowers/specs/2026-09-30-provider-neutral-photo-analysis-design.md);
+that document is a design, not a claim that the new adapter is deployed.
+
 The Media workspace uses progressive disclosure: the folder tree is collapsed
 until **Choose folder** is activated, while durable campaign progress remains
 visible. Status, placement, sorting, page/all-results selection, and processing
