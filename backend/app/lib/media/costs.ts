@@ -78,6 +78,11 @@ export function estimateMediaGrossUsd(
   tasks: MediaRecognitionTask[],
   profile: MediaRecognitionProfile,
 ): number {
+  if (profile.providerType === "openai-compatible" && kind !== "image") {
+    throw new Error(
+      "General vision supports photos only; select a PDF/OCR connector for this document",
+    );
+  }
   if (profile.providerType !== "google-cloud") return 0;
   if (kind === "pdf") {
     if (tasks.some((task) => task !== "ocr")) {

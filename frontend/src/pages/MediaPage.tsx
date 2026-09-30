@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MediaResultPanel } from "@/components/media/MediaResultPanel";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowUpDown,
@@ -1022,7 +1023,7 @@ export default function MediaPage() {
         <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
           <span>Recognition is off. Local import and metadata still work.</span>
           <MediaHint label="About disabled recognition">
-            Enable a provider in Settings → Google Cloud when you want visual
+            Enable a provider in Settings → Photo analysis when you want visual
             descriptions or OCR. Import, previews, EXIF/GPS, and deduplication
             remain local.
           </MediaHint>
@@ -2174,179 +2175,7 @@ export default function MediaPage() {
                 }}
               />
 
-              {detail.visual?.visualUnderstanding && (
-                <div className="space-y-4 rounded-md border border-primary/30 p-4">
-                  <div>
-                    <div className="text-lg font-semibold">
-                      {detail.visual.visualUnderstanding.shortCaption}
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm">
-                      {detail.visual.visualUnderstanding.description}
-                    </p>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <div className="rounded bg-muted p-3 text-sm">
-                      <div className="font-medium">Scene</div>
-                      <div>
-                        {detail.visual.visualUnderstanding.scene.summary}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {detail.visual.visualUnderstanding.scene.environment} ·
-                        {" "}
-                        {detail.visual.visualUnderstanding.scene.placeType} ·
-                        {" "}
-                        {detail.visual.visualUnderstanding.scene.timeOfDay}
-                      </div>
-                    </div>
-                    <div className="rounded bg-muted p-3 text-sm">
-                      <div className="font-medium">People</div>
-                      <div>
-                        Visible count:{" "}
-                        {detail.visual.visualUnderstanding.peopleCount}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        No identity inference
-                      </div>
-                    </div>
-                    <div className="rounded bg-muted p-3 text-sm">
-                      <div className="font-medium">Possible event</div>
-                      <div>
-                        {detail.visual.visualUnderstanding.possibleEvent ??
-                          "Not confidently identified"}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Overall confidence {Math.round(
-                          Number(detail.visual.visualUnderstanding.confidence) *
-                            100,
-                        )}%
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-2 font-medium">Objects</div>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.visual.visualUnderstanding.objects.map(
-                        (item: any, index: number) => (
-                          <Badge
-                            key={`${item.name}-${index}`}
-                            variant="secondary"
-                          >
-                            {item.name}
-                            {item.count ? ` ×${item.count}` : ""}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-2 font-medium">Activities</div>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.visual.visualUnderstanding.activities.map(
-                        (item: any, index: number) => (
-                          <Badge
-                            key={`${item.description}-${index}`}
-                            variant="outline"
-                          >
-                            {item.description}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-2 font-medium">Keywords</div>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.visual.visualUnderstanding.keywords.map(
-                        (keyword: string) => (
-                          <Badge key={keyword}>{keyword}</Badge>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  {detail.visual.visualUnderstanding.warnings?.length > 0 && (
-                    <div className="rounded border border-amber-500/40 p-3 text-sm">
-                      {detail.visual.visualUnderstanding.warnings.join(" · ")}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {detail.pages?.length > 0 && (
-                <div className="space-y-3">
-                  <div className="font-medium">OCR text</div>
-                  {detail.pages.map((page: any) => (
-                    <div key={page._id} className="rounded-md border p-3">
-                      <Badge variant="outline">Page {page.pageNumber}</Badge>
-                      <pre className="mt-2 max-h-72 whitespace-pre-wrap overflow-auto text-sm">
-                      {page.text || "No text detected"}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {detail.annotations?.length > 0 && (
-                <div className="space-y-2">
-                  <div className="font-medium">Annotations</div>
-                  <div className="flex flex-wrap gap-2">
-                    {detail.annotations.map((annotation: any) => (
-                      <Badge key={annotation._id} variant="secondary">
-                        {annotation.type}: {annotation.label}
-                        {Number.isFinite(annotation.confidence)
-                          ? ` ${Math.round(annotation.confidence * 100)}%`
-                          : ""}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {detail.runs?.length > 0 && (
-                <div className="space-y-2">
-                  <div className="font-medium">Recognition provenance</div>
-                  {detail.runs.map((run: any) => (
-                    <div
-                      key={run._id}
-                      className="rounded-md border p-3 text-sm"
-                    >
-                      <div className="flex flex-wrap gap-2">
-                        <Badge
-                          variant={run.state === "ready"
-                            ? "default"
-                            : "secondary"}
-                        >
-                          {run.state}
-                        </Badge>
-                        <span>
-                          {run.providerSnapshot?.name ?? "Unknown provider"}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-muted-foreground">
-                        {run.provenance?.service ?? "pending"} ·{" "}
-                        {run.provenance?.location ??
-                          "pending"}
-                        {run.provenance?.modelVersion
-                          ? ` · ${run.provenance.modelVersion}`
-                          : ""}
-                      </div>
-                      {run.usage && (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          input/output/reasoning/embedding tokens:{" "}
-                          {run.usage.inputTokens ??
-                            0}/{run.usage.outputTokens ??
-                            0}/
-                          {run.usage.reasoningTokens ?? 0}/
-                          {run.usage.embeddingTokens ?? 0} · OCR units:{" "}
-                          {run.usage.ocrUnits ?? 0}{" "}
-                          · estimated list price: ${Number(
-                            run.usage.grossListPriceUsd ?? 0,
-                          ).toFixed(4)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              <MediaResultPanel detail={detail} />
             </div>
           </DialogContent>
         )}

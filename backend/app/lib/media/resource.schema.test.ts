@@ -10,7 +10,26 @@ import {
   mediaPlacementFilterQuery,
   MediaResource,
   mediaSearchQuerySchema,
+  stageAnalysis,
 } from "./resource.server.ts";
+
+Deno.test("visual descriptions persist without an embedding", async () => {
+  const writes: unknown[] = [];
+  const db = {
+    collection: () => ({
+      updateOne: (...args: unknown[]) => {
+        writes.push(args);
+      },
+    }),
+  };
+  await stageAnalysis(db as unknown as Db, { _id: new ObjectId() }, "run", {
+    visualUnderstanding: { description: "tree" },
+    searchText: "tree",
+    pages: [],
+    annotations: [],
+  } as any);
+  assertEquals(writes.length, 1);
+});
 
 Deno.test("unplaced inventory treats legacy nulls as missing", () => {
   assertEquals(mediaPlacementFilterQuery("missing_time"), {
@@ -33,6 +52,7 @@ Deno.test("media inventory filters filename kind and capture range on the server
     }),
     {
       owner: "admin",
+      currentRunId: { $exists: false },
       recognitionIgnoredAt: { $exists: false },
       status: { $nin: ["ready", "queued", "processing"] },
       $nor: [{ "geo.type": "Point" }],

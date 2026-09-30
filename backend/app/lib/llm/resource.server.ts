@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertGoogleAccess } from "@myceliasdk/google-policy.ts";
 import { Resource } from "@/lib/auth/resources.ts";
 import { Auth } from "@/lib/auth/core.server.ts";
 import { getServerConfig } from "@/lib/config/serverConfig.server.ts";
@@ -12,7 +13,6 @@ import { normalizeChatCompletionResponse } from "./completion-response.ts";
 import { getPromptCacheUsage } from "./prompt-cache-usage.ts";
 import {
   getEnabledLlmProviders,
-  LlmProviderLimiter,
   type ResolvedLlmProvider,
   selectLlmProviders,
 } from "./provider-routing.ts";
@@ -23,7 +23,7 @@ import {
 
 // Server-wide limiter: every worker call funnels through this backend
 // process, so a single instance enforces the per-provider request budgets.
-const llmProviderLimiter = new LlmProviderLimiter();
+import { llmProviderLimiter } from "./provider-limiter.ts";
 
 // Providers whose last request hit the transport timeout are skipped for a
 // short cooldown, so one black-holed host does not tax every call in a
@@ -281,6 +281,21 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
    * separately prioritized, read-only route instead of a hard override.
    */
   async getInferenceProviders(): Promise<ResolvedLlmProvider[]> {
+    const providers = await this.getConfiguredInferenceProviders();
+    const config = await this.#loadConfig().catch(() => ({}));
+    return providers.map((provider) => {
+      try {
+        assertGoogleAccess(config, { baseUrl: provider.baseUrl });
+        return provider;
+      } catch {
+        return { ...provider, enabled: false };
+      }
+    });
+  }
+
+  private async getConfiguredInferenceProviders(): Promise<
+    ResolvedLlmProvider[]
+  > {
     let config: Awaited<ReturnType<typeof getServerConfig>> | null = null;
     try {
       config = await this.#loadConfig();
@@ -329,10 +344,11 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
       };
     };
 
-    if (config?.llmProfiles?.profiles?.length) {
+    if (config?.llmProfiles?.profiles?.some((profile) => !profile.photoOnly)) {
       const configuredProviders: ResolvedLlmProvider[] = config.llmProfiles
         .profiles.map((profile) => ({
           id: profile.id,
+          photoOnly: profile.photoOnly,
           name: profile.name,
           baseUrl: profile.baseUrl,
           apiKey: profile.apiKey,
@@ -572,6 +588,10 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
                 candidate,
                 requestedSessionId,
               );
+              assertGoogleAccess(await this.#loadConfig().catch(() => ({})), {
+                baseUrl,
+                model: input.model,
+              });
 
               // Aliases resolve through the provider's alias map. Explicit
               // task models remain explicit and are never silently replaced.
@@ -662,8 +682,12 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
                       : "Mycelia",
                   }
                   : {};
-              const sendRequest = (model: string) =>
-                fetch(`${baseUrl}/chat/completions`, {
+              const sendRequest = async (model: string) => {
+                assertGoogleAccess(await this.#loadConfig().catch(() => ({})), {
+                  baseUrl,
+                  model,
+                });
+                return fetch(`${baseUrl}/chat/completions`, {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
@@ -677,7 +701,9 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
                     ...(sessionId ? { session_id: sessionId } : {}),
                   }),
                   signal: AbortSignal.timeout(requestTimeoutMs),
+                  redirect: "error",
                 });
+              };
 
               let response: Response;
               let attemptError: string | null = null;
@@ -951,9 +977,13 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
             providers.map(async (candidate) => {
               const baseUrl = normalizeOpenAIBaseUrl(candidate.baseUrl);
               try {
+                assertGoogleAccess(await this.#loadConfig().catch(() => ({})), {
+                  baseUrl,
+                });
                 const response = await fetch(`${baseUrl}/models`, {
                   headers: { "Authorization": `Bearer ${candidate.apiKey}` },
                   signal: AbortSignal.timeout(10_000),
+                  redirect: "error",
                 });
                 if (!response.ok) {
                   const errorText = await response.text();
@@ -1090,9 +1120,13 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
           }
 
           const modelsUrl = `${normalizeOpenAIBaseUrl(baseUrl)}/models`;
+          assertGoogleAccess(await this.#loadConfig().catch(() => ({})), {
+            baseUrl,
+          });
           const startedAt = performance.now();
           try {
             const response = await fetch(modelsUrl, {
+              redirect: "error",
               headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
               signal: AbortSignal.timeout(10_000),
             });
@@ -1148,11 +1182,15 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
           if (!baseUrl) throw new Error("LLM provider URL is required");
 
           const normalizedBaseUrl = normalizeOpenAIBaseUrl(baseUrl);
+          assertGoogleAccess(await this.#loadConfig().catch(() => ({})), {
+            baseUrl,
+          });
           const parsedBaseUrl = new URL(normalizedBaseUrl);
           const healthUrl = new URL("/health", parsedBaseUrl.origin).toString();
           const startedAt = performance.now();
           try {
             let response = await fetch(healthUrl, {
+              redirect: "error",
               headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
               signal: AbortSignal.timeout(5_000),
             });
@@ -1160,6 +1198,7 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
             if ([404, 405].includes(response.status)) {
               response.body?.cancel();
               response = await fetch(normalizedBaseUrl, {
+                redirect: "error",
                 headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
                 signal: AbortSignal.timeout(5_000),
               });

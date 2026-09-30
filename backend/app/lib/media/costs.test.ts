@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.15";
 import {
   type MediaRecognitionProfile,
   zMediaKnowledgeConfig,
+  zMediaRecognitionProfile,
 } from "@myceliasdk/media.ts";
 import {
   assertMediaItemsWithinPerImportBudget,
@@ -11,6 +12,22 @@ import {
   gcpUsageLedgerId,
   summarizeGcpUsage,
 } from "./costs.ts";
+
+Deno.test("general vision rejects PDF analysis before preview or enqueue", () => {
+  const profile = zMediaRecognitionProfile.parse({
+    id: "photo",
+    name: "Photos",
+    providerType: "openai-compatible",
+    enabled: true,
+    connectionId: "local",
+    model: "vision",
+  });
+  assertThrows(
+    () => estimateMediaGrossUsd("pdf", 1, ["ocr"], profile),
+    Error,
+    "photos only",
+  );
+});
 
 Deno.test("a multi-file import is guarded per asset, not by batch total", () => {
   const config = zMediaKnowledgeConfig.parse({});

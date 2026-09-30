@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { bindMediaConfig } from "@/lib/media/provider-settings.server.ts";
+import { mediaInventoryScope } from "@/lib/media/inventory-scope.server.ts";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { type Db, GridFSBucket, ObjectId } from "mongodb";
@@ -226,7 +228,7 @@ function mediaConfig(value: unknown): MediaKnowledgeConfig {
 }
 
 async function loadConfig(): Promise<MediaKnowledgeConfig> {
-  return mediaConfig(await getServerConfig());
+  return bindMediaConfig(await getServerConfig());
 }
 
 function selectProfile(
@@ -539,11 +541,24 @@ async function cancelRecognitionQueueJob(
 
 const MEDIA_BATCH_CHILD_CANCEL_REASON = "media_recognition_batch_cancelled";
 
-async function stageRecognitionAssetAfterCancellation(
+export async function stageRecognitionAssetAfterCancellation(
   db: Db,
   batch: any,
   item: any,
 ): Promise<boolean> {
+  const restored = await db.collection("media_assets").updateOne(
+    {
+      _id: item.assetId,
+      owner: batch.owner,
+      status: "queued",
+      currentRunId: { $type: "string" },
+    },
+    {
+      $set: { status: "ready", updatedAt: new Date() },
+      $unset: { safeError: "" },
+    },
+  );
+  if (restored.modifiedCount === 1) return true;
   const updated = await db.collection("media_assets").updateOne(
     {
       _id: item.assetId,
@@ -565,6 +580,7 @@ async function stageRecognitionAssetAfterCancellation(
   // Missing assets and an already-staged asset are both terminal-safe. A
   // processing/ready/failed asset must instead be reconciled from its worker.
   return !asset ||
+    (asset.status === "ready" && Boolean(asset.currentRunId)) ||
     (asset.status === "staged" && !asset.currentRunId);
 }
 
@@ -1037,15 +1053,7 @@ async function recoverStaleRecognitionClaims(db: Db, batch: any) {
       );
       continue;
     }
-    await db.collection("media_assets").updateOne(
-      {
-        _id: item.assetId,
-        owner: batch.owner,
-        status: "queued",
-        currentRunId: { $exists: false },
-      },
-      { $set: { status: "staged", updatedAt: new Date() } },
-    );
+    await stageRecognitionAssetAfterCancellation(db, batch, item);
     await db.collection("media_recognition_batch_items").updateOne(
       { _id: item._id, state: "claiming" },
       {
@@ -1664,16 +1672,23 @@ async function processFolderCampaign(
   }
 }
 
-export function recognitionEligibilityQuery(owner: string) {
+export function recognitionEligibilityQuery(owner: string, reanalyze = false) {
   return {
     owner,
+    ...(!reanalyze ? { currentRunId: { $exists: false } } : {}),
     kind: "image",
     "preview.fileId": { $type: "objectId" },
     derivedDeletionPending: { $exists: false },
     originalDeletionPending: { $exists: false },
     recognitionIgnoredAt: { $exists: false },
     status: {
-      $in: ["staged", "failed", "budget_blocked", "recognition_disabled"],
+      $in: [
+        "staged",
+        "failed",
+        "budget_blocked",
+        "recognition_disabled",
+        ...(reanalyze ? ["ready"] : []),
+      ],
     },
     $or: [
       {
@@ -1705,7 +1720,7 @@ export function normalizeRecognitionSelection(
 function inventorySelectionQuery(
   filter: MediaRecognitionSelection["inventoryFilter"],
 ): Record<string, unknown> {
-  if (filter === "ready") return { status: "ready" };
+  if (filter === "ready") return { currentRunId: { $type: "string" } };
   if (filter === "processing") {
     return { status: { $in: ["queued", "processing"] } };
   }
@@ -1725,6 +1740,7 @@ function inventorySelectionQuery(
   }
   if (filter === "unprocessed") {
     return {
+      currentRunId: { $exists: false },
       recognitionIgnoredAt: { $exists: false },
       status: { $nin: ["ready", "queued", "processing"] },
     };
@@ -1808,8 +1824,22 @@ export function recognitionSelectionQuery(
 ): Record<string, unknown> {
   return {
     $and: [
-      recognitionEligibilityQuery(owner),
+      recognitionEligibilityQuery(owner, selection.reanalyze),
       recognitionSelectionScopeQuery(owner, cutoff, selection),
+    ],
+  };
+}
+
+export async function resolvedRecognitionSelectionScope(
+  db: Db,
+  owner: string,
+  cutoff: Date,
+  selection: MediaRecognitionSelection,
+) {
+  return {
+    $and: [
+      recognitionSelectionScopeQuery(owner, cutoff, selection),
+      ...await mediaInventoryScope(db, owner, selection),
     ],
   };
 }
@@ -2015,7 +2045,12 @@ export async function reconcileRecognitionBatch(
       const asset = byAsset.get(String(item.assetId));
       let state = item.state;
       let error: string | undefined;
-      if (asset?.status === "ready" && asset.currentRunId) state = "ready";
+      if (
+        asset?.status === "ready" && asset.currentRunId &&
+        (!batch.selection?.reanalyze ||
+          (job?.result?.success === true &&
+            job.result.runId === asset.currentRunId))
+      ) state = "ready";
       else if (asset?.status === "budget_blocked") {
         state = "budget_blocked";
         error = asset.safeError;
@@ -2041,7 +2076,10 @@ export async function reconcileRecognitionBatch(
         state = "failed";
         error = safeError(job?.failedReason ?? "Recognition job failed");
       } else if (job?.state === "completed") {
-        state = asset?.status === "ready" ? "ready" : "failed";
+        state = asset?.status === "ready" &&
+            (!batch.selection?.reanalyze || job?.result?.success === true)
+          ? "ready"
+          : "failed";
         error = state === "failed"
           ? safeError(
             asset?.safeError ?? "Recognition completed without a ready asset",
@@ -2050,7 +2088,7 @@ export async function reconcileRecognitionBatch(
       }
       if (
         ["failed", "cancelled"].includes(state) &&
-        asset?.status === "queued" && !asset.currentRunId
+        asset?.status === "queued"
       ) {
         // The queue can become active after cancellation intent is persisted,
         // then fail closed before the provider starts. Re-stage its untouched
@@ -2286,15 +2324,22 @@ async function prepareRecognitionBatch(
     auth.principal,
     cutoff,
   );
-  const selectionQuery = recognitionSelectionQuery(
+  const selectionScope = await resolvedRecognitionSelectionScope(
+    db,
     auth.principal,
     cutoff,
     selection,
   );
+  const selectionQuery = {
+    $and: [
+      recognitionEligibilityQuery(auth.principal, selection.reanalyze),
+      selectionScope,
+    ],
+  };
   const reservedByActiveBatchCount = reservedAssetIds.length > 0
     ? await db.collection("media_assets").countDocuments({
       $and: [
-        recognitionSelectionScopeQuery(auth.principal, cutoff, selection),
+        selectionScope,
         { _id: { $in: reservedAssetIds } },
       ],
     })
@@ -2351,11 +2396,7 @@ async function prepareRecognitionBatch(
   }
   const skippedRows = await db.collection("media_assets").aggregate([
     {
-      $match: recognitionSelectionScopeQuery(
-        auth.principal,
-        cutoff,
-        selection,
-      ),
+      $match: selectionScope,
     },
     { $group: { _id: "$status", count: { $sum: 1 } } },
   ]).toArray();
@@ -2389,6 +2430,7 @@ async function prepareRecognitionBatch(
     selectionDigest: digest,
     perAssetGrossUsd,
     authorizedGrossUsd,
+    costKnown: profile.providerType !== "openai-compatible",
     missingOriginalCount: missingIds.length,
     reservedByActiveBatchCount,
     skippedByStatus,
@@ -2402,10 +2444,19 @@ async function prepareRecognitionBatch(
       id: profile.id,
       name: profile.name,
       providerType: profile.providerType,
+      ...(profile.providerType === "openai-compatible"
+        ? {
+          endpoint: profile.connectionSnapshot?.baseUrl,
+          model: profile.model,
+          language: profile.language,
+          maxOutputTokens: profile.maxOutputTokens,
+        }
+        : {}),
     },
     requestedTasks,
     selection,
     eligibleCount: eligible.length,
+    costKnown: profile.providerType !== "openai-compatible",
     missingOriginalCount: missingIds.length,
     skippedByStatus,
     perAssetGrossUsd,
@@ -2459,11 +2510,12 @@ async function exactEligibleRecognitionRefs(
   db: Db,
   owner: string,
   assetRefs: RecognitionReservationRef[],
+  reanalyze = false,
 ): Promise<RecognitionReservationRef[]> {
   if (assetRefs.length === 0) return [];
   const assets = await db.collection<any>("media_assets").find({
     _id: { $in: assetRefs.map((entry) => entry.assetId) },
-    ...recognitionEligibilityQuery(owner),
+    ...recognitionEligibilityQuery(owner, reanalyze),
   }, { projection: { _id: 1, sha256: 1 } }).toArray();
   const shaById = new Map(
     assets.map((asset) => [String(asset._id), String(asset.sha256)]),
@@ -2501,6 +2553,7 @@ export async function materializeRecognitionBatch(
     db,
     batch.owner,
     assetRefs,
+    batch.selection?.reanalyze === true,
   );
   if (exactRefs.length !== assetRefs.length) {
     await releaseRecognitionReservations(db, batch._id);
@@ -2564,11 +2617,12 @@ export async function claimRecognitionBatchAssetForQueue(
   assetId: ObjectId,
   sha256: string,
   expectedStatus: string,
+  reanalyze = false,
 ) {
   return await db.collection<any>("media_assets").findOneAndUpdate(
     {
       _id: assetId,
-      ...recognitionEligibilityQuery(owner),
+      ...recognitionEligibilityQuery(owner, reanalyze),
       sha256,
       status: expectedStatus,
     },
@@ -2641,7 +2695,7 @@ async function confirmRecognitionBatch(
   const assetIds = preview.assetRefs.map((entry: any) => entry.assetId);
   const currentAssets = await db.collection<any>("media_assets").find({
     _id: { $in: assetIds },
-    ...recognitionEligibilityQuery(auth.principal),
+    ...recognitionEligibilityQuery(auth.principal, selection?.reanalyze),
   }, { projection: { _id: 1, sha256: 1 } }).sort({ createdAt: 1, _id: 1 })
     .toArray();
   const shaById = new Map(
@@ -2697,6 +2751,7 @@ async function confirmRecognitionBatch(
     requestedTasks,
     selection: selection ?? normalizeRecognitionSelection(),
     authorizedGrossUsd: preview.authorizedGrossUsd,
+    costKnown: preview.costKnown ?? true,
     confirmedAt: now,
   };
   try {
@@ -2722,6 +2777,7 @@ async function confirmRecognitionBatch(
       selectionDigest: preview.selectionDigest,
       perAssetGrossUsd: preview.perAssetGrossUsd,
       authorizedGrossUsd: preview.authorizedGrossUsd,
+      costKnown: preview.costKnown ?? true,
       consentReceipt: receipt,
       counts: { total: exactRefs.length, pending: exactRefs.length },
       createdAt: now,
@@ -3005,7 +3061,7 @@ export async function processRecognitionBatch(
     }
     const asset = await db.collection<any>("media_assets").findOne({
       _id: item.assetId,
-      ...recognitionEligibilityQuery(batch.owner),
+      ...recognitionEligibilityQuery(batch.owner, batch.selection?.reanalyze),
       sha256: item.sha256,
     });
     if (!asset) {
@@ -3046,6 +3102,7 @@ export async function processRecognitionBatch(
       item.assetId,
       item.sha256,
       asset.status,
+      batch.selection?.reanalyze === true,
     );
     if (!assetClaim) {
       await items.updateOne(
@@ -3072,18 +3129,7 @@ export async function processRecognitionBatch(
       ),
     ]);
     if (latestBatch?.cancelRequestedAt || !stillClaimed) {
-      await db.collection("media_assets").updateOne(
-        {
-          _id: item.assetId,
-          owner: batch.owner,
-          status: "queued",
-          currentRunId: { $exists: false },
-        },
-        {
-          $set: { status: "staged", updatedAt: new Date() },
-          $unset: { safeError: "" },
-        },
-      );
+      await stageRecognitionAssetAfterCancellation(db, batch, item);
       if (latestBatch?.cancelRequestedAt) {
         await items.updateOne(
           { _id: item._id, state: "claiming" },
@@ -3559,6 +3605,7 @@ export function mediaLibrarySummaryQueries(owner: string) {
     all: images,
     unprocessed: {
       ...images,
+      currentRunId: { $exists: false },
       recognitionIgnoredAt: { $exists: false },
       status: { $nin: ["ready", "queued", "processing"] },
     },
@@ -3574,7 +3621,7 @@ export function mediaLibrarySummaryQueries(owner: string) {
       ...images,
       $nor: [{ "geo.type": "Point" }],
     },
-    ready: { ...images, status: "ready" },
+    ready: { ...images, currentRunId: { $type: "string" } },
     needsAttention: {
       ...images,
       recognitionIgnoredAt: { $exists: false },
@@ -3998,7 +4045,8 @@ export class MediaLibraryResource
       case "setRecognitionIgnored": {
         const selection = normalizeRecognitionSelection(input.selection);
         const now = new Date();
-        const scope = recognitionSelectionScopeQuery(
+        const scope = await resolvedRecognitionSelectionScope(
+          db,
           auth.principal,
           now,
           selection,

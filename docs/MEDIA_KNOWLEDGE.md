@@ -9,19 +9,58 @@ Mycelia imports and recognizes photos or PDFs in separate explicit stages:
    a recognition provider.
 2. **Confirm local import** creates canonical media assets. Recognition is a
    separate opt-in action on `/media/analysis`, so an import can remain `staged`
-   until Google Cloud or a self-hosted provider is ready.
+   until a chosen vision provider is ready.
 
 The Photo Analysis screen separates **where** a job runs from **what** it does.
-Choose Google Cloud or a self-hosted Open Media API profile. The bulk action has
+Choose a general vision, optional Google Cloud, or custom self-hosted Open Media
+API profile. The bulk action has
 one fixed package: `visual-understanding` plus `ocr`. Visual understanding
 produces a Russian caption and description, scene, objects, activities, people
 count without identity inference, keywords, possible event, confidence,
-warnings, and an embedding for semantic search. A Google profile runs Vertex
+warnings, and, for embedding-capable connectors, a semantic index. A Google profile runs Vertex
 visual understanding/embedding and strict-EU Cloud Vision OCR. A self-hosted
 profile receives the same two requested features at its configured endpoint and
 does not call Google. Global Vision labels and object localization are not part
 of this batch action. Local metadata extraction is always local and precedes
 the provider choice.
+
+## General vision connections and review
+
+Open **Settings → Photo analysis** (`/settings/photo-analysis`). Select an
+existing configured LLM connection, or add a photo-only OpenAI-compatible
+connection. The API key is optional and write-only here; existing keys are
+reused on the server and never returned by the photo settings API. Set an
+explicit vision model and output language (Russian by default). Saving neither
+changes text aliases nor queues photos. New connections are photo-only.
+**Test image** explicitly sends one synthetic PNG and verifies structured image
+inference, rather than just checking `/models`.
+
+The general adapter sends sanitized previews to `/chat/completions`. It stores
+descriptions and visible text without requiring embeddings. Visible text is
+labelled **model-extracted**, not dedicated OCR. Token usage is retained when
+reported; monetary cost remains **unknown**, never presented as free. Shared
+provider capacity and photo concurrency (1–8) both limit requests. HTTP 429 is
+retried at most twice; timeout/uncertain outcomes are not repeated automatically.
+Keys may rotate without invalidating a batch; changing its endpoint/model or
+disabling its connection invalidates unstarted work.
+Before confirmation, the batch preview shows the exact endpoint/model, language
+and output-token limit. Unknown-priced connections have no enforced dollar
+ceiling; photo-count and token limits are not a monetary budget.
+
+In **Photo analysis**, use **To analyze**, **Results**, or **Needs attention**,
+date/provider/import filters, and select the loaded page or every server-side
+match. Import filtering includes duplicate references from that import, without
+creating duplicate assets. Turn on **Reanalyze ready photos** explicitly to
+create new versions; cancellation/failure does not delete the accepted result.
+The details panel's **History** opens stored versions without inference.
+
+Google services default off (`externalServices.google.enabled: false`) and have
+an independent opt-in at **Settings → Google Cloud (optional)**. This blocks
+Google ADC/token use and Gemini requests, including brokered Gemini models.
+Existing Google descriptions, text and history remain available locally. No
+credits, keys, or enabled media profile bypass this switch. A worker paused in
+Jobs stays paused until explicitly resumed; configuration does not start a
+library-wide batch.
 
 Local ingestion is independent of recognition. When `mediaKnowledge.enabled` is
 false, managed uploads and mounted-source imports still extract metadata,

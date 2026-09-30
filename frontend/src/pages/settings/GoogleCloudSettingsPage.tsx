@@ -81,6 +81,7 @@ type MediaConfig = {
 };
 
 type ConnectorStatus = {
+  googleEnabled?: boolean;
   enabled: boolean;
   sourceConfigured: boolean;
   adc: {
@@ -348,7 +349,7 @@ export default function GoogleCloudSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Cloud className="h-5 w-5" /> Google Cloud / media recognition
+            <Cloud className="h-5 w-5" /> Google Cloud (optional)
           </CardTitle>
           <CardDescription>
             Visual understanding uses Gemini on Vertex AI through server-side
@@ -357,6 +358,39 @@ export default function GoogleCloudSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <Label htmlFor="google-services">
+              Allow Google services in Mycelia
+            </Label>
+            <Switch
+              id="google-services"
+              checked={status?.googleEnabled === true}
+              disabled={saving}
+              onCheckedChange={async (enabled) => {
+                if (
+                  enabled &&
+                  !window.confirm(
+                    "Enable Google services? Requests may incur charges after credits expire.",
+                  )
+                ) return;
+                setSaving(true);
+                try {
+                  await callResource("config", {
+                    action: "patch",
+                    path: "externalServices.google",
+                    updates: { enabled },
+                  });
+                  await load();
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error ? error.message : "Save failed",
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant={status?.sourceConfigured ? "default" : "secondary"}>
               Media folder{" "}

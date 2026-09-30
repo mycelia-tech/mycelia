@@ -80,10 +80,16 @@ const SettingsLayout = () => {
       description: "Places database, GPS imports and map preferences",
     },
     {
-      name: "Google Cloud",
+      name: "Photo analysis",
+      path: "/settings/photo-analysis",
+      icon: Sparkles,
+      description: "Vision connections and photo models",
+    },
+    {
+      name: "Google Cloud (optional)",
       path: "/settings/google-cloud",
       icon: Cloud,
-      description: "Photo understanding, providers and credit guard",
+      description: "Optional Google services and credit guard",
     },
     {
       name: "Knowledge / RAG",

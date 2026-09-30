@@ -63,6 +63,7 @@ export async function loadProviderModelCatalog(
   if (cached && cached.expiresAt > Date.now()) return cached.models;
 
   const response = await fetch(modelsUrl, {
+    redirect: "error",
     headers: provider.apiKey
       ? { Authorization: `Bearer ${provider.apiKey}` }
       : {},

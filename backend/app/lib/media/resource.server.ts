@@ -9,6 +9,16 @@ import { getRootDB } from "@/lib/mongo/core.server.ts";
 import { getServerConfig } from "@/lib/config/serverConfig.server.ts";
 import { enqueueJob } from "@/lib/jobs/queue.ts";
 import { inspectGoogleAdc } from "@/lib/gcp/auth.server.ts";
+import { mediaInventoryScope } from "./inventory-scope.server.ts";
+import {
+  bindMediaConfig,
+  photoSettingsDto,
+  photoSettingsSchema,
+  savePhotoProfile,
+  savePhotoProfileSchema,
+  testPhotoProfile,
+  testPhotoProfileSchema,
+} from "./provider-settings.server.ts";
 import {
   createWebpPreview,
   inspectLocalMedia,
@@ -98,6 +108,8 @@ const confirmImportSchema = z.object({
   queueRecognition: z.boolean().default(false),
 });
 const listAssetsSchema = z.object({
+  providerProfileId: z.string().trim().min(1).optional(),
+  importCampaignId: z.string().refine(ObjectId.isValid).optional(),
   action: z.literal("listAssets"),
   status: z.string().optional(),
   limit: z.number().int().min(1).max(500).default(100),
@@ -188,6 +200,14 @@ const cancelOriginalDeletionPreviewSchema = z.object({
 });
 
 const mediaRequestSchema = z.discriminatedUnion("action", [
+  photoSettingsSchema,
+  savePhotoProfileSchema,
+  testPhotoProfileSchema,
+  z.object({
+    action: z.literal("getAnalysisRun"),
+    assetId: z.string().refine(ObjectId.isValid),
+    runId: z.string().min(1),
+  }),
   statusSchema,
   analyzeSourceSchema,
   confirmImportSchema,
@@ -254,7 +274,7 @@ function assertTasksAllowed(
 
 async function loadMediaConfig(): Promise<MediaKnowledgeConfig> {
   const config = await getServerConfig();
-  return zMediaKnowledgeConfig.parse(config.mediaKnowledge ?? {});
+  return bindMediaConfig(config);
 }
 
 function selectProfile(
@@ -411,7 +431,7 @@ function decodeMediaAssetCursor(value: string): {
 function mediaInventoryFilterQuery(
   filter: z.infer<typeof listAssetsSchema>["inventoryFilter"],
 ): Record<string, unknown> {
-  if (filter === "ready") return { status: "ready" };
+  if (filter === "ready") return { currentRunId: { $type: "string" } };
   if (filter === "processing") {
     return { status: { $in: ["queued", "processing"] } };
   }
@@ -431,6 +451,7 @@ function mediaInventoryFilterQuery(
   }
   if (filter === "unprocessed") {
     return {
+      currentRunId: { $exists: false },
       recognitionIgnoredAt: { $exists: false },
       status: { $nin: ["ready", "queued", "processing"] },
     };
@@ -2076,14 +2097,14 @@ export async function analyzeMediaUploads(
   };
 }
 
-async function stageAnalysis(
+export async function stageAnalysis(
   db: Db,
   asset: any,
   runId: string,
   analysis: NormalizedMediaAnalysis,
 ) {
   if (
-    analysis.visualUnderstanding && analysis.searchText && analysis.embedding
+    analysis.visualUnderstanding && analysis.searchText
   ) {
     await db.collection<any>("media_visual_descriptions").updateOne(
       { _id: runId },
@@ -2093,7 +2114,7 @@ async function stageAnalysis(
           assetId: asset._id,
           visualUnderstanding: analysis.visualUnderstanding,
           searchText: analysis.searchText,
-          embedding: analysis.embedding,
+          ...(analysis.embedding ? { embedding: analysis.embedding } : {}),
           active: false,
           updatedAt: new Date(),
         },
@@ -2446,6 +2467,9 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
       path: ["media", input.action],
       actions: [input.action === "processAsset" ? "process" : "use"],
     }];
+    if (["savePhotoProfile", "testPhotoProfile"].includes(input.action)) {
+      actions.push({ path: ["config", "write"], actions: ["write"] });
+    }
     if (
       input.action === "deleteDerived" &&
       ["previews", "analysis", "asset_record"].includes(input.target)
@@ -2460,6 +2484,41 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
     const config = await loadMediaConfig();
 
     switch (input.action) {
+      case "photoSettings":
+        return {
+          ...photoSettingsDto(await getServerConfig()),
+          importBatches: await db.collection("media_folder_campaigns").find({
+            owner: auth.principal,
+          }, { projection: { _id: 1, relativePath: 1, createdAt: 1 } }).sort({
+            createdAt: -1,
+          }).limit(500).toArray(),
+        };
+      case "savePhotoProfile":
+        return await savePhotoProfile(input, auth);
+      case "testPhotoProfile":
+        return await testPhotoProfile(input.profileId);
+      case "getAnalysisRun": {
+        const assetId = new ObjectId(input.assetId);
+        const asset = await db.collection("media_assets").findOne({
+          _id: assetId,
+          owner: auth.principal,
+        });
+        if (!asset) throw new Error("Media asset not found");
+        const run = await db.collection("media_analysis_runs").findOne(
+          { _id: input.runId, assetId } as any,
+        );
+        if (!run) throw new Error("Analysis run not found");
+        const filter = { assetId, runId: input.runId };
+        const [visual, pages, annotations] = await Promise.all([
+          db.collection("media_visual_descriptions").findOne(filter, {
+            projection: { embedding: 0 },
+          }),
+          db.collection("media_ocr_pages").find(filter).sort({ pageNumber: 1 })
+            .toArray(),
+          db.collection("media_annotations").find(filter).toArray(),
+        ]);
+        return { run, visual, pages, annotations };
+      }
       case "status": {
         const googleProfiles = config.profiles.filter((
           profile,
@@ -2487,6 +2546,9 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
           : { ready: false };
         return {
           enabled: config.enabled,
+          googleEnabled:
+            (await getServerConfig()).externalServices?.google?.enabled ===
+              true,
           sourceConfigured: mediaSourceConfigured(),
           sourceRootLabel: mediaSourceConfigured()
             ? "Mounted media source"
@@ -3018,7 +3080,9 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
           input,
         );
         if (input.status) baseQuery.status = input.status;
-        const pageConditions: Record<string, unknown>[] = [];
+        const scope = await mediaInventoryScope(db, auth.principal, input);
+        if (scope.length) baseQuery.$and = scope;
+        const pageConditions: Record<string, unknown>[] = [...scope];
         let offset = 0;
         if (input.before) {
           pageConditions.push({ createdAt: { $lt: new Date(input.before) } });
@@ -3160,8 +3224,7 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
             return {
               ...mediaAssetResponse(asset),
               inventory: {
-                processed: asset.status === "ready" &&
-                  Boolean(asset.currentRunId),
+                processed: Boolean(asset.currentRunId),
                 ...(membership ? { eventId: membership.eventId } : {}),
                 ...(run
                   ? {
@@ -3376,21 +3439,59 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
             { $match: { "ownedAsset.owner": auth.principal } },
             { $limit: input.limit },
           ]).toArray();
+        const descriptionHits = await db.collection<any>(
+          "media_visual_descriptions",
+        ).aggregate([
+          {
+            $match: {
+              active: true,
+              searchText: {
+                $regex: escapeMongoRegex(input.query),
+                $options: "i",
+              },
+            },
+          },
+          {
+            $lookup: {
+              from: "media_assets",
+              localField: "assetId",
+              foreignField: "_id",
+              as: "ownedAsset",
+            },
+          },
+          { $unwind: "$ownedAsset" },
+          {
+            $match: {
+              "ownedAsset.owner": auth.principal,
+              $expr: { $eq: ["$runId", "$ownedAsset.currentRunId"] },
+            },
+          },
+          { $project: { embedding: 0 } },
+          { $limit: input.limit },
+        ]).toArray();
         const byId = new Map(
           [
             ...semanticAssets,
+            ...descriptionHits.map((hit) => hit.ownedAsset),
             ...pageHits.map((hit) => hit.ownedAsset),
             ...labelHits.map((hit) => hit.ownedAsset),
           ].map((asset) => [String(asset._id), asset]),
         );
-        const semanticResults: any[] = semanticHits.flatMap((hit) => {
+        const semanticResults: any[] = [
+          ...descriptionHits,
+          ...semanticHits.filter((hit) =>
+            !descriptionHits.some((local) =>
+              String(local.assetId) === String(hit.assetId)
+            )
+          ),
+        ].flatMap((hit) => {
           const asset = byId.get(String(hit.assetId));
           if (!asset || String(asset.currentRunId) !== String(hit.runId)) {
             return [];
           }
           const visual = hit.visualUnderstanding ?? {};
           return [{
-            type: "semantic",
+            type: hit.semanticScore === undefined ? "description" : "semantic",
             assetId: asset._id,
             fileName: asset.fileName,
             shortCaption: visual.shortCaption,
@@ -3459,6 +3560,11 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
           owner: auth.principal,
         });
         if (!asset) throw new Error("Media asset not found");
+        if (asset.currentRunId) {
+          throw new Error(
+            "This photo already has a result; use an explicit reanalysis batch to create a new version",
+          );
+        }
         const profile = selectProfile(config, input.profileId);
         const requestedTasks = normalizeRequestedTasks(input);
         assertTasksAllowed(profile, requestedTasks);
@@ -3581,11 +3687,21 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
           }
           const profileFingerprint = createHash("sha256")
             .update(JSON.stringify(profile)).digest("hex").slice(0, 16);
+          const receiptBatch = trustedJob.recognitionBatchId
+            ? await db.collection("media_recognition_batches").findOne({
+              _id: new ObjectId(trustedJob.recognitionBatchId),
+              owner: trustedJob.owner,
+            }, { projection: { selection: 1 } })
+            : null;
           const runId = createHash("sha256").update([
             String(asset._id),
             asset.sha256,
             profileFingerprint,
             requestedTasks.join("+"),
+            ...(receiptBatch?.selection?.reanalyze ||
+                profile.providerType === "openai-compatible"
+              ? [trustedJob.consentReceiptId]
+              : []),
           ].join(":"))
             .digest("hex");
           const recoverReadyRun = async (readyRun: any) => {
@@ -3814,7 +3930,10 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
             await db.collection("media_assets").updateOne(
               { _id: asset._id, owner: asset.owner, status: "processing" },
               {
-                $set: { status: "staged", updatedAt: new Date() },
+                $set: {
+                  status: asset.currentRunId ? "ready" : "staged",
+                  updatedAt: new Date(),
+                },
                 $unset: { safeError: "" },
               },
             );
@@ -3863,6 +3982,19 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
           let analysis: NormalizedMediaAnalysis;
           try {
             analysis = await analyzeWithMediaProvider({
+              beforeDispatch: async () => {
+                if (
+                  !await beginRecognitionBatchProviderCall(
+                    db,
+                    trustedJob.recognitionBatchId,
+                    trustedJob.jobId,
+                  )
+                ) {
+                  throw new Error(
+                    "Recognition batch cancelled before dispatch",
+                  );
+                }
+              },
               profile,
               bytes: requestBytes,
               mimeType: asset.kind === "image" ? "image/webp" : asset.mimeType,
@@ -3882,7 +4014,9 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
             }
             if (
               requestedTasks.includes("visual-understanding") &&
-              (!analysis.visualUnderstanding || !analysis.embedding)
+              (!analysis.visualUnderstanding ||
+                (profile.providerType !== "openai-compatible" &&
+                  !analysis.embedding))
             ) {
               throw new Error(
                 "Provider did not return visual understanding and semantic embedding",
@@ -3950,6 +4084,9 @@ export class MediaResource implements Resource<MediaRequest, unknown> {
 
       case "testConnector": {
         const profile = selectProfile(config, input.profileId);
+        if (profile.providerType === "openai-compatible") {
+          throw new Error("Use Test image in Photo analysis settings");
+        }
         if (profile.providerType === "self-hosted") {
           return await testSelfHostedProfile(profile);
         }

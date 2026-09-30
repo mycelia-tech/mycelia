@@ -132,6 +132,22 @@ export const zMediaRecognitionProfile = z.discriminatedUnion("providerType", [
   z.object({
     id: z.string().trim().min(1),
     name: z.string().trim().min(1),
+    providerType: z.literal("openai-compatible"),
+    enabled: z.boolean().default(false),
+    concurrency: z.number().int().min(1).max(8).default(1),
+    connectionId: z.string().trim().min(1),
+    model: z.string().trim().min(1).max(240),
+    language: z.string().trim().min(1).max(80).default("Russian"),
+    maxOutputTokens: z.number().int().min(256).max(8192).default(1600),
+    connectionSnapshot: z.object({
+      id: z.string(),
+      baseUrl: z.string(),
+      model: z.string(),
+    }).optional(),
+  }),
+  z.object({
+    id: z.string().trim().min(1),
+    name: z.string().trim().min(1),
     providerType: z.literal("google-cloud"),
     enabled: z.boolean().default(false),
     concurrency: z.number().int().min(1).max(4).default(1),

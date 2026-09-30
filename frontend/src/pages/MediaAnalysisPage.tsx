@@ -35,6 +35,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { AuthenticatedMediaImage } from "@/components/media/AuthenticatedMediaImage";
 import { MediaSectionNav } from "@/components/media/MediaSectionNav";
 import { MediaHint } from "@/components/media/MediaHint";
+import { MediaResultPanel } from "@/components/media/MediaResultPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,6 +82,8 @@ const RECOGNITION_TASKS: RecognitionTask[] = [
 ];
 
 interface Filters {
+  providerProfileId?: string;
+  importCampaignId?: string;
   inventoryFilter: InventoryFilter;
   placement: PlacementFilter;
   query: string;
@@ -89,6 +92,7 @@ interface Filters {
 }
 
 interface Asset {
+  currentRunId?: string;
   _id: unknown;
   fileName: string;
   status: string;
@@ -187,6 +191,12 @@ function recognitionFilterRequest(filters: Filters, timeZone: string) {
   const capturedTo = captureDateBoundary(filters.capturedTo, timeZone, true);
   return {
     inventoryFilter: filters.inventoryFilter,
+    ...(filters.providerProfileId
+      ? { providerProfileId: filters.providerProfileId }
+      : {}),
+    ...(filters.importCampaignId
+      ? { importCampaignId: filters.importCampaignId }
+      : {}),
     placement: filters.placement,
     ...(filters.query ? { query: filters.query } : {}),
     ...(capturedFrom ? { capturedFrom } : {}),
@@ -216,8 +226,11 @@ function hasRecognitionPreview(asset: Asset): boolean {
   return Boolean(asset.preview?.fileId);
 }
 
-function isBatchSelectableAsset(asset: Asset): boolean {
-  return PROCESSABLE_STATES.has(asset.status) && hasRetainedOriginal(asset) &&
+function isBatchSelectableAsset(asset: Asset, reanalyze = false): boolean {
+  return (!asset.currentRunId || reanalyze) &&
+    (PROCESSABLE_STATES.has(asset.status) ||
+      (reanalyze && asset.status === "ready")) &&
+    hasRetainedOriginal(asset) &&
     hasRecognitionPreview(asset);
 }
 
@@ -254,8 +267,11 @@ function resultCopy(asset: Asset): string {
       : "No visual description yet");
 }
 
-function singleAssetEligibility(asset: Asset): SingleAssetEligibility {
-  if (asset.status === "ready") {
+function singleAssetEligibility(
+  asset: Asset,
+  reanalyze = false,
+): SingleAssetEligibility {
+  if ((asset.status === "ready" || asset.currentRunId) && !reanalyze) {
     return {
       eligible: false,
       title: "Photo analysis is already ready",
@@ -287,7 +303,10 @@ function singleAssetEligibility(asset: Asset): SingleAssetEligibility {
         "The file at the mounted path no longer matches the imported photo. Sync the folder again before requesting a description.",
     };
   }
-  if (!PROCESSABLE_STATES.has(asset.status)) {
+  if (
+    !PROCESSABLE_STATES.has(asset.status) &&
+    !(reanalyze && asset.status === "ready")
+  ) {
     return {
       eligible: false,
       title: "Photo is not eligible for analysis",
@@ -324,17 +343,24 @@ export default function MediaAnalysisPage() {
   const defaultTimeZone = useSettingsStore((state) => state.defaultTimeZone);
   const timeZone = resolveDefaultTimeZone(defaultTimeZone);
   const inventoryFilterParam = searchParams.get("status");
+  const reanalyze = searchParams.get("reanalyze") === "1";
+  const providerFilter = searchParams.get("provider") ?? "";
+  const importFilter = searchParams.get("import") ?? "";
   const placementParam = searchParams.get("placement");
   const queryParam = searchParams.get("query");
   const capturedFromParam = searchParams.get("from");
   const capturedToParam = searchParams.get("to");
   const filters = useMemo<Filters>(() => ({
+    providerProfileId: providerFilter,
+    importCampaignId: importFilter,
     inventoryFilter: parsedInventoryFilter(inventoryFilterParam),
     placement: parsedPlacement(placementParam),
     query: queryParam?.trim() ?? "",
     capturedFrom: capturedFromParam ?? "",
     capturedTo: capturedToParam ?? "",
   }), [
+    providerFilter,
+    importFilter,
     capturedFromParam,
     capturedToParam,
     inventoryFilterParam,
@@ -417,7 +443,10 @@ export default function MediaAnalysisPage() {
     [selectedIds],
   );
   const previewSelection = useMemo(() => {
-    const shared = recognitionFilterRequest(filters, timeZone);
+    const shared = {
+      ...recognitionFilterRequest(filters, timeZone),
+      ...(reanalyze ? { reanalyze: true } : {}),
+    };
     return selectionMode === "all_matching"
       ? { mode: "all_matching" as const, ...shared }
       : {
@@ -425,7 +454,7 @@ export default function MediaAnalysisPage() {
         ...shared,
         assetIds: sortedSelectedIds,
       };
-  }, [filters, selectionMode, sortedSelectedIds, timeZone]);
+  }, [filters, selectionMode, sortedSelectedIds, timeZone, reanalyze]);
   const previewRequestContextKey = useMemo(
     () =>
       JSON.stringify({
@@ -640,12 +669,13 @@ export default function MediaAnalysisPage() {
   ]);
 
   useEffect(() => {
-    void callResource("media", { action: "status" }).then(setStatus).catch(
-      (error) =>
-        toast.error(
-          error instanceof Error ? error.message : "Media settings failed",
-        ),
-    );
+    void callResource("media", { action: "photoSettings" }).then(setStatus)
+      .catch(
+        (error) =>
+          toast.error(
+            error instanceof Error ? error.message : "Media settings failed",
+          ),
+      );
     void loadSummary();
     void loadBatches();
   }, [loadBatches, loadSummary]);
@@ -720,16 +750,19 @@ export default function MediaAnalysisPage() {
   useEffect(() => {
     if (!selectRequested || !selectedAssetId || !detail?.asset) return;
     if (idOf(detail.asset._id) !== selectedAssetId) return;
-    const selectionKey = `${selectedAssetId}:select=1`;
+    const selectionKey = `${selectedAssetId}:select=1:reanalyze=${reanalyze}`;
     if (autoSelectionRef.current === selectionKey) return;
     autoSelectionRef.current = selectionKey;
-    const eligibility = singleAssetEligibility(detail.asset as Asset);
+    const eligibility = singleAssetEligibility(
+      detail.asset as Asset,
+      reanalyze,
+    );
     setSelectionMode("explicit");
     setSelectedIds(
       eligibility.eligible ? new Set([selectedAssetId]) : new Set(),
     );
     setPreview(undefined);
-  }, [detail, selectRequested, selectedAssetId]);
+  }, [detail, selectRequested, selectedAssetId, reanalyze]);
 
   const scopeReady = loadedFilterKey === currentFilterKey && !loading &&
     !loadError;
@@ -756,7 +789,9 @@ export default function MediaAnalysisPage() {
     total,
   ]);
 
-  const processableAssets = assets.filter(isBatchSelectableAsset);
+  const processableAssets = assets.filter((asset) =>
+    isBatchSelectableAsset(asset, reanalyze)
+  );
   const selectedCount = selectionMode === "all_matching"
     ? total
     : selectedIds.size;
@@ -781,7 +816,7 @@ export default function MediaAnalysisPage() {
   const selectAllMatchingForReview = () => {
     const targetFilters: Filters = {
       ...filters,
-      inventoryFilter: "unprocessed",
+      inventoryFilter: reanalyze ? filters.inventoryFilter : "unprocessed",
     };
     const targetFilterKey = filterKey(targetFilters, timeZone);
     setSelectedIds(new Set());
@@ -797,7 +832,7 @@ export default function MediaAnalysisPage() {
 
     setSelectionMode("explicit");
     setPendingAllMatchingFilterKey(targetFilterKey);
-    updateParams({ status: "unprocessed" });
+    updateParams({ status: targetFilters.inventoryFilter });
   };
 
   const previewBatch = async () => {
@@ -931,7 +966,7 @@ export default function MediaAnalysisPage() {
     idOf(asset._id) === selectedAssetId
   );
   const detailEligibility = detail?.asset
-    ? singleAssetEligibility(detail.asset as Asset)
+    ? singleAssetEligibility(detail.asset as Asset, reanalyze)
     : undefined;
 
   const continueToBatchReview = () => {
@@ -951,10 +986,11 @@ export default function MediaAnalysisPage() {
       <Checkbox
         aria-label={"Select " + asset.fileName}
         checked={selectionMode === "all_matching"
-          ? isBatchSelectableAsset(asset)
+          ? isBatchSelectableAsset(asset, reanalyze)
           : selectedIds.has(assetId)}
         disabled={!scopeReady ||
-          !(isBatchSelectableAsset(asset) || asset.recognitionIgnoredAt) ||
+          !(isBatchSelectableAsset(asset, reanalyze) ||
+            asset.recognitionIgnoredAt) ||
           selectionMode === "all_matching"}
         onCheckedChange={(checked) => toggleAsset(assetId, checked === true)}
       />
@@ -999,6 +1035,9 @@ export default function MediaAnalysisPage() {
           <Button asChild size="sm" variant="ghost">
             <Link to="/map">Map</Link>
           </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/settings/photo-analysis">Photo analysis settings</Link>
+          </Button>
         </div>
       </header>
 
@@ -1013,6 +1052,54 @@ export default function MediaAnalysisPage() {
       </div>
 
       <Card>
+        <nav
+          aria-label="Analysis views"
+          className="flex flex-wrap gap-1 px-3 pt-3"
+        >
+          {([["unprocessed", "To analyze"], ["ready", "Results"], [
+            "needs_attention",
+            "Needs attention",
+          ]] as const).map(([value, label]) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={filters.inventoryFilter === value
+                ? "secondary"
+                : "ghost"}
+              onClick={() => updateFilters({ status: value })}
+            >
+              {label}
+            </Button>
+          ))}
+        </nav>
+        <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <select
+            aria-label="Result provider"
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={providerFilter}
+            onChange={(event) =>
+              updateFilters({ provider: event.target.value })}
+          >
+            <option value="">All result providers</option>
+            {(status?.profiles ?? []).map((entry: any) => (
+              <option key={entry.id} value={entry.id}>{entry.name}</option>
+            ))}
+          </select>
+          <select
+            aria-label="Import batch"
+            className="h-9 max-w-80 rounded-md border bg-background px-2 text-sm"
+            value={importFilter}
+            onChange={(event) => updateFilters({ import: event.target.value })}
+          >
+            <option value="">All imports</option>
+            {(status?.importBatches ?? []).map((entry: any) => (
+              <option key={idOf(entry._id)} value={idOf(entry._id)}>
+                {entry.relativePath ?? "Import"} ·{" "}
+                {formattedDate(entry.createdAt)}
+              </option>
+            ))}
+          </select>
+        </div>
         <CardHeader className="p-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1">
@@ -1140,11 +1227,10 @@ export default function MediaAnalysisPage() {
                 precision="date"
                 allowOpenEnd
                 value={captureRange}
-                onChange={(value) =>
-                  updateFilters({
-                    from: zonedDateKey(value.start, timeZone),
-                    to: value.end ? zonedDateKey(value.end, timeZone) : "",
-                  })}
+                onChange={(value) => updateFilters({
+                  from: zonedDateKey(value.start, timeZone),
+                  to: value.end ? zonedDateKey(value.end, timeZone) : "",
+                })}
               />
               {(filters.capturedFrom || filters.capturedTo) && (
                 <Button
@@ -1192,10 +1278,9 @@ export default function MediaAnalysisPage() {
                 variant="outline"
                 disabled={!scopeReady || selectedCount === 0 ||
                   Boolean(batchAction)}
-                onClick={() =>
-                  void setSelectionIgnored(
-                    filters.inventoryFilter !== "ignored",
-                  )}
+                onClick={() => void setSelectionIgnored(
+                  filters.inventoryFilter !== "ignored",
+                )}
               >
                 {filters.inventoryFilter === "ignored" ? "Return" : "Ignore"}
               </Button>
@@ -1220,9 +1305,21 @@ export default function MediaAnalysisPage() {
                   <option key={entry.id} value={entry.id}>{entry.name}</option>
                 ))}
               </select>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={reanalyze}
+                  onChange={(event) => {
+                    clearSelection();
+                    updateParams({
+                      reanalyze: event.target.checked ? "1" : "",
+                    });
+                  }}
+                />Reanalyze ready photos
+              </label>
               <MediaHint label="About the analysis package">
-                {selectedProfile?.providerType === "self-hosted"
-                  ? `Visual understanding and OCR run on ${selectedProfile.name}; Google is not called.`
+                {selectedProfile?.providerType !== "google-cloud"
+                  ? `Descriptions and visible text use the selected model. External pricing may be unknown. Reanalysis retains the previous successful result.`
                   : "Google batches use Vertex visual understanding and embedding plus strict-EU Vision OCR. Global Vision labels and objects stay off."}
               </MediaHint>
               <Button
@@ -1257,12 +1354,20 @@ export default function MediaAnalysisPage() {
                 <div className="font-medium">Exact provider preview</div>
                 <div className="text-sm text-muted-foreground">
                   {Number(currentPreview.eligibleCount ?? 0)}{" "}
-                  eligible photo(s) · maximum
-                  {" $"}
-                  {Number(currentPreview.authorizedGrossUsd ?? 0).toFixed(2)}
-                  {" "}
-                  · no provider call yet
+                  eligible photo(s) · {currentPreview.costKnown === false
+                    ? "cost unknown — provider charges may apply; no monetary ceiling enforced"
+                    : `maximum $${
+                      Number(currentPreview.authorizedGrossUsd ?? 0).toFixed(2)
+                    }`} · no provider call yet
                 </div>
+                {currentPreview.profile?.endpoint && (
+                  <div className="mt-1 break-all text-sm">
+                    {currentPreview.profile.endpoint} ·{" "}
+                    {currentPreview.profile.model} ·{" "}
+                    {currentPreview.profile.language} · up to{" "}
+                    {currentPreview.profile.maxOutputTokens} output tokens/photo
+                  </div>
+                )}
                 {Number(currentPreview.missingOriginalCount ?? 0) > 0 && (
                   <div className="text-sm text-amber-700 dark:text-amber-300">
                     {Number(currentPreview.missingOriginalCount)} selected{" "}
@@ -1281,7 +1386,11 @@ export default function MediaAnalysisPage() {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setPreview(undefined)}>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setPreview(undefined)}
+                >
                   Cancel
                 </Button>
                 <Button
@@ -1680,21 +1789,61 @@ export default function MediaAnalysisPage() {
                     </Badge>
                   </div>
                   <div className="flex gap-2">
-                    {isBatchSelectableAsset(detail.asset as Asset) && (
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setSelectionMode("explicit");
-                          setSelectedIds((current) =>
-                            new Set(current).add(idOf(detail.asset._id))
-                          );
-                          setPreview(undefined);
-                          closeAsset();
-                        }}
-                      >
-                        Select this photo
-                      </Button>
+                    {detail.asset.kind === "image" && (
+                      <>
+                        {detail.asset.location && (
+                          <Button asChild size="sm" variant="outline">
+                            <Link
+                              to={`/map?photoAssetId=${idOf(detail.asset._id)}`}
+                            >
+                              Map
+                            </Link>
+                          </Button>
+                        )}
+                        {detail.asset.capturedAt && (
+                          <Button asChild size="sm" variant="outline">
+                            <Link
+                              to={`/timeline?photoAssetId=${
+                                idOf(detail.asset._id)
+                              }`}
+                            >
+                              Timeline
+                            </Link>
+                          </Button>
+                        )}
+                        {(detail.asset.currentRunId ||
+                          detail.asset.status === "ready") && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              updateParams({
+                                reanalyze: "1",
+                                select: "1",
+                                status: "all",
+                              })}
+                          >
+                            Reanalyze
+                          </Button>
+                        )}
+                      </>
                     )}
+                    {isBatchSelectableAsset(detail.asset as Asset, reanalyze) &&
+                      (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSelectionMode("explicit");
+                            setSelectedIds((current) =>
+                              new Set(current).add(idOf(detail.asset._id))
+                            );
+                            setPreview(undefined);
+                            closeAsset();
+                          }}
+                        >
+                          Select this photo
+                        </Button>
+                      )}
                     <Button
                       size="icon"
                       variant="outline"
@@ -1763,55 +1912,7 @@ export default function MediaAnalysisPage() {
                     )}
                   </section>
                 )}
-                {detail.visual?.visualUnderstanding && (
-                  <section className="space-y-3 rounded-xl border p-4">
-                    <div className="font-semibold">AI analysis</div>
-                    <div className="text-lg font-medium">
-                      {detail.visual.visualUnderstanding.shortCaption}
-                    </div>
-                    <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                      {detail.visual.visualUnderstanding.description}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {(detail.visual.visualUnderstanding.keywords ?? []).map(
-                        (keyword: string) => (
-                          <Badge key={keyword} variant="secondary">
-                            {keyword}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
-                  </section>
-                )}
-                {detail.pages?.length > 0 && (
-                  <section className="space-y-3 rounded-xl border p-4">
-                    <div className="font-semibold">OCR text</div>
-                    {detail.pages.map((page: any) => (
-                      <div
-                        key={idOf(page._id)}
-                        className="rounded bg-muted p-3"
-                      >
-                        <div className="mb-2 text-xs text-muted-foreground">
-                          Page {page.pageNumber}
-                        </div>
-                        <div className="whitespace-pre-wrap text-sm">
-                          {page.text || "No text detected"}
-                        </div>
-                      </div>
-                    ))}
-                  </section>
-                )}
-                <details className="rounded-xl border p-4">
-                  <summary className="cursor-pointer font-medium">
-                    Local metadata and provenance
-                  </summary>
-                  <pre className="mt-3 max-h-80 overflow-auto rounded bg-muted p-3 text-xs">
-                    {JSON.stringify({
-                      metadata: detail.asset.metadata ?? {},
-                      runs: detail.runs ?? [],
-                    }, null, 2)}
-                  </pre>
-                </details>
+                <MediaResultPanel detail={detail} />
               </div>
             )
             : (

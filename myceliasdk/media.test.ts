@@ -1,11 +1,43 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { ObjectId } from "bson";
+import { zServerConfig } from "./config.ts";
 import {
   zMediaAsset,
   zMediaKnowledgeConfig,
   zMediaRecognitionProfile,
   zMediaVisualUnderstanding,
 } from "./media.ts";
+
+Deno.test("general photo profiles reference a provider without carrying credentials", () => {
+  const parsed = zMediaRecognitionProfile.safeParse({
+    id: "photo-local",
+    name: "Local vision",
+    providerType: "openai-compatible",
+    enabled: true,
+    connectionId: "local",
+    model: "vision-model",
+    apiKey: "must-not-survive",
+  });
+  assertEquals(parsed.success, true);
+  if (!parsed.success || parsed.data.providerType !== "openai-compatible") {
+    throw new Error("Expected a general photo profile");
+  }
+  assertEquals(parsed.data.language, "Russian");
+  assertEquals("apiKey" in parsed.data, false);
+  assertEquals(
+    zMediaRecognitionProfile.safeParse({ ...parsed.data, model: "" }).success,
+    false,
+  );
+});
+
+Deno.test("Google services default off independently of configured credentials", () => {
+  const config = zServerConfig.parse({
+    features: { enable_experimental_processing: false },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  assertEquals(config.externalServices.google.enabled, false);
+});
 
 Deno.test("media asset accepts normalized capture timezone and location", () => {
   const parsed = zMediaAsset.parse({
