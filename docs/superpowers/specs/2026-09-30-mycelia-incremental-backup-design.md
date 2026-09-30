@@ -162,9 +162,13 @@ Removing the setup YAML does not remove its values from MongoDB's
 container environment is restricted and included in credential rotation and
 recovery procedures. PBM's required Mongo role is privileged and must not be
 described as a read-only backup role. The PBM agent and URI are isolated from
-application containers. Upload/PITR, restore-read, cleanup-delete, and MinIO
-administration use separate identities with only the permissions required for
-their phase.
+application containers. PBM's operational S3 identity receives only the
+bucket/prefix-scoped List/Get/Put/Delete permissions required by PBM; it has no
+access to the protected-copy bucket or MinIO administration. Restore-read,
+protected-copy, and MinIO administration use separate identities. Destructive
+retention remains unavailable through the normal scheduler because only the
+hash-gated `backupctl cleanup` control path may invoke it; runtime credential
+swapping is forbidden because it can interrupt continuous PITR.
 
 ## Control surface
 
@@ -186,9 +190,10 @@ Add a host-side `scripts/backupctl` entry point with these commands:
 - `verify`: run non-destructive PBM status/describe checks, restic repository
   checks, manifest validation, and representative remote reads;
 - `retention-dry-run`: show exactly what PBM and restic would remove;
-- `cleanup`: use the separately supplied delete identity to apply the reviewed
-  full-backup, restic, and PITR-slice policies only when the cleanup gate is
-  enabled;
+- `cleanup`: use the fixed operational PBM identity through the hash-gated
+  control path to apply the reviewed full-backup and PITR-slice policies, and
+  the corresponding reviewed restic policy, only when the cleanup gate is
+  enabled. Never swap the live PBM storage credential to perform cleanup;
 - `restore-drill`: restore into a separate replica set and Compose project with
   distinct host paths, volumes, ports, and network; preserve original database
   names inside that isolated target and never use the live Mongo path.
