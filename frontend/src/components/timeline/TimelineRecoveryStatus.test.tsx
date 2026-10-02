@@ -1,84 +1,146 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { describe, expect, it } from "vitest";
+import type { TimelineIntegrityReport } from "@/types/timelineRecovery";
 import { TimelineRecoveryStatus } from "./TimelineRecoveryStatus";
 
+function reportFixture(): TimelineIntegrityReport {
+  return {
+    checkedAt: "2026-09-29T08:00:00.000Z",
+    status: "healthy",
+    countsUpdatedAt: "2026-09-30T09:00:00.000Z",
+    auditStale: true,
+    maintenance: {
+      state: "idle",
+      pendingDays: 0,
+      lastCompletedAt: "2026-09-30T09:00:00.000Z",
+      lastError: null,
+      retryAt: null,
+      oldestPendingAt: "2026-09-30T09:05:00.000Z",
+    },
+    sources: [],
+    histograms: [],
+    repairPlan: { ranges: [], days: 0 },
+    bookkeeping: {
+      checked: true,
+      terminalSequences: 1,
+      eligibleChunks: 0,
+      modifiedChunks: 0,
+      applied: false,
+    },
+    lastBookkeepingRepair: null,
+    campaign: null,
+    issues: [],
+    scope: { verifies: [], note: "" },
+    performance: { totalMs: 1, stages: {} },
+    snapshot: { state: "ready" },
+  };
+}
+
+function mount(report: TimelineIntegrityReport) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(["timeline-integrity-report"], report);
+  const view = render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TimelineRecoveryStatus />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { ...view, client };
+}
+
 describe("TimelineRecoveryStatus", () => {
-  afterEach(() => vi.restoreAllMocks());
+  it("hides a healthy timeline even when an older audit and repair history exist", () => {
+    const report = reportFixture();
+    report.lastBookkeepingRepair = {
+      checkedAt: report.checkedAt!,
+      terminalSequences: 58163,
+      eligibleChunks: 16374,
+      modifiedChunks: 16374,
+      applied: true,
+      durationMs: 10,
+    };
+    const { container } = mount(report);
 
-  it("shows that a rebuild is required and links to recovery controls", async () => {
-    vi.spyOn(api, "callResource").mockResolvedValue({
-      checkedAt: "2026-08-13T00:00:00.000Z",
-      status: "needs_attention",
-      sources: [{
-        collection: "audio_chunks",
-        label: "Audio chunks",
-        documents: 100,
-        firstStart: null,
-        lastStart: null,
-        lastEnd: null,
-        histogramDocuments: 80,
-        difference: -20,
-      }],
-      histograms: [],
-      bookkeeping: {
-        checked: false,
-        terminalSequences: null,
-        eligibleChunks: null,
-        modifiedChunks: 0,
-        applied: false,
-      },
-      lastBookkeepingRepair: null,
-      campaign: null,
-      issues: [{
-        severity: "error",
-        code: "histogram_count_audio_chunks",
-        message: "mismatch",
-      }],
-      scope: { verifies: [], note: "" },
-      performance: { totalMs: 10, stages: {}, note: "" },
-    });
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
-          <TimelineRecoveryStatus />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    expect(
-      await screen.findByText(/Timeline density repair is recommended/),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "Recovery controls" }).getAttribute(
-        "href",
-      ),
-    ).toBe("/jobs?timelineAudit=1#timeline-integrity");
+    expect(container).toBeEmptyDOMElement();
   });
 
-  it("makes the exact verification step explicit after all batches finish", async () => {
-    vi.spyOn(api, "callResource").mockResolvedValue({
-      checkedAt: "2026-08-21T20:15:09.892Z",
-      status: "needs_attention",
-      sources: [],
-      histograms: [],
-      bookkeeping: {
-        checked: false,
-        terminalSequences: null,
-        eligibleChunks: null,
-        modifiedChunks: 0,
-        applied: false,
-      },
-      lastBookkeepingRepair: null,
-      campaign: {
+  it("does not treat an unchecked timeline as incomplete", () => {
+    const report = reportFixture();
+    report.status = "not_checked";
+    report.checkedAt = null;
+    const { container } = mount(report);
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows a compact update notice and removes it when maintenance finishes", async () => {
+    const report = reportFixture();
+    report.status = "updating";
+    report.maintenance!.state = "updating";
+    report.maintenance!.pendingDays = 2;
+    const { container, client } = mount(report);
+
+    expect(screen.getByRole("status")).toHaveClass("border-blue-500/30");
+    expect(screen.getByText("Timeline is updating.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Jobs" }))
+      .toHaveAttribute("href", "/jobs#timeline-integrity");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByText(/Full check|Counts updated|2 day/)).toBeNull();
+
+    await act(async () => {
+      client.setQueryData(["timeline-integrity-report"], reportFixture());
+    });
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it("keeps scheduled retries in the same compact update notice", () => {
+    const report = reportFixture();
+    report.maintenance!.pendingDays = 2;
+    report.maintenance!.state = "retrying";
+    report.maintenance!.retryAt = "2026-09-30T09:06:00.000Z";
+    mount(report);
+
+    expect(screen.getByText("Timeline is updating.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveClass("border-blue-500/30");
+    expect(screen.queryByText(/Next retry|needs attention/)).toBeNull();
+  });
+
+  it("keeps real issues visible during maintenance and leaves their details in Jobs", () => {
+    const report = reportFixture();
+    report.status = "needs_attention";
+    report.maintenance!.state = "updating";
+    report.maintenance!.pendingDays = 2;
+    report.issues = [{
+      severity: "error",
+      code: "invalid_source_dates",
+      message: "Some source records have invalid dates.",
+    }];
+    mount(report);
+
+    expect(screen.getByText("Timeline needs attention.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveClass("border-amber-500/30");
+    expect(screen.queryByText(report.issues[0].message)).toBeNull();
+    expect(screen.getByRole("link", { name: "Open Jobs" }))
+      .toHaveAttribute("href", "/jobs#timeline-integrity");
+  });
+
+  it.each(
+    [
+      ["running", "Timeline is updating."],
+      ["verifying", "Timeline recovery needs verification."],
+    ] as const,
+  )(
+    "shows unfinished %s recovery without its detailed controls",
+    (status, message) => {
+      const report = reportFixture();
+      report.campaign = {
         campaignId: "campaign-1",
-        status: "verifying",
+        status,
         plannedJobs: 118,
         queuedJobs: 118,
         missingJobs: 0,
@@ -93,29 +155,14 @@ describe("TimelineRecoveryStatus", () => {
         createdAt: null,
         finishedAt: null,
         failures: [],
-      },
-      issues: [],
-      scope: { verifies: [], note: "" },
-      performance: { totalMs: 10, stages: {}, note: "" },
-      snapshot: { state: "ready" },
-    });
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+      };
+      mount(report);
 
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
-          <TimelineRecoveryStatus />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    expect(
-      await screen.findByText(/All 118 rebuild batches finished/),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Run exact verification" }),
-    ).toBeTruthy();
-  });
+      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Open Jobs" }))
+        .toHaveAttribute("href", "/jobs#timeline-integrity");
+      expect(screen.queryByText(/118|batches/)).toBeNull();
+      expect(screen.queryByRole("button")).toBeNull();
+    },
+  );
 });

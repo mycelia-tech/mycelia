@@ -4,6 +4,7 @@ import {
   createWorker,
   drainWaitingDiarizatorJobs,
   enqueueJob,
+  getQueue,
   getQueueEvents,
   requestDiarizatorAdmissionDrain,
 } from "./queue.ts";
@@ -36,6 +37,7 @@ import {
   syncTimelineCampaign,
 } from "./timeline-campaign-recovery.ts";
 import { triggerManager } from "./trigger-manager.ts";
+import { reconcileAutomaticTimelineDensity } from "./timeline-density-maintenance.ts";
 
 const workers = new Map<string, Worker>();
 let timelineRecoveryInterval: ReturnType<typeof setInterval> | null = null;
@@ -103,6 +105,11 @@ export async function startWorkers() {
       jobType,
       config?.workers?.[jobType]?.concurrency,
     );
+    if (jobType === "histRecalculation") {
+      // Manual campaigns and automatic day updates also serialize across
+      // backend processes, not only within this process's Worker instance.
+      await getQueue(jobType).setGlobalConcurrency(1);
+    }
     const worker = createWorker(jobType, processJob, concurrency);
 
     // Global events listener to ensure MongoDB is in sync with BullMQ
@@ -200,6 +207,9 @@ export async function startWorkers() {
         finishedOn: finishedAt.getTime(),
         result: returnvalue,
       });
+      if (jobType === "histRecalculation") {
+        await reconcileAutomaticTimelineDensity();
+      }
     });
 
     events.on("failed", async ({ jobId, failedReason }) => {
@@ -552,9 +562,12 @@ export async function startWorkers() {
   // Restore paused workers from config
   await restorePausedWorkers();
   await reconcileActiveTimelineCampaigns();
+  await reconcileAutomaticTimelineDensity();
   if (!timelineRecoveryInterval) {
     timelineRecoveryInterval = setInterval(() => {
-      void reconcileActiveTimelineCampaigns();
+      void reconcileActiveTimelineCampaigns().then(() =>
+        reconcileAutomaticTimelineDensity()
+      );
     }, 30_000);
   }
 }

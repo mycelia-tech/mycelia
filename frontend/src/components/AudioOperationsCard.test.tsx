@@ -55,14 +55,16 @@ function mount(data = fixture(), error?: string) {
 }
 
 describe("Audio operations overview", () => {
-  it("distinguishes a running degraded daemon from unknown audio counts and old staging", () => {
+  it("keeps diagnostics closed and runs a local-copy scan only when requested", () => {
     const actions = mount();
-    expect(screen.getByText("Running · needs attention")).toBeTruthy();
-    expect(screen.getByText("Staging is more than 24 hours old")).toBeTruthy();
+    expect(screen.getByText("Background daemon: Running · needs attention"))
+      .toBeTruthy();
+    expect(screen.getByTestId("audio-diagnostics")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Import diagnostics"));
     expect(
       within(screen.getByTestId("operations-vad")).getAllByText("—").length,
     ).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "Scan staging now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Scan local copy" }));
     expect(actions.onRun).toHaveBeenCalledOnce();
     expect(actions.onCalculate).not.toHaveBeenCalled();
     fireEvent.click(
@@ -74,11 +76,40 @@ describe("Audio operations overview", () => {
     const data = fixture();
     data.queues.ingestion.active = 1;
     mount(data, "Network unavailable");
-    expect(screen.getByText("Status is stale")).toBeTruthy();
+    expect(screen.getByText("Background daemon: Status is stale")).toBeTruthy();
+    fireEvent.click(screen.getByText("Import diagnostics"));
     expect(
-      screen.getByRole("button", { name: "Scan staging now" }).hasAttribute(
+      screen.getByRole("button", { name: "Scan local copy" }).hasAttribute(
         "disabled",
       ),
     ).toBe(true);
+  });
+
+  it("guides blocked Voice Memos access through Bridge without queuing a broken scan", () => {
+    const data = fixture();
+    data.host.appleVoiceMemosMode = "live";
+    data.host.lastCycle!.sources = [{
+      source: "apple_voicememos",
+      status: "failed",
+      error: "Operation not permitted",
+    }];
+    const actions = mount(data);
+    expect(screen.getByText("Separate Mac application")).toBeInTheDocument();
+    expect(screen.getByText("Import from a folder")).toBeInTheDocument();
+    expect(screen.queryByText("Operation not permitted")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Import Voice Memos…" }),
+    );
+    const guide = screen.getByRole("dialog");
+    expect(within(guide).getByText("Open Mycelia Voice Memos Bridge"))
+      .toBeInTheDocument();
+    expect(within(guide).getByText("Scan library")).toBeInTheDocument();
+    expect(within(guide).getByText("Import pending")).toBeInTheDocument();
+    expect(actions.onRun).not.toHaveBeenCalled();
+    fireEvent.click(within(guide).getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByText("Import diagnostics"));
+    expect(screen.getByRole("button", { name: "Scan configured sources" }))
+      .toBeDisabled();
   });
 });

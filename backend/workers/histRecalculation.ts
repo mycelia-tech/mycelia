@@ -14,6 +14,12 @@ import {
 } from "@/types/resolution.ts";
 
 import type { JobCapability } from "@/lib/jobs/job-registry.ts";
+import {
+  completeTimelineDensityDay,
+  failTimelineDensityDay,
+  pickTimelineDensityDay,
+} from "@/lib/timeline/density-maintenance.ts";
+import { rebuildTimelineDensityDay } from "@/lib/timeline/density-rebuild.ts";
 
 type AggregationOperation = {
   $sum?: any;
@@ -50,6 +56,11 @@ const TARGET_COLLECTIONS: Record<string, AggregationConfig> = {
 };
 
 const day = 1000 * 60 * 60 * 24;
+
+type HistogramUpdateOptions = {
+  /** Limit raw source reads; parent rollups still consume whole target bins. */
+  rawBatchMs?: number;
+};
 
 /**
  * Mark histogram buckets as stale for a given time range.
@@ -179,7 +190,11 @@ export async function updateHistogram(
   start: Date,
   end: Date,
   resolution: Resolution,
+  { rawBatchMs = day }: HistogramUpdateOptions = {},
 ): Promise<void> {
+  if (!Number.isFinite(rawBatchMs) || rawBatchMs <= 0) {
+    throw new Error("Histogram raw batch size must be positive and finite");
+  }
   const mongo = await getMongoResource(auth);
   const binSize = RESOLUTION_TO_MS[resolution];
 
@@ -188,7 +203,12 @@ export async function updateHistogram(
 
   console.log("Updating histogram", start, end, resolution);
 
-  const BATCH_SIZE = day * 1;
+  // A source bin must remain inside one batch so a later write cannot replace
+  // it with a partial count. Manual callers retain the one-day default.
+  const BATCH_SIZE = Math.max(
+    binSize,
+    Math.floor(rawBatchMs / binSize) * binSize,
+  );
   if (end.getTime() - start.getTime() > BATCH_SIZE) {
     const steps = Math.ceil(
       (end.getTime() - start.getTime() + 0.0) / Number(BATCH_SIZE),
@@ -197,8 +217,11 @@ export async function updateHistogram(
       await updateHistogramOptimized(
         auth,
         new Date(start.getTime() + i * BATCH_SIZE),
-        new Date(start.getTime() + (i + 1) * BATCH_SIZE),
+        new Date(
+          Math.min(start.getTime() + (i + 1) * BATCH_SIZE, end.getTime()),
+        ),
         resolution,
+        { rawBatchMs },
       );
     }
     return;
@@ -273,9 +296,10 @@ async function updateHistogramOptimized(
   start: Date,
   end: Date,
   resolution: Resolution,
+  options: HistogramUpdateOptions = {},
 ): Promise<void> {
   if (resolution === LOWEST_RESOLUTION) {
-    return updateHistogram(auth, start, end, resolution);
+    return updateHistogram(auth, start, end, resolution, options);
   }
 
   const mongo = await getMongoResource(auth);
@@ -298,7 +322,10 @@ async function updateHistogramOptimized(
   // Batch to stay under 1000 lower-resolution bins per query
   // e.g., for 1hour: 1000 * 5min = 5000 min = ~83 hours per batch
   const MAX_LOWER_BINS = 900; // Stay safely under 1000 limit
-  const BATCH_SIZE = MAX_LOWER_BINS * lowerBinSize;
+  // Keep every target bin inside a single batch: splitting a day at noon
+  // would let the next batch overwrite it using only its second half.
+  const BATCH_SIZE = Math.floor(MAX_LOWER_BINS * lowerBinSize / binSize) *
+    binSize;
 
   if (end.getTime() - start.getTime() > BATCH_SIZE) {
     const steps = Math.ceil((end.getTime() - start.getTime()) / BATCH_SIZE);
@@ -488,6 +515,7 @@ export async function updateAllHistogram(
   start?: Date,
   end?: Date,
   onResolution?: (resolution: Resolution, index: number) => Promise<void>,
+  options: HistogramUpdateOptions = {},
 ): Promise<void> {
   const mongo = await getMongoResource(auth);
 
@@ -564,7 +592,7 @@ export async function updateAllHistogram(
     );
 
     const resStart = Date.now();
-    await updateHistogramOptimized(auth, start, end, resolution);
+    await updateHistogramOptimized(auth, start, end, resolution, options);
     const resDuration = (Date.now() - resStart) / 1000;
     resolutionTimes.push(resDuration);
 
@@ -718,6 +746,8 @@ export const name = "histRecalculation";
 /** Schema for histogram recalculation job data */
 export const schema = z.object({
   type: z.literal("histRecalculation"),
+  /** Reconcile one durable dirty day; automatic work owns its verification. */
+  automaticDensity: z.boolean().optional(),
   start: zDateOrString().optional(),
   end: zDateOrString().optional(),
   /** Process only stale buckets (default: true) */
@@ -749,6 +779,30 @@ export async function use(job: Job<JobData>): Promise<JobResult> {
 
   const start = jobData.start ? new Date(jobData.start) : undefined;
   const end = jobData.end ? new Date(jobData.end) : undefined;
+
+  if (jobData.automaticDensity) {
+    if (!start) throw new Error("Automatic Timeline density requires a day");
+    const mongo = await getMongoResource(auth);
+    const day = await pickTimelineDensityDay(mongo, new Date(), start);
+    if (!day) return { success: true, processed: 0, hasMore: false };
+    try {
+      await job.updateProgress({
+        stage: "automatic_density",
+        start: day.start.toISOString(),
+      });
+      const counts = await rebuildTimelineDensityDay(auth, day.start);
+      const caughtUp = await completeTimelineDensityDay(mongo, day, counts);
+      await job.updateProgress({
+        stage: caughtUp ? "density_verified" : "density_changed_during_rebuild",
+        start: day.start.toISOString(),
+        counts,
+      });
+      return { success: true, processed: 1, hasMore: false };
+    } catch (error) {
+      await failTimelineDensityDay(mongo, day, error);
+      throw error;
+    }
+  }
 
   // Mode 1: Mark range as stale (for manual invalidation)
   if (jobData.markStale) {
@@ -889,6 +943,7 @@ const capability: JobCapability = {
     { resource: "db/audio_chunks", action: "*", effect: "allow" },
     { resource: "db/transcriptions", action: "*", effect: "allow" },
     { resource: "db/histogram_*", action: "*", effect: "allow" },
+    { resource: "db/timeline_density_*", action: "*", effect: "allow" },
     { resource: "db/configs", action: "read", effect: "allow" },
   ],
   use,

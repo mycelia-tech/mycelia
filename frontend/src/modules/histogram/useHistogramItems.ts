@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo } from "react";
-import _ from "lodash";
+import { useEffect, useMemo } from "react";
 import { getResolutionForDuration, RESOLUTION_TO_MS } from "@/lib/resolution";
-import { useHistogramCache, type HistogramItem } from "./useHistogramCache";
+import { type HistogramItem, useHistogramCache } from "./useHistogramCache";
 import { useWebSocketSubscription } from "@/hooks/useWebSocket";
 
 export type { HistogramItem };
@@ -9,63 +8,55 @@ export type { HistogramItem };
 export function useHistogramItems(start: Date, end: Date) {
   const {
     data,
+    generation,
     fetchMissingRanges,
     indexByResolution,
-    ensureIndex,
-    invalidateAll,
+    scheduleInvalidation,
   } = useHistogramCache();
 
   const duration = end.getTime() - start.getTime();
   const resolution = getResolutionForDuration(duration);
 
   const binSize = RESOLUTION_TO_MS[resolution];
-  const queryStart = new Date(start.getTime() - duration - binSize);
-  const queryEnd = new Date(end.getTime() + duration + binSize);
-
-  const debouncedFetchMissingRanges = useCallback(
-    _.debounce((resolution, start, end) => {
-      fetchMissingRanges(resolution, start, end);
-    }, 300),
-    [fetchMissingRanges],
-  );
+  const queryStart = start.getTime() - duration - binSize;
+  const queryEnd = end.getTime() + duration + binSize;
 
   useEffect(() => {
-    debouncedFetchMissingRanges(
-      resolution,
-      queryStart.getTime(),
-      queryEnd.getTime(),
-    );
-  }, [resolution, queryStart.getTime(), queryEnd.getTime()]);
+    const timer = setTimeout(() => {
+      fetchMissingRanges(resolution, queryStart, queryEnd);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [generation, resolution, queryStart, queryEnd, fetchMissingRanges]);
 
-  useWebSocketSubscription(
-    "mongo:histogram",
-    (message) => {
-      const { event, data } = message;
-      if (!data || event !== "mongo.change") return;
-
-      const { collection } = data;
-      if (!collection || !collection.startsWith("histogram_")) return;
-
-      invalidateAll();
-    },
-    true,
-  );
+  const onHistogramChange = (message: any) => {
+    if (
+      message.event === "resync_required" ||
+      message.event === "mongo.change" &&
+        message.data?.collection?.startsWith("histogram_")
+    ) scheduleInvalidation();
+  };
+  // These are exact server channels; a burst across resolutions and mounted
+  // consumers shares one cache invalidation and refreshes each current viewport.
+  useWebSocketSubscription("mongo:histogram_5min", onHistogramChange);
+  useWebSocketSubscription("mongo:histogram_1hour", onHistogramChange);
+  useWebSocketSubscription("mongo:histogram_1day", onHistogramChange);
+  useWebSocketSubscription("mongo:histogram_1week", onHistogramChange);
 
   const filteredItems = useMemo(() => {
-    ensureIndex(resolution);
     const idx = indexByResolution[resolution];
     if (!idx) {
       return data[resolution]?.items ?? [];
     }
-    idx.tsDim.filterRange([queryStart.getTime(), queryEnd.getTime()]);
+    idx.tsDim.filterRange([queryStart, queryEnd]);
     const rows = idx.tsDim.top(Infinity) as HistogramItem[];
     idx.tsDim.filterAll();
     return rows;
   }, [
+    resolution,
     indexByResolution[resolution]?.cf,
     data[resolution]?.items,
-    queryStart.getTime(),
-    queryEnd.getTime(),
+    queryStart,
+    queryEnd,
   ]);
 
   return {

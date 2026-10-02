@@ -1,7 +1,6 @@
 import { ObjectId } from "bson";
 import { ObjectId as MongoObjectId } from "mongodb";
 import { getServerAuth } from "@/lib/auth/core.server.ts";
-import { getTimelineResource } from "@/lib/timeline/resource.server.ts";
 import { teeOutput } from "@/lib/subprocess.ts";
 
 export interface AudioChunk {
@@ -185,27 +184,6 @@ export async function processAudioFile(
   }
 }
 
-export async function invalidateTimelineForData(
-  auth: any,
-  startTime: Date,
-  endTime?: Date,
-): Promise<void> {
-  try {
-    const timeline = await getTimelineResource(auth);
-    const invalidateEnd = endTime || new Date(startTime.getTime() + 60000);
-    await timeline({
-      action: "invalidate",
-      start: startTime,
-      end: invalidateEnd,
-    });
-    console.log(
-      `Timeline invalidated for range: ${startTime.toISOString()} - ${invalidateEnd.toISOString()}`,
-    );
-  } catch (error) {
-    console.warn(`Timeline invalidation failed: ${error}`);
-  }
-}
-
 async function ffmpeg(
   inputData: Uint8Array,
   { inputOptions = [], outputOptions }: {
@@ -324,7 +302,6 @@ export async function createAudioChunk(
     }`,
   );
 
-  await invalidateTimelineForData(auth, startTime);
   return result.insertedId;
 }
 
@@ -360,6 +337,5 @@ export async function insertTranscriptionWithInvalidation(
     `Transcription created: ${result.insertedId}, start: ${startTime.toISOString()}`,
   );
 
-  await invalidateTimelineForData(auth, startTime, endTime);
   return result.insertedId;
 }

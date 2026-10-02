@@ -4,6 +4,7 @@ import { NetworkJobCapability } from "./python.ts";
 /** Schema for ingestion job data */
 export const schema = z.object({
   type: z.literal("ingestion"),
+  sourceFolder: z.string().trim().min(1).max(4096).optional(),
   limit: z.number().int().min(1).max(100).default(20),
 });
 
@@ -17,6 +18,7 @@ export default new NetworkJobCapability({
   schema,
   url: `${INGESTION_WORKER_URL}/jobs/ingestion`,
   policies: [
+    { resource: "db/host_ingestion_config", action: "read", effect: "allow" },
     { resource: "db/source_files", action: "*", effect: "allow" },
     { resource: "db/audio_chunks", action: "*", effect: "allow" },
   ],

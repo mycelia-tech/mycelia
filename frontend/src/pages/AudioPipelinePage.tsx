@@ -932,1264 +932,1338 @@ export default function AudioPipelinePage() {
       data-testid="audio-pipeline-page"
     >
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Audio Pipeline</h1>
-          <p className="text-muted-foreground">
-            Source imports, voice activity, transcription and speaker processing
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            data-testid="refresh-btn"
-          >
-            <RefreshCw
-              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
-            />
-            Calculate current stats
-          </Button>
-        </div>
+        <h1 className="text-3xl font-bold tracking-tight">Audio Pipeline</h1>
+        <Button variant="ghost" size="sm" asChild>
+          <Link to="/jobs">Jobs</Link>
+        </Button>
       </div>
 
-      <ServiceHealthBanner />
       <AudioOperationsCard onCalculate={refetch} calculating={isFetching} />
 
-      <Card
-        className={pipelineHealth === "idle" || pipelineHealth === "loading"
-          ? "border-muted bg-muted/10"
-          : pipelineHealth === "error"
-          ? "border-red-500/50 bg-red-500/5"
-          : pipelineHealth === "blocked"
-          ? "border-red-500/50 bg-red-500/5"
-          : pipelineHealth === "processing"
-          ? "border-blue-500/40 bg-blue-500/5"
-          : pipelineHealth === "attention"
-          ? "border-amber-500/40 bg-amber-500/5"
-          : "border-green-500/30 bg-green-500/5"}
-        data-testid="pipeline-health"
+      <details
+        className="rounded-lg border p-4"
+        data-testid="processing-details"
       >
-        <CardContent className="flex flex-col justify-between gap-4 pt-6 md:flex-row md:items-center">
-          <div className="flex items-start gap-3">
-            {pipelineHealth === "idle"
-              ? <RefreshCw className="mt-0.5 h-5 w-5 text-muted-foreground" />
-              : pipelineHealth === "loading"
-              ? <RefreshCw className="mt-0.5 h-5 w-5 animate-spin" />
+        <summary className="cursor-pointer font-medium">
+          Processing details
+        </summary>
+        <div className="mt-4 space-y-6">
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              data-testid="refresh-btn"
+            >
+              <RefreshCw
+                className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+              />
+              Calculate current stats
+            </Button>
+          </div>
+          <ServiceHealthBanner />
+
+          <Card
+            className={pipelineHealth === "idle" || pipelineHealth === "loading"
+              ? "border-muted bg-muted/10"
               : pipelineHealth === "error"
-              ? <AlertCircle className="mt-0.5 h-5 w-5 text-red-600" />
+              ? "border-red-500/50 bg-red-500/5"
               : pipelineHealth === "blocked"
-              ? <PauseCircle className="mt-0.5 h-5 w-5 text-red-600" />
+              ? "border-red-500/50 bg-red-500/5"
               : pipelineHealth === "processing"
-              ? (
-                <Activity className="mt-0.5 h-5 w-5 animate-pulse text-blue-600" />
-              )
+              ? "border-blue-500/40 bg-blue-500/5"
               : pipelineHealth === "attention"
-              ? <AlertCircle className="mt-0.5 h-5 w-5 text-amber-600" />
-              : <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-600" />}
-            <div>
-              <p className="font-semibold capitalize">
-                {pipelineHealth === "idle"
-                  ? "Pipeline snapshot not calculated"
-                  : `Pipeline ${pipelineHealth}`}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {pipelineHealth === "idle"
-                  ? "Use Calculate current stats to run the exact dashboard queries."
-                  : pipelineHealth === "loading"
-                  ? "Loading source, backlog, worker, and job state."
-                  : pipelineHealth === "error"
-                  ? pipelineError instanceof Error
-                    ? pipelineError.message
-                    : "Pipeline statistics are not responding. Diarization continues independently; retry this dashboard."
-                  : blockedStages.length > 0
-                  ? `${blockedStages.map((stage) => stage.label).join(", ")} ${
-                    blockedStages.length === 1 ? "is" : "are"
-                  } paused with work waiting.`
-                  : activeStages.length > 0
-                  ? `${activeStages.map((stage) => stage.label).join(", ")} ${
-                    activeStages.length === 1 ? "is" : "are"
-                  } processing now.`
-                  : stagesWithErrors.length > 0
-                  ? "No worker is active and some stages need attention."
-                  : "No stage has queued work or a current error."}
-              </p>
-            </div>
-          </div>
-          <Link
-            to="/jobs"
-            className="text-sm font-medium text-primary hover:underline"
+              ? "border-amber-500/40 bg-amber-500/5"
+              : "border-green-500/30 bg-green-500/5"}
+            data-testid="pipeline-health"
           >
-            Open all jobs →
-          </Link>
-        </CardContent>
-      </Card>
-
-      {(stats?.warnings?.length ?? 0) > 0 && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-          <p className="font-medium text-amber-800">
-            Some counters are temporarily unavailable
-          </p>
-          <p className="text-muted-foreground">
-            The database stopped expensive dashboard scans to protect running
-            workers. Refresh later; job execution is unaffected.
-          </p>
-        </div>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Transcript pipeline</CardTitle>
-          <CardDescription>
-            Source ingestion through conversation summaries. Speaker processing
-            is tracked separately below because it creates independent
-            generations.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
-            {(stats?.stages ?? [])
-              .filter((stage) => TRANSCRIPT_STAGE_TYPES.has(stage.type))
-              .map((stage, index) => {
-                const state = stageState(stage);
-                return (
-                  <div
-                    key={stage.type}
-                    className="relative rounded-lg border bg-muted/20 p-3"
-                    data-testid={`pipeline-stage-${stage.type}`}
-                  >
-                    {index > 0 && (
-                      <ChevronRight className="absolute -left-3 top-1/2 hidden h-5 w-5 -translate-y-1/2 rounded-full bg-background text-muted-foreground xl:block" />
-                    )}
-                    <p className="text-xs font-medium text-muted-foreground">
-                      {index + 1}. {stage.label}
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold">
-                      {stageBacklogValue(stage)}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {stageBacklogLabel(stage)}
-                    </p>
-                    <p
-                      className={`mt-2 text-xs font-medium ${state.className}`}
-                    >
-                      {state.label}
-                    </p>
-                    {stage.latestJob && (
-                      <Link
-                        to={`/jobs/${stage.latestJob.id}`}
-                        className="mt-2 block truncate text-[11px] text-primary hover:underline"
-                      >
-                        Latest: {stage.latestJob.state}
-                      </Link>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card data-testid="diarization-campaign">
-        <CardHeader>
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Mic className="h-5 w-5 text-primary" />
-                Speaker diarization
-              </CardTitle>
-              <CardDescription className="mt-1">
-                Current historical backfill: progress, rolling throughput and
-                available GPU capacity.
-              </CardDescription>
-            </div>
-            {diarizationCampaign && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge className={getStateColor(diarizationCampaign.status)}>
-                  {diarizationCampaign.status.replaceAll("_", " ")}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  {diarizationCampaign.updatedAt
-                    ? `Campaign updated ${
-                      formatDistanceToNow(diarizationCampaign.updatedAt)
-                    } ago`
-                    : "Update time unavailable"}
-                  {diarizationCampaign.rateStatus === "live" &&
-                      liveStatusQuery.data?.checkedAt
-                    ? ` · speed checked ${
-                      formatDistanceToNow(liveStatusQuery.data.checkedAt)
-                    } ago`
-                    : ""}
-                </span>
-              </div>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {diarizationCampaign && diarizationCampaignView
-            ? (
-              <>
-                <div className="space-y-2">
-                  {diarizationCampaign.totalChunks != null && (
-                    <Progress
-                      value={diarizationCampaignView.percent}
-                      className="h-3"
-                    />
-                  )}
-                  <div className="flex flex-wrap justify-between gap-2 text-sm">
-                    <span>{diarizationCampaignView.progressLabel}</span>
-                    {diarizationCampaignOpen &&
-                      diarizationCampaignView.etaLabel && (
-                      <span>{diarizationCampaignView.etaLabel}</span>
-                    )}
-                  </div>
-                  {diarizationCampaign.totalEstimated && (
-                    <p className="text-xs text-muted-foreground">
-                      Total is estimated and is refined as jobs complete.
-                    </p>
-                  )}
+            <CardContent className="flex flex-col justify-between gap-4 pt-6 md:flex-row md:items-center">
+              <div className="flex items-start gap-3">
+                {pipelineHealth === "idle"
+                  ? (
+                    <RefreshCw className="mt-0.5 h-5 w-5 text-muted-foreground" />
+                  )
+                  : pipelineHealth === "loading"
+                  ? <RefreshCw className="mt-0.5 h-5 w-5 animate-spin" />
+                  : pipelineHealth === "error"
+                  ? <AlertCircle className="mt-0.5 h-5 w-5 text-red-600" />
+                  : pipelineHealth === "blocked"
+                  ? <PauseCircle className="mt-0.5 h-5 w-5 text-red-600" />
+                  : pipelineHealth === "processing"
+                  ? (
+                    <Activity className="mt-0.5 h-5 w-5 animate-pulse text-blue-600" />
+                  )
+                  : pipelineHealth === "attention"
+                  ? <AlertCircle className="mt-0.5 h-5 w-5 text-amber-600" />
+                  : <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-600" />}
+                <div>
+                  <p className="font-semibold capitalize">
+                    {pipelineHealth === "idle"
+                      ? "Pipeline snapshot not calculated"
+                      : `Pipeline ${pipelineHealth}`}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {pipelineHealth === "idle"
+                      ? "Use Calculate current stats to run the exact dashboard queries."
+                      : pipelineHealth === "loading"
+                      ? "Loading source, backlog, worker, and job state."
+                      : pipelineHealth === "error"
+                      ? pipelineError instanceof Error
+                        ? pipelineError.message
+                        : "Pipeline statistics are not responding. Diarization continues independently; retry this dashboard."
+                      : blockedStages.length > 0
+                      ? `${
+                        blockedStages.map((stage) => stage.label).join(", ")
+                      } ${
+                        blockedStages.length === 1 ? "is" : "are"
+                      } paused with work waiting.`
+                      : activeStages.length > 0
+                      ? `${
+                        activeStages.map((stage) => stage.label).join(", ")
+                      } ${
+                        activeStages.length === 1 ? "is" : "are"
+                      } processing now.`
+                      : stagesWithErrors.length > 0
+                      ? "No worker is active and some stages need attention."
+                      : "No stage has queued work or a current error."}
+                  </p>
                 </div>
+              </div>
+              <Link
+                to="/jobs"
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Open all jobs →
+              </Link>
+            </CardContent>
+          </Card>
 
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {(stats?.warnings?.length ?? 0) > 0 && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+              <p className="font-medium text-amber-800">
+                Some counters are temporarily unavailable
+              </p>
+              <p className="text-muted-foreground">
+                The database stopped expensive dashboard scans to protect
+                running workers. Refresh later; job execution is unaffected.
+              </p>
+            </div>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Transcript pipeline</CardTitle>
+              <CardDescription>
+                Source ingestion through conversation summaries. Speaker
+                processing is tracked separately below because it creates
+                independent generations.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+                {(stats?.stages ?? [])
+                  .filter((stage) => TRANSCRIPT_STAGE_TYPES.has(stage.type))
+                  .map((stage, index) => {
+                    const state = stageState(stage);
+                    return (
+                      <div
+                        key={stage.type}
+                        className="relative rounded-lg border bg-muted/20 p-3"
+                        data-testid={`pipeline-stage-${stage.type}`}
+                      >
+                        {index > 0 && (
+                          <ChevronRight className="absolute -left-3 top-1/2 hidden h-5 w-5 -translate-y-1/2 rounded-full bg-background text-muted-foreground xl:block" />
+                        )}
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {index + 1}. {stage.label}
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold">
+                          {stageBacklogValue(stage)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {stageBacklogLabel(stage)}
+                        </p>
+                        <p
+                          className={`mt-2 text-xs font-medium ${state.className}`}
+                        >
+                          {state.label}
+                        </p>
+                        {stage.latestJob && (
+                          <Link
+                            to={`/jobs/${stage.latestJob.id}`}
+                            className="mt-2 block truncate text-[11px] text-primary hover:underline"
+                          >
+                            Latest: {stage.latestJob.state}
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="diarization-campaign">
+            <CardHeader>
+              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mic className="h-5 w-5 text-primary" />
+                    Speaker diarization
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Current historical backfill: progress, rolling throughput
+                    and available GPU capacity.
+                  </CardDescription>
+                </div>
+                {diarizationCampaign && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      className={getStateColor(diarizationCampaign.status)}
+                    >
+                      {diarizationCampaign.status.replaceAll("_", " ")}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {diarizationCampaign.updatedAt
+                        ? `Campaign updated ${
+                          formatDistanceToNow(diarizationCampaign.updatedAt)
+                        } ago`
+                        : "Update time unavailable"}
+                      {diarizationCampaign.rateStatus === "live" &&
+                          liveStatusQuery.data?.checkedAt
+                        ? ` · speed checked ${
+                          formatDistanceToNow(liveStatusQuery.data.checkedAt)
+                        } ago`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {diarizationCampaign && diarizationCampaignView
+                ? (
+                  <>
+                    <div className="space-y-2">
+                      {diarizationCampaign.totalChunks != null && (
+                        <Progress
+                          value={diarizationCampaignView.percent}
+                          className="h-3"
+                        />
+                      )}
+                      <div className="flex flex-wrap justify-between gap-2 text-sm">
+                        <span>{diarizationCampaignView.progressLabel}</span>
+                        {diarizationCampaignOpen &&
+                          diarizationCampaignView.etaLabel && (
+                          <span>{diarizationCampaignView.etaLabel}</span>
+                        )}
+                      </div>
+                      {diarizationCampaign.totalEstimated && (
+                        <p className="text-xs text-muted-foreground">
+                          Total is estimated and is refined as jobs complete.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                      {[
+                        [
+                          "Rolling speed (≤5 min)",
+                          diarizationCampaign.chunksPerSecond != null
+                            ? `${
+                              (diarizationCampaign.chunksPerSecond * 60)
+                                .toFixed(1)
+                            } chunks/min`
+                            : "Warming up",
+                          "text-foreground",
+                        ],
+                        [
+                          "Useful realtime",
+                          diarizationCampaign.usefulAudioRealtimeMultiple !=
+                              null
+                            ? `${
+                              diarizationCampaign.usefulAudioRealtimeMultiple
+                                .toFixed(1)
+                            }×`
+                            : "—",
+                          "text-foreground",
+                        ],
+                        [
+                          "Active / queued",
+                          liveDiarizationJobs?.available
+                            ? `${activeDiarizationJobs ?? 0} / ${
+                              queuedDiarizationJobs ?? 0
+                            }`
+                            : "Unavailable",
+                          "text-foreground",
+                        ],
+                        [
+                          "Ready / enabled slots",
+                          liveStatusQuery.data?.capacity.available
+                            ? `${
+                              liveStatusQuery.data.capacity.healthySlots ?? 0
+                            } / ${
+                              liveStatusQuery.data.capacity.enabledSlots ?? 0
+                            }`
+                            : "Unavailable",
+                          "text-foreground",
+                        ],
+                        [
+                          "Errors",
+                          diarizationCampaign.errorCount,
+                          diarizationCampaign.errorCount > 0
+                            ? "text-red-500"
+                            : "text-foreground",
+                        ],
+                      ].map(([label, value, className]) => (
+                        <div key={label} className="rounded-lg bg-muted/40 p-3">
+                          <p className="text-xs text-muted-foreground">
+                            {label}
+                          </p>
+                          <p
+                            className={`mt-1 text-xl font-semibold ${className}`}
+                          >
+                            {typeof value === "number"
+                              ? value.toLocaleString()
+                              : value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="rounded-lg border bg-muted/20 p-4 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="break-all font-mono text-xs">
+                          Campaign {diarizationCampaign.campaignId}
+                        </span>
+                        <Link
+                          to="/jobs?type=diarization"
+                          className="text-xs font-medium text-primary hover:underline"
+                        >
+                          Manage diarization jobs
+                        </Link>
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                        A campaign is one durable historical backfill, not one
+                        container or one job. Each bounded job keeps this ID; a
+                        successful job schedules the next batch, while the
+                        five-minute watchdog resumes the same campaign after a
+                        broken chain. In Jobs, Pause prevents new batches and
+                        lets active work finish; Resume continues this campaign.
+                        Route switches and slot counts control how many jobs run
+                        in parallel.
+                      </p>
+                    </div>
+                  </>
+                )
+                : liveStatusQuery.isLoading
+                ? (
+                  <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    Loading live diarization status…
+                  </div>
+                )
+                : liveStatusQuery.isError
+                ? (
+                  <div className="rounded-md border border-red-500/30 bg-red-500/5 p-4 text-sm">
+                    Live diarization status is unavailable. Jobs continue
+                    independently.
+                  </div>
+                )
+                : (
+                  <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    No global diarization backfill campaign has been recorded
+                    yet. Current backlog: {diarizationStage
+                      ? stageBacklogValue(diarizationStage)
+                      : "not calculated"}; active / queued jobs:{" "}
+                    {liveDiarizationJobs?.available
+                      ? `${activeDiarizationJobs ?? 0} / ${
+                        queuedDiarizationJobs ?? 0
+                      }`
+                      : "unavailable"}.
+                  </div>
+                )}
+            </CardContent>
+          </Card>
+
+          <VoiceIdentityStatusCard />
+
+          <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Audio sources</CardTitle>
+                <CardDescription>
+                  Every source type, not only legacy websocket recordings.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 lg:grid-cols-2 xl:grid-cols-5">
                   {[
-                    [
-                      "Rolling speed (≤5 min)",
-                      diarizationCampaign.chunksPerSecond != null
-                        ? `${
-                          (diarizationCampaign.chunksPerSecond * 60).toFixed(1)
-                        } chunks/min`
-                        : "Warming up",
-                      "text-foreground",
-                    ],
-                    [
-                      "Useful realtime",
-                      diarizationCampaign.usefulAudioRealtimeMultiple != null
-                        ? `${
-                          diarizationCampaign.usefulAudioRealtimeMultiple
-                            .toFixed(1)
-                        }×`
-                        : "—",
-                      "text-foreground",
-                    ],
-                    [
-                      "Active / queued",
-                      liveDiarizationJobs?.available
-                        ? `${activeDiarizationJobs ?? 0} / ${
-                          queuedDiarizationJobs ?? 0
-                        }`
-                        : "Unavailable",
-                      "text-foreground",
-                    ],
-                    [
-                      "Ready / enabled slots",
-                      liveStatusQuery.data?.capacity.available
-                        ? `${
-                          liveStatusQuery.data.capacity.healthySlots ?? 0
-                        } / ${liveStatusQuery.data.capacity.enabledSlots ?? 0}`
-                        : "Unavailable",
-                      "text-foreground",
-                    ],
-                    [
-                      "Errors",
-                      diarizationCampaign.errorCount,
-                      diarizationCampaign.errorCount > 0
-                        ? "text-red-500"
-                        : "text-foreground",
-                    ],
-                  ].map(([label, value, className]) => (
+                    ["Total", stats?.sourceFiles?.total],
+                    ["Ingested", stats?.sourceFiles?.ingested],
+                    ["Pending", stats?.sourceFiles?.pending],
+                    ["Blocked", stats?.sourceFiles?.blocked],
+                    ["Errors", stats?.sourceFiles?.errors],
+                  ].map(([label, value]) => (
                     <div key={label} className="rounded-lg bg-muted/40 p-3">
                       <p className="text-xs text-muted-foreground">{label}</p>
-                      <p className={`mt-1 text-xl font-semibold ${className}`}>
+                      <p className="mt-1 text-xl font-semibold">
                         {typeof value === "number"
                           ? value.toLocaleString()
-                          : value}
+                          : "—"}
                       </p>
                     </div>
                   ))}
                 </div>
-
-                <div className="rounded-lg border bg-muted/20 p-4 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="break-all font-mono text-xs">
-                      Campaign {diarizationCampaign.campaignId}
-                    </span>
-                    <Link
-                      to="/jobs?type=diarization"
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Manage diarization jobs
-                    </Link>
-                  </div>
-                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                    A campaign is one durable historical backfill, not one
-                    container or one job. Each bounded job keeps this ID; a
-                    successful job schedules the next batch, while the
-                    five-minute watchdog resumes the same campaign after a
-                    broken chain. In Jobs, Pause prevents new batches and lets
-                    active work finish; Resume continues this campaign. Route
-                    switches and slot counts control how many jobs run in
-                    parallel.
-                  </p>
-                </div>
-              </>
-            )
-            : liveStatusQuery.isLoading
-            ? (
-              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                Loading live diarization status…
-              </div>
-            )
-            : liveStatusQuery.isError
-            ? (
-              <div className="rounded-md border border-red-500/30 bg-red-500/5 p-4 text-sm">
-                Live diarization status is unavailable. Jobs continue
-                independently.
-              </div>
-            )
-            : (
-              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                No global diarization backfill campaign has been recorded yet.
-                Current backlog: {diarizationStage
-                  ? stageBacklogValue(diarizationStage)
-                  : "not calculated"}; active / queued jobs:{" "}
-                {liveDiarizationJobs?.available
-                  ? `${activeDiarizationJobs ?? 0} / ${
-                    queuedDiarizationJobs ?? 0
-                  }`
-                  : "unavailable"}.
-              </div>
-            )}
-        </CardContent>
-      </Card>
-
-      <VoiceIdentityStatusCard />
-
-      <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Audio sources</CardTitle>
-            <CardDescription>
-              Every source type, not only legacy websocket recordings.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 lg:grid-cols-2 xl:grid-cols-5">
-              {[
-                ["Total", stats?.sourceFiles?.total],
-                ["Ingested", stats?.sourceFiles?.ingested],
-                ["Pending", stats?.sourceFiles?.pending],
-                ["Blocked", stats?.sourceFiles?.blocked],
-                ["Errors", stats?.sourceFiles?.errors],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{label}</p>
-                  <p className="mt-1 text-xl font-semibold">
-                    {typeof value === "number" ? value.toLocaleString() : "—"}
-                  </p>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {(stats?.sourceFiles?.byKind ?? []).map((source) => (
-                <Badge key={source.kind} variant="outline">
-                  {source.kind}: {source.count.toLocaleString()}
-                </Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Latest pipeline jobs</CardTitle>
-            <CardDescription>
-              This activity can belong to older recordings, so it is shown
-              separately from recently added sources.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {(stats?.recentJobs ?? []).slice(0, 6).map((job) => (
-              <Link
-                key={job.id}
-                to={`/jobs/${job.id}`}
-                className="flex items-center justify-between gap-4 rounded-md border p-2.5 hover:bg-muted/40"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium capitalize">
-                    {formatWorkerType(job.type)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {job.updatedAt
-                      ? formatDistanceToNow(job.updatedAt, { addSuffix: true })
-                      : "time unavailable"}
-                  </p>
-                </div>
-                <Badge className={getStateColor(job.state)}>{job.state}</Badge>
-              </Link>
-            ))}
-            {(stats?.recentJobs?.length ?? 0) === 0 && (
-              <p className="py-5 text-center text-sm text-muted-foreground">
-                {stats
-                  ? "No pipeline jobs recorded yet."
-                  : "Calculate current stats to load job history."}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Pipeline Stats */}
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <AudioWaveform className="h-5 w-5 text-primary" />
-                VAD processing
-              </CardTitle>
-              <CardDescription className="mt-1">
-                Coverage of every audio chunk currently stored in Mycelia. The
-                total can increase while ingestion is still creating chunks.
-              </CardDescription>
-            </div>
-            <Badge
-              variant={!stats
-                ? "outline"
-                : stats.chunksAwaitingVad > 0
-                ? "secondary"
-                : "outline"}
-            >
-              {!stats
-                ? "Not calculated"
-                : stats.chunksAwaitingVad > 0
-                ? `${stats.chunksAwaitingVad.toLocaleString()} remaining`
-                : "Up to date"}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span>
-                {stats
-                  ? `${stats.chunksVadProcessed.toLocaleString()} of ${stats.totalChunks.toLocaleString()} chunks processed`
-                  : "Coverage not calculated"}
-              </span>
-              <span className="font-medium">
-                {stats ? `${vadCompletion.toFixed(1)}%` : "—"}
-              </span>
-            </div>
-            <Progress value={vadCompletion} className="h-3" />
-            {stats && (
-              <p className="text-xs text-muted-foreground">
-                Remaining upper bound:{" "}
-                {stats.chunksAwaitingVad.toLocaleString()} chunks ×{" "}
-                {MAX_AUDIO_CHUNK_SECONDS} sec ={" "}
-                {vadMaximumAudioHours.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })} hours of audio
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Total chunks</p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats ? stats.totalChunks.toLocaleString() : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">VAD completed</p>
-              <p className="mt-1 text-xl font-semibold text-green-600">
-                {stats ? stats.chunksVadProcessed.toLocaleString() : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">
-                Still awaiting VAD
-              </p>
-              <p className="mt-1 text-xl font-semibold text-amber-600">
-                {stats ? stats.chunksAwaitingVad.toLocaleString() : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Activity className="h-3 w-3" /> Active / queued jobs
-              </p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats ? `${stats.vadJobs.active} / ${queuedVadJobs}` : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Gauge className="h-3 w-3" /> Recent speed
-              </p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats ? `${stats.vadRatePerMinute.toFixed(1)}/min` : "—"}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                last 15 minutes
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" /> Audio left (maximum)
-              </p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats
-                  ? `${
-                    vadMaximumAudioHours.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })
-                  }h`
-                  : "—"}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                assumes {MAX_AUDIO_CHUNK_SECONDS}s per chunk
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Timer className="h-3 w-3" /> Estimated wall time
-              </p>
-              <p className="mt-1 text-sm font-semibold">
-                {!stats
-                  ? "Not calculated"
-                  : stats.chunksAwaitingVad === 0
-                  ? "Complete"
-                  : formatEta(stats.vadEtaSeconds)}
-              </p>
-            </div>
-          </div>
-
-          {(stats?.vadJobs?.failed ?? 0) > 0 && (
-            <details className="rounded-lg border border-destructive/40 bg-destructive/5">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-destructive">
-                {stats?.vadJobs.failed.toLocaleString()} failed VAD job(s)
-                {stats?.vadJobs.latestFailureAt
-                  ? ` — latest ${
-                    format(
-                      stats.vadJobs.latestFailureAt,
-                      "MMM d, yyyy · HH:mm:ss",
-                    )
-                  }`
-                  : ""}
-              </summary>
-              <div className="space-y-3 border-t border-destructive/30 px-4 py-3">
-                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-                  <p className="text-xs text-muted-foreground">
-                    Showing the five most recent failures. Clearing removes only
-                    failed VAD history.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={clearFailedVadMutation.isPending}
-                    onClick={handleClearFailedVad}
-                  >
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    {clearFailedVadMutation.isPending
-                      ? "Clearing…"
-                      : "Clear failed VAD history"}
-                  </Button>
-                </div>
-
-                <div className="space-y-2">
-                  {(stats?.vadJobs.recentFailures ?? []).map((failure) => (
-                    <div
-                      key={failure.id}
-                      className="rounded-md border border-destructive/20 bg-background/60 p-3"
-                    >
-                      <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-                        <span>
-                          {failure.failedAt
-                            ? format(failure.failedAt, "MMM d, yyyy · HH:mm:ss")
-                            : "Failure time unavailable"}
-                        </span>
-                        {failure.failedAt && (
-                          <span>
-                            ({formatDistanceToNow(failure.failedAt, {
-                              addSuffix: true,
-                            })})
-                          </span>
-                        )}
-                      </div>
-                      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-destructive">
-                        {failure.reason || "No error message was stored."}
-                      </pre>
-                    </div>
+                <div className="flex flex-wrap gap-2">
+                  {(stats?.sourceFiles?.byKind ?? []).map((source) => (
+                    <Badge key={source.kind} variant="outline">
+                      {source.kind}: {source.count.toLocaleString()}
+                    </Badge>
                   ))}
                 </div>
-              </div>
-            </details>
-          )}
-        </CardContent>
-      </Card>
+              </CardContent>
+            </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                Transcription backlog
-              </CardTitle>
-              <CardDescription className="mt-1">
-                Speech-positive chunks that are not transcribed and are not
-                currently claimed by an STT worker.
-              </CardDescription>
-            </div>
-            <Badge
-              variant={stats && stats.transcriptionPendingChunks > 0
-                ? "secondary"
-                : "outline"}
-            >
-              {!stats
-                ? "Not calculated"
-                : stats.transcriptionPendingChunks > 0
-                ? `${stats.transcriptionPendingChunks.toLocaleString()} pending`
-                : "Up to date"}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Pending chunks</p>
-              <p className="mt-1 text-xl font-semibold text-amber-600">
-                {stats
-                  ? stats.transcriptionPendingChunks.toLocaleString()
-                  : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" /> Audio left (maximum)
-              </p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats
-                  ? `${
-                    stats.transcriptionPendingMaximumHours.toLocaleString(
-                      undefined,
-                      {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      },
-                    )
-                  }h`
-                  : "—"}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                assumes {MAX_AUDIO_CHUNK_SECONDS}s per chunk
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Sequences ready</p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats ? stats.sequencesReady.toLocaleString() : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">
-                Sequences processing / errors
-              </p>
-              <p className="mt-1 text-xl font-semibold">
-                {stats ? stats.sequencesProcessing.toLocaleString() : "—"} /
-                {" "}
-                <span
-                  className={(stats?.sequencesError ?? 0) > 0
-                    ? "text-red-500"
-                    : undefined}
-                >
-                  {stats ? stats.sequencesError.toLocaleString() : "—"}
-                </span>
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Seq Ready</CardTitle>
-            <Clock className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats?.sequencesReady ?? "-"}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Seq Processing
-            </CardTitle>
-            <RefreshCw className="h-4 w-4 text-yellow-500 animate-spin" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats?.sequencesProcessing ?? "-"}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Seq Errors</CardTitle>
-            <AlertCircle className="h-4 w-4 text-red-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats?.sequencesError ?? "-"}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Conv Chunks</CardTitle>
-            <Layers className="h-4 w-4 text-purple-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats?.convChunksReady ?? "-"}
-              {(stats?.convChunksProcessing ?? 0) > 0 && (
-                <span className="text-sm font-normal text-yellow-500 ml-1">
-                  +{stats?.convChunksProcessing}
-                </span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Conversations</CardTitle>
-            <MessageSquare className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats?.totalConversations ?? "-"}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Sessions List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent source files</CardTitle>
-          <CardDescription>
-            Ordered by source ingestion, retry, or source-record update—not by
-            downstream processing. Details load only when a row is opened.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {recentSourcesQuery.isError
-            ? (
-              <div className="space-y-3 p-8 text-center text-muted-foreground">
-                <p>
-                  Recent source metadata is unavailable. Corpus statistics and
-                  background workers are unaffected.
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => void recentSourcesQuery.refetch()}
-                >
-                  Retry sources
-                </Button>
-              </div>
-            )
-            : recentSourcesQuery.isLoading
-            ? (
-              <div className="p-8 text-center text-muted-foreground">
-                Loading recent source files…
-              </div>
-            )
-            : !sessions?.length
-            ? (
-              <div className="p-8 text-center text-muted-foreground">
-                No audio sources found
-              </div>
-            )
-            : (
-              <div className="divide-y">
-                {sessions?.map((session) => (
-                  <Collapsible
-                    key={session._id}
-                    open={expandedSessions.has(session._id)}
-                    onOpenChange={() => toggleSession(session._id)}
+            <Card>
+              <CardHeader>
+                <CardTitle>Latest pipeline jobs</CardTitle>
+                <CardDescription>
+                  This activity can belong to older recordings, so it is shown
+                  separately from recently added sources.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {(stats?.recentJobs ?? []).slice(0, 6).map((job) => (
+                  <Link
+                    key={job.id}
+                    to={`/jobs/${job.id}`}
+                    className="flex items-center justify-between gap-4 rounded-md border p-2.5 hover:bg-muted/40"
                   >
-                    <CollapsibleTrigger asChild>
-                      <div
-                        className="flex cursor-pointer flex-col gap-4 p-4 hover:bg-muted/50 xl:flex-row xl:items-center xl:justify-between"
-                        data-testid={`session-row-${session._id}`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <Mic className="h-5 w-5 text-muted-foreground" />
-                          <div>
-                            <div className="font-medium flex items-center gap-2">
-                              {session.start
-                                ? format(session.start, "MMM d, HH:mm:ss")
-                                : session.path?.split("/").pop() ||
-                                  "Recording time unavailable"}
-                              <Badge variant="outline" className="font-normal">
-                                {session.sourceKind}
-                              </Badge>
-                              <Badge
-                                className={session.ingestionError
-                                  ? "bg-red-500/10 text-red-600"
-                                  : session.ingested
-                                  ? "bg-green-500/10 text-green-600"
-                                  : "bg-amber-500/10 text-amber-600"}
-                              >
-                                {session.ingestionError
-                                  ? "ingestion error"
-                                  : session.ingested
-                                  ? "ingested"
-                                  : "pending"}
-                              </Badge>
-                              {session.client_id && (
-                                <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded">
-                                  {session.device || session.client_id}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              {session.metadata?.codec ||
-                                session.metadata?.format || "unknown"}{" "}
-                              {session.metadata?.rate}Hz &middot;{" "}
-                              {session.lastActivityAt
-                                ? `source updated ${
-                                  formatDistanceToNow(session.lastActivityAt, {
-                                    addSuffix: true,
-                                  })
-                                } · `
-                                : ""}
-                              <span className="font-mono text-xs">
-                                {session._id.substring(0, 8)}
-                              </span>
-                            </div>
-                            {session.path && (
-                              <div
-                                className="max-w-xl truncate text-xs text-muted-foreground"
-                                title={session.path}
-                              >
-                                {session.path}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex w-full items-center gap-6 overflow-x-auto pb-1 xl:w-auto xl:pb-0">
-                          {/* Pipeline stages mini-view */}
-                          <div className="flex items-center gap-2">
-                            {sourceDetails[session._id]
-                              ? getStageProgress(session).map((stage, i) => (
-                                <div
-                                  key={stage.name}
-                                  className="flex items-center gap-1"
-                                >
-                                  {i > 0 && (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                  )}
-                                  <div
-                                    className={`text-xs px-2 py-0.5 rounded ${
-                                      stage.done
-                                        ? "bg-green-500/10 text-green-600"
-                                        : "bg-muted text-muted-foreground"
-                                    }`}
-                                  >
-                                    {stage.name}: {stage.count.toLocaleString()}
-                                  </div>
-                                </div>
-                              ))
-                              : (
-                                <Badge variant="outline">
-                                  Open for downstream details
-                                </Badge>
-                              )}
-                          </div>
-                          <ChevronRight
-                            className={`h-5 w-5 text-muted-foreground transition-transform ${
-                              expandedSessions.has(session._id)
-                                ? "rotate-90"
-                                : ""
-                            }`}
-                          />
-                        </div>
-                      </div>
-                    </CollapsibleTrigger>
-
-                    <CollapsibleContent>
-                      {loadingSourceDetails.has(session._id) && (
-                        <div className="border-t px-4 py-3 text-sm text-muted-foreground">
-                          Loading bounded downstream details…
-                        </div>
-                      )}
-                      {sourceDetailErrors[session._id] && (
-                        <div className="flex items-center justify-between gap-3 border-t border-red-500/30 bg-red-500/5 px-4 py-3 text-sm">
-                          <span>{sourceDetailErrors[session._id]}</span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void loadSourceDetails(session._id)}
-                          >
-                            Retry details
-                          </Button>
-                        </div>
-                      )}
-                      <div
-                        className={`px-4 pb-3 pt-2 bg-muted/30 space-y-3 ${
-                          sourceDetails[session._id] ? "" : "hidden"
-                        }`}
-                      >
-                        <PipelineDetailSection
-                          title="Ingestion"
-                          summary={session.ingestionError
-                            ? "Error"
-                            : session.ingested
-                            ? "Complete"
-                            : "Pending"}
-                          icon={<Mic className="h-3 w-3" />}
-                          defaultOpen={Boolean(session.ingestionError)}
-                          testId={`session-${session._id}-ingestion`}
-                        >
-                          <div className="space-y-2 text-xs">
-                            <p className="break-all font-mono text-muted-foreground">
-                              {session.path || "No local source path"}
-                            </p>
-                            {session.ingestionError
-                              ? (
-                                <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-600">
-                                  {session.ingestionError}
-                                </pre>
-                              )
-                              : (
-                                <p
-                                  className={session.ingested
-                                    ? "text-green-600"
-                                    : "text-amber-600"}
-                                >
-                                  {session.ingested
-                                    ? "Source audio was ingested successfully."
-                                    : "Source audio is waiting for ingestion."}
-                                </p>
-                              )}
-                          </div>
-                        </PipelineDetailSection>
-
-                        <PipelineDetailSection
-                          title="Audio chunks & VAD"
-                          summary={`${session.chunks.vadProcessed.toLocaleString()} / ${session.chunks.total.toLocaleString()} processed · ${session.chunks.withSpeech.toLocaleString()} speech`}
-                          icon={<AudioWaveform className="h-3 w-3" />}
-                          testId={`session-${session._id}-vad`}
-                        >
-                          <div className="flex flex-wrap items-center gap-4 text-xs">
-                            <span className="text-muted-foreground">
-                              Chunks:{" "}
-                              <span className="font-medium text-foreground">
-                                {session.chunks.total.toLocaleString()}
-                              </span>
-                            </span>
-                            <span className="text-muted-foreground">
-                              VAD:{" "}
-                              <span className="font-medium text-foreground">
-                                {session.chunks.vadProcessed.toLocaleString()}
-                              </span>
-                              {session.chunks.total > 0 && (
-                                <span className="ml-1">
-                                  ({Math.round(
-                                    (session.chunks.vadProcessed /
-                                      session.chunks.total) * 100,
-                                  )}%)
-                                </span>
-                              )}
-                            </span>
-                            <span className="text-muted-foreground">
-                              Speech:{" "}
-                              <span className="font-medium text-foreground">
-                                {session.chunks.withSpeech.toLocaleString()}
-                              </span>
-                            </span>
-                            {session.chunks.total > 0 && (
-                              <Progress
-                                value={(session.chunks.vadProcessed /
-                                  session.chunks.total) * 100}
-                                className="h-1.5 min-w-24 flex-1"
-                              />
-                            )}
-                          </div>
-                        </PipelineDetailSection>
-
-                        {/* Sequences - compact inline */}
-                        {session.sequences.length > 0 && (
-                          <PipelineDetailSection
-                            title="Transcription sequences"
-                            summary={`${session.sequences.length.toLocaleString()} sequence(s)`}
-                            icon={<Layers className="h-3 w-3 text-blue-500" />}
-                            testId={`session-${session._id}-sequences`}
-                          >
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              {session.sequences.map((seq) => (
-                                <div
-                                  key={seq._id}
-                                  className="flex items-center gap-1"
-                                >
-                                  <Badge
-                                    className={`${
-                                      getStateColor(seq.state)
-                                    } text-xs py-0 px-1.5`}
-                                  >
-                                    {seq.state}
-                                  </Badge>
-                                  <span className="font-mono text-muted-foreground">
-                                    [{seq.fromIndex}-{seq.toIndex}]
-                                  </span>
-                                  {(seq.state === "error" ||
-                                    seq.state === "processing") && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-5 px-1 text-xs"
-                                      onClick={() => resetSequence(seq._id)}
-                                    >
-                                      ↻
-                                    </Button>
-                                  )}
-                                </div>
-                              ))}
-                              {session.sequences.some((s) => s.error) && (
-                                <span className="text-red-500 text-xs">
-                                  Error: {session.sequences.find((s) =>
-                                    s.error
-                                  )?.error?.slice(0, 50)}...
-                                </span>
-                              )}
-                            </div>
-                          </PipelineDetailSection>
-                        )}
-
-                        {/* Transcriptions - compact list */}
-                        {session.transcriptionDetails.length > 0 && (
-                          <PipelineDetailSection
-                            title="Transcriptions"
-                            summary={`${session.transcriptions.toLocaleString()} total`}
-                            icon={<FileText className="h-3 w-3" />}
-                            testId={`session-${session._id}-transcriptions`}
-                          >
-                            <div className="max-h-64 space-y-1 overflow-y-auto">
-                              {session.transcriptionDetails.map((t) => (
-                                <div
-                                  key={t._id}
-                                  className="flex gap-2 text-xs bg-background rounded px-2 py-1"
-                                >
-                                  <Link
-                                    to={`/timeline?start=${t.start.getTime()}&end=${t.end.getTime()}`}
-                                    className="text-muted-foreground hover:underline whitespace-nowrap shrink-0"
-                                  >
-                                    {format(t.start, "HH:mm:ss")}
-                                  </Link>
-                                  <span className="text-foreground truncate">
-                                    {t.text || (
-                                      <span className="italic text-muted-foreground">
-                                        (no text)
-                                      </span>
-                                    )}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                            {session.transcriptions >
-                                session.transcriptionDetails.length && (
-                              <p className="mt-2 text-[11px] text-muted-foreground">
-                                Showing the first {session.transcriptionDetails
-                                  .length.toLocaleString()} of {session
-                                  .transcriptions.toLocaleString()}.
-                              </p>
-                            )}
-                          </PipelineDetailSection>
-                        )}
-
-                        {/* Conversation Chunks - compact inline */}
-                        {session.conversationChunks.length > 0 && (
-                          <PipelineDetailSection
-                            title="Conversation chunks"
-                            summary={`${session.conversationChunks.length.toLocaleString()} chunk(s)`}
-                            icon={
-                              <Layers className="h-3 w-3 text-purple-500" />
-                            }
-                            testId={`session-${session._id}-conversation-chunks`}
-                          >
-                            <div className="max-h-80 overflow-y-auto flex flex-wrap gap-1">
-                              {session.conversationChunks.map((chunk) => (
-                                <div
-                                  key={chunk._id}
-                                  className="flex items-center gap-1 bg-background rounded px-2 py-0.5 text-xs"
-                                >
-                                  <Badge
-                                    className={`${
-                                      getStateColor(chunk.state)
-                                    } text-xs py-0 px-1`}
-                                  >
-                                    {chunk.state}
-                                  </Badge>
-                                  {chunk.start && chunk.end && (
-                                    <Link
-                                      to={`/timeline?start=${chunk.start.getTime()}&end=${chunk.end.getTime()}`}
-                                      className="hover:underline text-primary"
-                                    >
-                                      {format(chunk.start, "HH:mm")}
-                                    </Link>
-                                  )}
-                                  {chunk.conversationsCreated !== undefined &&
-                                    chunk.conversationsCreated > 0 && (
-                                    <span className="text-green-500">
-                                      →{chunk.conversationsCreated}
-                                    </span>
-                                  )}
-                                  {chunk.error && (
-                                    <span
-                                      className="text-red-500"
-                                      title={chunk.error}
-                                    >
-                                      ⚠
-                                    </span>
-                                  )}
-                                  {chunk.emptyReason && (
-                                    <span
-                                      className="text-yellow-500"
-                                      title={chunk.emptyReason}
-                                    >
-                                      ∅
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </PipelineDetailSection>
-                        )}
-
-                        {/* Conversations - 2 column grid */}
-                        {session.conversations.length > 0 && (
-                          <PipelineDetailSection
-                            title="Parsed conversations"
-                            summary={`${session.conversations.length.toLocaleString()} conversation(s)`}
-                            icon={
-                              <MessageSquare className="h-3 w-3 text-green-500" />
-                            }
-                            testId={`session-${session._id}-conversations`}
-                          >
-                            <div className="grid max-h-[32rem] gap-2 overflow-y-auto sm:grid-cols-2">
-                              {session.conversations.map((conv) => {
-                                const start = conv.timeRanges?.[0]?.start
-                                  ? new Date(conv.timeRanges[0].start)
-                                  : null;
-                                const end = conv.timeRanges?.[0]?.end
-                                  ? new Date(conv.timeRanges[0].end)
-                                  : null;
-                                const durationMs = start && end
-                                  ? end.getTime() - start.getTime()
-                                  : 0;
-                                const durationMins = Math.round(
-                                  durationMs / 60000,
-                                );
-
-                                return (
-                                  <div
-                                    key={conv._id}
-                                    className="flex items-start gap-2 bg-background rounded-lg p-2 hover:bg-muted transition-colors"
-                                  >
-                                    {conv.icon?.text && (
-                                      <span className="text-lg shrink-0">
-                                        {conv.icon.text}
-                                      </span>
-                                    )}
-                                    <div className="flex-1 min-w-0">
-                                      <Link
-                                        to={`/objects/${conv._id}`}
-                                        className="text-sm font-medium text-primary hover:underline block truncate"
-                                      >
-                                        {conv.name}
-                                      </Link>
-                                      {start && (
-                                        <Link
-                                          to={`/timeline?start=${start.getTime()}&end=${
-                                            end?.getTime() || start.getTime()
-                                          }`}
-                                          className="text-xs text-muted-foreground hover:underline flex items-center gap-1"
-                                        >
-                                          <span>
-                                            {format(start, "MMM d, HH:mm")}
-                                          </span>
-                                          {durationMins > 0 && (
-                                            <span className="text-muted-foreground">
-                                              • {durationMins}m
-                                            </span>
-                                          )}
-                                        </Link>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </PipelineDetailSection>
-                        )}
-
-                        {/* Empty states - inline */}
-                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                          {session.sequences.length === 0 && (
-                            <span>
-                              No sequences{session.chunks.withSpeech === 0 &&
-                                session.chunks.vadProcessed > 0 &&
-                                " (no speech)"}
-                            </span>
-                          )}
-                          {session.transcriptionDetails.length === 0 &&
-                            session.sequences.length > 0 && (
-                            <span>No transcriptions</span>
-                          )}
-                          {session.conversations.length === 0 &&
-                            session.transcriptions > 0 && (
-                            <span>
-                              No conversations{session.conversationChunks.some(
-                                (c) => c.state === "empty",
-                              ) && " (empty chunks)"}
-                            </span>
-                          )}
-                          <span className="font-mono text-[10px] ml-auto">
-                            {session._id}
-                          </span>
-                        </div>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium capitalize">
+                        {formatWorkerType(job.type)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {job.updatedAt
+                          ? formatDistanceToNow(job.updatedAt, {
+                            addSuffix: true,
+                          })
+                          : "time unavailable"}
+                      </p>
+                    </div>
+                    <Badge className={getStateColor(job.state)}>
+                      {job.state}
+                    </Badge>
+                  </Link>
                 ))}
-                {hasMoreSessions && (
-                  <div className="p-4 border-t">
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      disabled={recentSourcesQuery.isFetchingNextPage}
-                      onClick={() => void recentSourcesQuery.fetchNextPage()}
-                      data-testid="load-more-sessions"
-                    >
-                      {recentSourcesQuery.isFetchingNextPage
-                        ? "Loading…"
-                        : "Load more source files"}
-                    </Button>
-                  </div>
+                {(stats?.recentJobs?.length ?? 0) === 0 && (
+                  <p className="py-5 text-center text-sm text-muted-foreground">
+                    {stats
+                      ? "No pipeline jobs recorded yet."
+                      : "Calculate current stats to load job history."}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Pipeline Stats */}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <AudioWaveform className="h-5 w-5 text-primary" />
+                    VAD processing
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Coverage of every audio chunk currently stored in Mycelia.
+                    The total can increase while ingestion is still creating
+                    chunks.
+                  </CardDescription>
+                </div>
+                <Badge
+                  variant={!stats
+                    ? "outline"
+                    : stats.chunksAwaitingVad > 0
+                    ? "secondary"
+                    : "outline"}
+                >
+                  {!stats
+                    ? "Not calculated"
+                    : stats.chunksAwaitingVad > 0
+                    ? `${stats.chunksAwaitingVad.toLocaleString()} remaining`
+                    : "Up to date"}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span>
+                    {stats
+                      ? `${stats.chunksVadProcessed.toLocaleString()} of ${stats.totalChunks.toLocaleString()} chunks processed`
+                      : "Coverage not calculated"}
+                  </span>
+                  <span className="font-medium">
+                    {stats ? `${vadCompletion.toFixed(1)}%` : "—"}
+                  </span>
+                </div>
+                <Progress value={vadCompletion} className="h-3" />
+                {stats && (
+                  <p className="text-xs text-muted-foreground">
+                    Remaining upper bound:{" "}
+                    {stats.chunksAwaitingVad.toLocaleString()} chunks ×{" "}
+                    {MAX_AUDIO_CHUNK_SECONDS} sec ={" "}
+                    {vadMaximumAudioHours.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })} hours of audio
+                  </p>
                 )}
               </div>
-            )}
-        </CardContent>
-      </Card>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">Total chunks</p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats ? stats.totalChunks.toLocaleString() : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">VAD completed</p>
+                  <p className="mt-1 text-xl font-semibold text-green-600">
+                    {stats ? stats.chunksVadProcessed.toLocaleString() : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Still awaiting VAD
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-amber-600">
+                    {stats ? stats.chunksAwaitingVad.toLocaleString() : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Activity className="h-3 w-3" /> Active / queued jobs
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats ? `${stats.vadJobs.active} / ${queuedVadJobs}` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Gauge className="h-3 w-3" /> Recent speed
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats ? `${stats.vadRatePerMinute.toFixed(1)}/min` : "—"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    last 15 minutes
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3" /> Audio left (maximum)
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats
+                      ? `${
+                        vadMaximumAudioHours.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                      }h`
+                      : "—"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    assumes {MAX_AUDIO_CHUNK_SECONDS}s per chunk
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Timer className="h-3 w-3" /> Estimated wall time
+                  </p>
+                  <p className="mt-1 text-sm font-semibold">
+                    {!stats
+                      ? "Not calculated"
+                      : stats.chunksAwaitingVad === 0
+                      ? "Complete"
+                      : formatEta(stats.vadEtaSeconds)}
+                  </p>
+                </div>
+              </div>
+
+              {(stats?.vadJobs?.failed ?? 0) > 0 && (
+                <details className="rounded-lg border border-destructive/40 bg-destructive/5">
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-destructive">
+                    {stats?.vadJobs.failed.toLocaleString()} failed VAD job(s)
+                    {stats?.vadJobs.latestFailureAt
+                      ? ` — latest ${
+                        format(
+                          stats.vadJobs.latestFailureAt,
+                          "MMM d, yyyy · HH:mm:ss",
+                        )
+                      }`
+                      : ""}
+                  </summary>
+                  <div className="space-y-3 border-t border-destructive/30 px-4 py-3">
+                    <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                      <p className="text-xs text-muted-foreground">
+                        Showing the five most recent failures. Clearing removes
+                        only failed VAD history.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={clearFailedVadMutation.isPending}
+                        onClick={handleClearFailedVad}
+                      >
+                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                        {clearFailedVadMutation.isPending
+                          ? "Clearing…"
+                          : "Clear failed VAD history"}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {(stats?.vadJobs.recentFailures ?? []).map((failure) => (
+                        <div
+                          key={failure.id}
+                          className="rounded-md border border-destructive/20 bg-background/60 p-3"
+                        >
+                          <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+                            <span>
+                              {failure.failedAt
+                                ? format(
+                                  failure.failedAt,
+                                  "MMM d, yyyy · HH:mm:ss",
+                                )
+                                : "Failure time unavailable"}
+                            </span>
+                            {failure.failedAt && (
+                              <span>
+                                ({formatDistanceToNow(failure.failedAt, {
+                                  addSuffix: true,
+                                })})
+                              </span>
+                            )}
+                          </div>
+                          <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-destructive">
+                        {failure.reason || "No error message was stored."}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </details>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                    Transcription backlog
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Speech-positive chunks that are not transcribed and are not
+                    currently claimed by an STT worker.
+                  </CardDescription>
+                </div>
+                <Badge
+                  variant={stats && stats.transcriptionPendingChunks > 0
+                    ? "secondary"
+                    : "outline"}
+                >
+                  {!stats
+                    ? "Not calculated"
+                    : stats.transcriptionPendingChunks > 0
+                    ? `${stats.transcriptionPendingChunks.toLocaleString()} pending`
+                    : "Up to date"}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Pending chunks
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-amber-600">
+                    {stats
+                      ? stats.transcriptionPendingChunks.toLocaleString()
+                      : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3" /> Audio left (maximum)
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats
+                      ? `${
+                        stats.transcriptionPendingMaximumHours.toLocaleString(
+                          undefined,
+                          {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          },
+                        )
+                      }h`
+                      : "—"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    assumes {MAX_AUDIO_CHUNK_SECONDS}s per chunk
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Sequences ready
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats ? stats.sequencesReady.toLocaleString() : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Sequences processing / errors
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {stats ? stats.sequencesProcessing.toLocaleString() : "—"} /
+                    {" "}
+                    <span
+                      className={(stats?.sequencesError ?? 0) > 0
+                        ? "text-red-500"
+                        : undefined}
+                    >
+                      {stats ? stats.sequencesError.toLocaleString() : "—"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Seq Ready</CardTitle>
+                <Clock className="h-4 w-4 text-blue-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {stats?.sequencesReady ?? "-"}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  Seq Processing
+                </CardTitle>
+                <RefreshCw className="h-4 w-4 text-yellow-500 animate-spin" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {stats?.sequencesProcessing ?? "-"}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  Seq Errors
+                </CardTitle>
+                <AlertCircle className="h-4 w-4 text-red-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {stats?.sequencesError ?? "-"}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  Conv Chunks
+                </CardTitle>
+                <Layers className="h-4 w-4 text-purple-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {stats?.convChunksReady ?? "-"}
+                  {(stats?.convChunksProcessing ?? 0) > 0 && (
+                    <span className="text-sm font-normal text-yellow-500 ml-1">
+                      +{stats?.convChunksProcessing}
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  Conversations
+                </CardTitle>
+                <MessageSquare className="h-4 w-4 text-green-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {stats?.totalConversations ?? "-"}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </details>
+
+      <details
+        className="rounded-lg border p-4"
+        data-testid="source-files-details"
+      >
+        <summary className="cursor-pointer font-medium">Source files</summary>
+        <div className="mt-4">
+          {/* Sessions List */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent source files</CardTitle>
+              <CardDescription>
+                Ordered by source ingestion, retry, or source-record update—not
+                by downstream processing. Details load only when a row is
+                opened.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {recentSourcesQuery.isError
+                ? (
+                  <div className="space-y-3 p-8 text-center text-muted-foreground">
+                    <p>
+                      Recent source metadata is unavailable. Corpus statistics
+                      and background workers are unaffected.
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={() => void recentSourcesQuery.refetch()}
+                    >
+                      Retry sources
+                    </Button>
+                  </div>
+                )
+                : recentSourcesQuery.isLoading
+                ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    Loading recent source files…
+                  </div>
+                )
+                : !sessions?.length
+                ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    No audio sources found
+                  </div>
+                )
+                : (
+                  <div className="divide-y">
+                    {sessions?.map((session) => (
+                      <Collapsible
+                        key={session._id}
+                        open={expandedSessions.has(session._id)}
+                        onOpenChange={() => toggleSession(session._id)}
+                      >
+                        <CollapsibleTrigger asChild>
+                          <div
+                            className="flex cursor-pointer flex-col gap-4 p-4 hover:bg-muted/50 xl:flex-row xl:items-center xl:justify-between"
+                            data-testid={`session-row-${session._id}`}
+                          >
+                            <div className="flex items-center gap-4">
+                              <Mic className="h-5 w-5 text-muted-foreground" />
+                              <div>
+                                <div className="font-medium flex items-center gap-2">
+                                  {session.start
+                                    ? format(session.start, "MMM d, HH:mm:ss")
+                                    : session.path?.split("/").pop() ||
+                                      "Recording time unavailable"}
+                                  <Badge
+                                    variant="outline"
+                                    className="font-normal"
+                                  >
+                                    {session.sourceKind}
+                                  </Badge>
+                                  <Badge
+                                    className={session.ingestionError
+                                      ? "bg-red-500/10 text-red-600"
+                                      : session.ingested
+                                      ? "bg-green-500/10 text-green-600"
+                                      : "bg-amber-500/10 text-amber-600"}
+                                  >
+                                    {session.ingestionError
+                                      ? "ingestion error"
+                                      : session.ingested
+                                      ? "ingested"
+                                      : "pending"}
+                                  </Badge>
+                                  {session.client_id && (
+                                    <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded">
+                                      {session.device || session.client_id}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  {session.metadata?.codec ||
+                                    session.metadata?.format || "unknown"}{" "}
+                                  {session.metadata?.rate}Hz &middot;{" "}
+                                  {session.lastActivityAt
+                                    ? `source updated ${
+                                      formatDistanceToNow(
+                                        session.lastActivityAt,
+                                        {
+                                          addSuffix: true,
+                                        },
+                                      )
+                                    } · `
+                                    : ""}
+                                  <span className="font-mono text-xs">
+                                    {session._id.substring(0, 8)}
+                                  </span>
+                                </div>
+                                {session.path && (
+                                  <div
+                                    className="max-w-xl truncate text-xs text-muted-foreground"
+                                    title={session.path}
+                                  >
+                                    {session.path}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex w-full items-center gap-6 overflow-x-auto pb-1 xl:w-auto xl:pb-0">
+                              {/* Pipeline stages mini-view */}
+                              <div className="flex items-center gap-2">
+                                {sourceDetails[session._id]
+                                  ? getStageProgress(session).map((
+                                    stage,
+                                    i,
+                                  ) => (
+                                    <div
+                                      key={stage.name}
+                                      className="flex items-center gap-1"
+                                    >
+                                      {i > 0 && (
+                                        <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                      )}
+                                      <div
+                                        className={`text-xs px-2 py-0.5 rounded ${
+                                          stage.done
+                                            ? "bg-green-500/10 text-green-600"
+                                            : "bg-muted text-muted-foreground"
+                                        }`}
+                                      >
+                                        {stage.name}:{" "}
+                                        {stage.count.toLocaleString()}
+                                      </div>
+                                    </div>
+                                  ))
+                                  : (
+                                    <Badge variant="outline">
+                                      Open for downstream details
+                                    </Badge>
+                                  )}
+                              </div>
+                              <ChevronRight
+                                className={`h-5 w-5 text-muted-foreground transition-transform ${
+                                  expandedSessions.has(session._id)
+                                    ? "rotate-90"
+                                    : ""
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        </CollapsibleTrigger>
+
+                        <CollapsibleContent>
+                          {loadingSourceDetails.has(session._id) && (
+                            <div className="border-t px-4 py-3 text-sm text-muted-foreground">
+                              Loading bounded downstream details…
+                            </div>
+                          )}
+                          {sourceDetailErrors[session._id] && (
+                            <div className="flex items-center justify-between gap-3 border-t border-red-500/30 bg-red-500/5 px-4 py-3 text-sm">
+                              <span>{sourceDetailErrors[session._id]}</span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  void loadSourceDetails(session._id)}
+                              >
+                                Retry details
+                              </Button>
+                            </div>
+                          )}
+                          <div
+                            className={`px-4 pb-3 pt-2 bg-muted/30 space-y-3 ${
+                              sourceDetails[session._id] ? "" : "hidden"
+                            }`}
+                          >
+                            <PipelineDetailSection
+                              title="Ingestion"
+                              summary={session.ingestionError
+                                ? "Error"
+                                : session.ingested
+                                ? "Complete"
+                                : "Pending"}
+                              icon={<Mic className="h-3 w-3" />}
+                              defaultOpen={Boolean(session.ingestionError)}
+                              testId={`session-${session._id}-ingestion`}
+                            >
+                              <div className="space-y-2 text-xs">
+                                <p className="break-all font-mono text-muted-foreground">
+                                  {session.path || "No local source path"}
+                                </p>
+                                {session.ingestionError
+                                  ? (
+                                    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-600">
+                                  {session.ingestionError}
+                                    </pre>
+                                  )
+                                  : (
+                                    <p
+                                      className={session.ingested
+                                        ? "text-green-600"
+                                        : "text-amber-600"}
+                                    >
+                                      {session.ingested
+                                        ? "Source audio was ingested successfully."
+                                        : "Source audio is waiting for ingestion."}
+                                    </p>
+                                  )}
+                              </div>
+                            </PipelineDetailSection>
+
+                            <PipelineDetailSection
+                              title="Audio chunks & VAD"
+                              summary={`${session.chunks.vadProcessed.toLocaleString()} / ${session.chunks.total.toLocaleString()} processed · ${session.chunks.withSpeech.toLocaleString()} speech`}
+                              icon={<AudioWaveform className="h-3 w-3" />}
+                              testId={`session-${session._id}-vad`}
+                            >
+                              <div className="flex flex-wrap items-center gap-4 text-xs">
+                                <span className="text-muted-foreground">
+                                  Chunks:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {session.chunks.total.toLocaleString()}
+                                  </span>
+                                </span>
+                                <span className="text-muted-foreground">
+                                  VAD:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {session.chunks.vadProcessed
+                                      .toLocaleString()}
+                                  </span>
+                                  {session.chunks.total > 0 && (
+                                    <span className="ml-1">
+                                      ({Math.round(
+                                        (session.chunks.vadProcessed /
+                                          session.chunks.total) * 100,
+                                      )}%)
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-muted-foreground">
+                                  Speech:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {session.chunks.withSpeech.toLocaleString()}
+                                  </span>
+                                </span>
+                                {session.chunks.total > 0 && (
+                                  <Progress
+                                    value={(session.chunks.vadProcessed /
+                                      session.chunks.total) * 100}
+                                    className="h-1.5 min-w-24 flex-1"
+                                  />
+                                )}
+                              </div>
+                            </PipelineDetailSection>
+
+                            {/* Sequences - compact inline */}
+                            {session.sequences.length > 0 && (
+                              <PipelineDetailSection
+                                title="Transcription sequences"
+                                summary={`${session.sequences.length.toLocaleString()} sequence(s)`}
+                                icon={
+                                  <Layers className="h-3 w-3 text-blue-500" />
+                                }
+                                testId={`session-${session._id}-sequences`}
+                              >
+                                <div className="flex flex-wrap items-center gap-2 text-xs">
+                                  {session.sequences.map((seq) => (
+                                    <div
+                                      key={seq._id}
+                                      className="flex items-center gap-1"
+                                    >
+                                      <Badge
+                                        className={`${
+                                          getStateColor(seq.state)
+                                        } text-xs py-0 px-1.5`}
+                                      >
+                                        {seq.state}
+                                      </Badge>
+                                      <span className="font-mono text-muted-foreground">
+                                        [{seq.fromIndex}-{seq.toIndex}]
+                                      </span>
+                                      {(seq.state === "error" ||
+                                        seq.state === "processing") && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-5 px-1 text-xs"
+                                          onClick={() => resetSequence(seq._id)}
+                                        >
+                                          ↻
+                                        </Button>
+                                      )}
+                                    </div>
+                                  ))}
+                                  {session.sequences.some((s) => s.error) && (
+                                    <span className="text-red-500 text-xs">
+                                      Error: {session.sequences.find((s) =>
+                                        s.error
+                                      )?.error?.slice(0, 50)}...
+                                    </span>
+                                  )}
+                                </div>
+                              </PipelineDetailSection>
+                            )}
+
+                            {/* Transcriptions - compact list */}
+                            {session.transcriptionDetails.length > 0 && (
+                              <PipelineDetailSection
+                                title="Transcriptions"
+                                summary={`${session.transcriptions.toLocaleString()} total`}
+                                icon={<FileText className="h-3 w-3" />}
+                                testId={`session-${session._id}-transcriptions`}
+                              >
+                                <div className="max-h-64 space-y-1 overflow-y-auto">
+                                  {session.transcriptionDetails.map((t) => (
+                                    <div
+                                      key={t._id}
+                                      className="flex gap-2 text-xs bg-background rounded px-2 py-1"
+                                    >
+                                      <Link
+                                        to={`/timeline?start=${t.start.getTime()}&end=${t.end.getTime()}`}
+                                        className="text-muted-foreground hover:underline whitespace-nowrap shrink-0"
+                                      >
+                                        {format(t.start, "HH:mm:ss")}
+                                      </Link>
+                                      <span className="text-foreground truncate">
+                                        {t.text || (
+                                          <span className="italic text-muted-foreground">
+                                            (no text)
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {session.transcriptions >
+                                    session.transcriptionDetails.length && (
+                                  <p className="mt-2 text-[11px] text-muted-foreground">
+                                    Showing the first{" "}
+                                    {session.transcriptionDetails
+                                      .length.toLocaleString()} of {session
+                                      .transcriptions.toLocaleString()}.
+                                  </p>
+                                )}
+                              </PipelineDetailSection>
+                            )}
+
+                            {/* Conversation Chunks - compact inline */}
+                            {session.conversationChunks.length > 0 && (
+                              <PipelineDetailSection
+                                title="Conversation chunks"
+                                summary={`${session.conversationChunks.length.toLocaleString()} chunk(s)`}
+                                icon={
+                                  <Layers className="h-3 w-3 text-purple-500" />
+                                }
+                                testId={`session-${session._id}-conversation-chunks`}
+                              >
+                                <div className="max-h-80 overflow-y-auto flex flex-wrap gap-1">
+                                  {session.conversationChunks.map((chunk) => (
+                                    <div
+                                      key={chunk._id}
+                                      className="flex items-center gap-1 bg-background rounded px-2 py-0.5 text-xs"
+                                    >
+                                      <Badge
+                                        className={`${
+                                          getStateColor(chunk.state)
+                                        } text-xs py-0 px-1`}
+                                      >
+                                        {chunk.state}
+                                      </Badge>
+                                      {chunk.start && chunk.end && (
+                                        <Link
+                                          to={`/timeline?start=${chunk.start.getTime()}&end=${chunk.end.getTime()}`}
+                                          className="hover:underline text-primary"
+                                        >
+                                          {format(chunk.start, "HH:mm")}
+                                        </Link>
+                                      )}
+                                      {chunk.conversationsCreated !==
+                                          undefined &&
+                                        chunk.conversationsCreated > 0 && (
+                                        <span className="text-green-500">
+                                          →{chunk.conversationsCreated}
+                                        </span>
+                                      )}
+                                      {chunk.error && (
+                                        <span
+                                          className="text-red-500"
+                                          title={chunk.error}
+                                        >
+                                          ⚠
+                                        </span>
+                                      )}
+                                      {chunk.emptyReason && (
+                                        <span
+                                          className="text-yellow-500"
+                                          title={chunk.emptyReason}
+                                        >
+                                          ∅
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </PipelineDetailSection>
+                            )}
+
+                            {/* Conversations - 2 column grid */}
+                            {session.conversations.length > 0 && (
+                              <PipelineDetailSection
+                                title="Parsed conversations"
+                                summary={`${session.conversations.length.toLocaleString()} conversation(s)`}
+                                icon={
+                                  <MessageSquare className="h-3 w-3 text-green-500" />
+                                }
+                                testId={`session-${session._id}-conversations`}
+                              >
+                                <div className="grid max-h-[32rem] gap-2 overflow-y-auto sm:grid-cols-2">
+                                  {session.conversations.map((conv) => {
+                                    const start = conv.timeRanges?.[0]?.start
+                                      ? new Date(conv.timeRanges[0].start)
+                                      : null;
+                                    const end = conv.timeRanges?.[0]?.end
+                                      ? new Date(conv.timeRanges[0].end)
+                                      : null;
+                                    const durationMs = start && end
+                                      ? end.getTime() - start.getTime()
+                                      : 0;
+                                    const durationMins = Math.round(
+                                      durationMs / 60000,
+                                    );
+
+                                    return (
+                                      <div
+                                        key={conv._id}
+                                        className="flex items-start gap-2 bg-background rounded-lg p-2 hover:bg-muted transition-colors"
+                                      >
+                                        {conv.icon?.text && (
+                                          <span className="text-lg shrink-0">
+                                            {conv.icon.text}
+                                          </span>
+                                        )}
+                                        <div className="flex-1 min-w-0">
+                                          <Link
+                                            to={`/objects/${conv._id}`}
+                                            className="text-sm font-medium text-primary hover:underline block truncate"
+                                          >
+                                            {conv.name}
+                                          </Link>
+                                          {start && (
+                                            <Link
+                                              to={`/timeline?start=${start.getTime()}&end=${
+                                                end?.getTime() ||
+                                                start.getTime()
+                                              }`}
+                                              className="text-xs text-muted-foreground hover:underline flex items-center gap-1"
+                                            >
+                                              <span>
+                                                {format(start, "MMM d, HH:mm")}
+                                              </span>
+                                              {durationMins > 0 && (
+                                                <span className="text-muted-foreground">
+                                                  • {durationMins}m
+                                                </span>
+                                              )}
+                                            </Link>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </PipelineDetailSection>
+                            )}
+
+                            {/* Empty states - inline */}
+                            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                              {session.sequences.length === 0 && (
+                                <span>
+                                  No
+                                  sequences{session.chunks.withSpeech === 0 &&
+                                    session.chunks.vadProcessed > 0 &&
+                                    " (no speech)"}
+                                </span>
+                              )}
+                              {session.transcriptionDetails.length === 0 &&
+                                session.sequences.length > 0 && (
+                                <span>No transcriptions</span>
+                              )}
+                              {session.conversations.length === 0 &&
+                                session.transcriptions > 0 && (
+                                <span>
+                                  No
+                                  conversations{session.conversationChunks.some(
+                                    (c) => c.state === "empty",
+                                  ) && " (empty chunks)"}
+                                </span>
+                              )}
+                              <span className="font-mono text-[10px] ml-auto">
+                                {session._id}
+                              </span>
+                            </div>
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    ))}
+                    {hasMoreSessions && (
+                      <div className="p-4 border-t">
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          disabled={recentSourcesQuery.isFetchingNextPage}
+                          onClick={() =>
+                            void recentSourcesQuery.fetchNextPage()}
+                          data-testid="load-more-sessions"
+                        >
+                          {recentSourcesQuery.isFetchingNextPage
+                            ? "Loading…"
+                            : "Load more source files"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+            </CardContent>
+          </Card>
+        </div>
+      </details>
     </div>
   );
 }

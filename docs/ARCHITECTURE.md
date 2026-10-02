@@ -105,7 +105,27 @@ interface JobCapability {
 | `ingestion` | `ingestion.ts` | Audio file processing | Manual |
 | `conversation_extractor_merged` | `conversationExtractorMerged.ts` | Extract conversations from transcriptions (single LLM call) | Auto |
 | `summarization` | `summarization.ts` | Generate conversation summaries | Auto (after conversation extraction) |
-| `histRecalculation` | `histRecalculation.ts` | Recalculate timeline histograms | Manual |
+| `histRecalculation` | `histRecalculation.ts` | Recalculate timeline density | Automatic affected UTC days + manual bounded campaigns |
+
+### Timeline Density Maintenance
+
+The Mongo resource records durable write intents and pending UTC days for audio
+ingestion, transcription, VAD, date moves, and source deletion. Changes to one
+day coalesce for 30 seconds of quiet, with a five-minute batching deadline. A
+startup and 30-second reconciler queues one eligible day on the existing
+single-concurrency `histRecalculation` worker, respecting paused queues and
+manual work. Each run rebuilds and verifies the day's 5-minute, hourly, and
+daily buckets and its parent weekly bucket. Pending revisions survive concurrent
+writes, queue loss, and process restarts; failed days remain pending for retry.
+
+Verified daily receipts update count evidence against the last exact audit's
+per-day baseline. They do not change the full audit timestamp or hide unrelated
+issues. The UI distinguishes ordinary **Updating** or **Retry scheduled** states
+from repeated failures and unresolved mismatches. Manual audits and bounded
+repair campaigns remain available for legacy gaps and direct database writes
+outside the resource hooks; rebuilding all history stays manual. See
+[Timeline maintenance and recovery](../DEVELOPMENT.md#timeline-density-maintenance-and-rebuild-recovery)
+for rollout, freshness, and recovery details.
 
 ### Creating a Worker
 

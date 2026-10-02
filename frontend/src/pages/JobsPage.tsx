@@ -1929,19 +1929,17 @@ export default function JobsPage() {
       }) as TimelineIntegrityReport,
     enabled: true,
     refetchInterval: (query) => {
-      const status = (query.state.data as TimelineIntegrityReport | undefined)
-        ?.campaign?.status;
-      const snapshotState = (query.state.data as
-        | TimelineIntegrityReport & {
-          snapshot?: { state?: string };
-        }
-        | undefined)?.snapshot?.state;
-      return snapshotState === "refreshing"
+      const report = query.state.data as TimelineIntegrityReport | undefined;
+      const status = report?.campaign?.status;
+      return report?.snapshot?.state === "refreshing"
         ? 2_000
+        : report?.status === "updating" ||
+            (report?.maintenance?.pendingDays ?? 0) > 0
+        ? 5_000
         : status === "queued" || status === "running" ||
             status === "recovering"
         ? 10_000
-        : false;
+        : 30_000;
     },
   });
 
@@ -3878,6 +3876,31 @@ export default function JobsPage() {
     timelineIntegrity?.campaign?.status === "recovering";
   const timelineVerificationRequired =
     timelineIntegrity?.campaign?.status === "verifying";
+  const timelineMaintenance = timelineIntegrity?.maintenance;
+  const timelineMaintenancePending = timelineIntegrity?.status === "updating" ||
+    (timelineMaintenance?.pendingDays ?? 0) > 0;
+  const timelineNeedsAttention =
+    timelineIntegrity?.status === "needs_attention" ||
+    timelineMaintenance?.state === "failed";
+  const timelineStatusLabel = timelineNeedsAttention
+    ? "Needs attention"
+    : timelineVerificationRequired
+    ? "Verification needed"
+    : timelineMaintenancePending
+    ? timelineMaintenance?.state === "retrying" ? "Retry scheduled" : "Updating"
+    : timelineCampaignBusy
+    ? "Repair in progress"
+    : timelineIntegrity?.status === "healthy"
+    ? "Up to date"
+    : "Not checked";
+  const timelineStatusClass =
+    timelineNeedsAttention || timelineVerificationRequired
+      ? "bg-amber-500/10 text-amber-500"
+      : timelineMaintenancePending || timelineCampaignBusy
+      ? "bg-blue-500/10 text-blue-500"
+      : timelineIntegrity?.status === "healthy"
+      ? "bg-green-500/10 text-green-500"
+      : "bg-muted text-muted-foreground";
   const hasTimelineSnapshot = timelineIntegrity?.status !== "not_checked" &&
     timelineIntegrity?.checkedAt != null;
   const timelineRepairRanges = timelineIntegrity?.repairPlan?.ranges ?? [];
@@ -4942,26 +4965,12 @@ export default function JobsPage() {
                   <CardTitle className="text-sm">
                     Timeline density integrity
                   </CardTitle>
-                  {timelineIntegrity && hasTimelineSnapshot && (
+                  {timelineIntegrity && (
                     <Badge
                       variant="secondary"
-                      className={`h-5 px-1.5 text-[10px] ${
-                        timelineVerificationRequired
-                          ? "bg-amber-500/10 text-amber-500"
-                          : timelineCampaignBusy
-                          ? "bg-blue-500/10 text-blue-500"
-                          : timelineIntegrity.status === "healthy"
-                          ? "bg-green-500/10 text-green-500"
-                          : "bg-amber-500/10 text-amber-500"
-                      }`}
+                      className={`h-5 px-1.5 text-[10px] ${timelineStatusClass}`}
                     >
-                      {timelineVerificationRequired
-                        ? "Verification needed"
-                        : timelineCampaignBusy
-                        ? "Repair in progress"
-                        : timelineIntegrity.status === "healthy"
-                        ? "Up to date"
-                        : "Repair needed"}
+                      {timelineStatusLabel}
                     </Badge>
                   )}
                 </div>
@@ -5003,8 +5012,29 @@ export default function JobsPage() {
               </div>
               <div className="mt-1.5 flex min-h-7 flex-wrap items-center justify-between gap-2 border-t pt-1.5 text-[11px]">
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
-                  {!hasTimelineSnapshot && (
-                    <span>Run the check to find dates needing repair.</span>
+                  {!hasTimelineSnapshot && <span>Full check not run yet.</span>}
+                  {timelineMaintenancePending &&
+                    timelineMaintenance?.state !== "failed" && (
+                    <span className="text-blue-600 dark:text-blue-400">
+                      Updating {timelineMaintenance?.pendingDays ?? 0} day(s)
+                      {" "}
+                      automatically.
+                      {timelineMaintenance?.state === "retrying" &&
+                        timelineMaintenance.retryAt && (
+                        <>
+                          Next retry: {formatTimelineAuditDate(
+                            timelineMaintenance.retryAt,
+                          )}.
+                        </>
+                      )}
+                    </span>
+                  )}
+                  {timelineIntegrity?.countsUpdatedAt && (
+                    <span>
+                      Counts updated {formatTimelineAuditDate(
+                        timelineIntegrity.countsUpdatedAt,
+                      )}
+                    </span>
                   )}
                   {timelineIntegrity?.snapshot?.lastError && (
                     <span className="text-red-500">
@@ -5014,32 +5044,27 @@ export default function JobsPage() {
                   {timelineIntegrity && hasTimelineSnapshot && (
                     <>
                       <span>
-                        Checked {formatTimelineAuditDate(
+                        Full check {formatTimelineAuditDate(
                           timelineIntegrity.checkedAt,
                         )}
                       </span>
-                      {timelineCampaignBusy && timelineIntegrity.campaign
-                        ? (
-                          <span>
-                            · {timelineIntegrity.campaign.completed}/
-                            {timelineIntegrity.campaign.plannedJobs}{" "}
-                            ranges complete
-                          </span>
-                        )
-                        : timelineVerificationRequired
-                        ? <span>· Repair finished; verify the result.</span>
-                        : timelineIntegrity.issues.length === 0
-                        ? <span>· Density bars match raw data.</span>
-                        : timelineIntegrity.issues.map((issue) => (
-                          <span
-                            key={issue.code}
-                            className={issue.severity === "error"
-                              ? "text-red-500"
-                              : "text-amber-500"}
-                          >
-                            · {issue.message}
-                          </span>
-                        ))}
+                      {timelineIntegrity.auditStale && (
+                        <span>· Full check predates newer source changes.</span>
+                      )}
+                      {timelineCampaignBusy && timelineIntegrity.campaign && (
+                        <span>
+                          · {timelineIntegrity.campaign.completed}/
+                          {timelineIntegrity.campaign.plannedJobs}{" "}
+                          ranges complete
+                        </span>
+                      )}
+                      {timelineVerificationRequired && (
+                        <span>· Repair finished; verify the result.</span>
+                      )}
+                      {timelineIntegrity.status === "healthy" &&
+                        !timelineIntegrity.auditStale &&
+                        !timelineCampaignBusy && !timelineMaintenancePending &&
+                        <span>· Density bars match raw data.</span>}
                       {timelineRepairRanges.length > 0 && (
                         <span>
                           · {timelineRepairDays} affected day(s) in{" "}
@@ -5048,6 +5073,16 @@ export default function JobsPage() {
                       )}
                     </>
                   )}
+                  {timelineIntegrity?.issues.map((issue) => (
+                    <span
+                      key={issue.code}
+                      className={issue.severity === "error"
+                        ? "text-red-500"
+                        : "text-amber-500"}
+                    >
+                      · {issue.message}
+                    </span>
+                  ))}
                 </div>
                 {timelineIntegrity?.issues.some((issue) =>
                   issue.action === "repair_ranges"
@@ -5072,7 +5107,7 @@ export default function JobsPage() {
                 <DialogTitle>Timeline density details</DialogTitle>
                 <DialogDescription>
                   Source totals, density buckets, transcription completion
-                  markers, manual repair periods, and campaign history.
+                  markers, automatic updates, and manual recovery history.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3">
@@ -5080,7 +5115,8 @@ export default function JobsPage() {
                   <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                     No persisted integrity snapshot yet. Run audit manually; the
                     previous successful result will remain visible after
-                    failures.
+                    failures. Source changes automatically refresh density for
+                    affected dates.
                   </div>
                 )}
                 {timelineIntegrity?.snapshot?.lastError && (
@@ -5094,28 +5130,28 @@ export default function JobsPage() {
                 )}
                 {timelineIntegrity &&
                   (hasTimelineSnapshot ||
-                    Boolean(timelineIntegrity.campaign)) &&
+                    Boolean(timelineIntegrity.campaign) ||
+                    Boolean(timelineMaintenance)) &&
                   (
                     <>
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <Badge
                           variant="secondary"
-                          className={!hasTimelineSnapshot
-                            ? "bg-muted text-muted-foreground"
-                            : timelineIntegrity.status === "healthy"
-                            ? "bg-green-500/10 text-green-500"
-                            : "bg-amber-500/10 text-amber-500"}
+                          className={timelineStatusClass}
                         >
-                          {!hasTimelineSnapshot
-                            ? "Audit not checked"
-                            : timelineIntegrity.status === "healthy"
-                            ? "Density check passed"
-                            : "Needs attention"}
+                          {timelineStatusLabel}
                         </Badge>
+                        {timelineIntegrity.countsUpdatedAt && (
+                          <span className="text-muted-foreground">
+                            Counts updated {formatTimelineAuditDate(
+                              timelineIntegrity.countsUpdatedAt,
+                            )}
+                          </span>
+                        )}
                         {hasTimelineSnapshot && (
                           <>
                             <span className="text-muted-foreground">
-                              Checked {formatTimelineAuditDate(
+                              Full check {formatTimelineAuditDate(
                                 timelineIntegrity.checkedAt,
                               )}
                             </span>
@@ -5136,6 +5172,13 @@ export default function JobsPage() {
                           </>
                         )}
                       </div>
+                      {timelineIntegrity.auditStale && (
+                        <p className="text-xs text-muted-foreground">
+                          Source counts include verified updates for affected
+                          dates. Coverage ranges and the bucket table are from
+                          the last full check.
+                        </p>
+                      )}
 
                       <div className="grid gap-3 md:grid-cols-3">
                         {timelineIntegrity.sources.map((source) => (
@@ -5175,6 +5218,7 @@ export default function JobsPage() {
                               {source.difference}
                             </div>
                             <div className="mt-2 text-[11px] text-muted-foreground">
+                              Coverage at full check:{" "}
                               {formatTimelineAuditDate(source.firstStart)} —
                               {" "}
                               {formatTimelineAuditDate(
@@ -5195,9 +5239,9 @@ export default function JobsPage() {
                                   Buckets
                                 </TableHead>
                                 <TableHead className="text-right">
-                                  Stale
+                                  Stale at full check
                                 </TableHead>
-                                <TableHead>Coverage</TableHead>
+                                <TableHead>Coverage at full check</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -5341,11 +5385,11 @@ export default function JobsPage() {
                               Manual density repair
                             </div>
                             <p className="mt-1 text-xs text-muted-foreground">
-                              Prefer the affected dates found by the check.
-                              Choose a period only when you know which dates
-                              changed. New imports do not start this repair
-                              automatically; run Check now after a large or
-                              historical import.
+                              New audio and transcript changes automatically
+                              refresh density for affected dates. For unresolved
+                              mismatches, prefer the dates found by the full
+                              check. Choose a period when you know which dates
+                              need repair.
                             </p>
                           </div>
                           {timelineRepairRanges.length > 0 && (

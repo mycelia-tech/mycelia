@@ -573,7 +573,27 @@ chunk: zero is exact, while existing work is shown either as the persisted
 campaign estimate (`≈N`, with its update time) or as `Work remains` when no
 estimate is available.
 
-The unified **Audio processing overview** uses authenticated
+The Pipeline page offers two separate import choices: **Voice Memos app**
+(the native Bridge, with build/launch/Applications-copy instructions) and
+**Import from a folder** (the existing host daemon). The latter saves
+`host_ingestion_config` / `_id: audio-folder` with an absolute `path` and an
+`automatic` flag (enabled by default for a new folder). Once saved, it replaces legacy discovery: manual mode polls
+settings without importing; automatic mode scans only that folder and consumes
+20 files per cycle. Manual jobs capture `sourceFolder` in their payload and
+import one bounded batch. No config document preserves the old source setup;
+config read failures fail closed. Folder discovery and uploads share the host
+lock with Bridge. Both Mongo selection and pre-upload path validation confine
+work to that folder; symlink audio is excluded. Folders containing a Voice
+Memos catalog preserve UUID/date handling; ordinary files use path/date metadata.
+Changes to Python require reloading the host ingestion service after its batch
+finishes. Saving a path does not grant macOS access or copy protected recordings.
+
+Last import/scan timestamps remain visible. Import diagnostics, processing
+details and source files are initially collapsed. Legacy Apple permission text
+is suppressed in the Bridge flow; selected-folder failures remain actionable
+in the folder panel. The daemon's status is under diagnostics.
+
+The **Audio import** card uses authenticated
 `GET /api/audio/pipeline/operations`, cached/coalesced for 15 seconds per
 authorization scope. Each refresh reads host ingestion `/health`, three BullMQ
 queue counters, one `_id`-indexed persisted snapshot, and at most five recent
@@ -612,7 +632,7 @@ OpenRouter profile may use a higher worker value (currently up to 8). The
 provider-specific tuning contract and the deferred RTX 4090 two-slot experiment
 are documented in `docs/CONVERSATION_EXTRACTION_TROUBLESHOOTING.md`.
 
-#### Timeline density rebuild recovery
+#### Timeline density maintenance and rebuild recovery
 
 Timeline density repairs affect only derived audio/transcription density buckets
 (the bars historically called histograms). They never rewrite raw audio,
@@ -620,16 +640,50 @@ transcript text, transcription completion markers, or speaker identity. Speaker
 identity reads active speaker segments directly, so diarizations are not part of
 density totals or repairs.
 
-The manual exact check compares UTC-day raw counts with daily density totals. If
-they differ, Jobs proposes only the mismatched days, merges adjacent days, and
-starts one sparse durable campaign for those ranges. A known continuous period
-can also be selected manually. Rebuilding all history is reserved for a density
-schema change or widespread corruption that cannot be localized. New imports do
-not automatically start `histRecalculation`; run **Check now** after a large or
-historical import.
+Ordinary audio ingestion, transcription inserts, VAD changes, source-date moves,
+and source deletion through the Mongo resource automatically queue the affected
+UTC days. Date moves queue both old and new dates; deletions retain the old
+dates before removing source rows. Each automatic job rebuilds one day at
+5-minute, hourly, and daily resolution, updates its parent weekly bucket from
+daily buckets, and verifies the resulting counts before acknowledging that day.
+It uses the same `histRecalculation` queue at concurrency one as manual repairs.
+Automatic jobs split raw-source aggregation into hourly windows, keeping a
+large day's audio documents out of a single long-running database query.
 
-Every repair creates a durable `timeline_rebuild_campaigns` row before its first
-bounded job. Long continuous periods split into 31-day jobs; disjoint affected
+Pending dates and source-write intents are persisted in MongoDB, so repeated
+writes coalesce by day and backend restarts do not discard work. A day becomes
+eligible after 30 seconds without another change, or after the five-minute
+coalescing deadline during sustained changes. This deadline bounds batching,
+not total completion time: active source writes, an existing rebuild, a paused
+queue, or retries can delay execution. The scheduler reconciles at startup,
+every 30 seconds, and after a rebuild completes. It recreates missing queued
+work and recovers expired source-write intents. Failures retain the pending day
+and retry with exponential backoff capped at five minutes.
+
+Timeline hides the processing notice when density is current. Pending updates
+and incomplete recovery show only a short notice with a link to Jobs. All
+diagnostics, audit timestamps, progress, and recovery actions live in Jobs,
+where normal pending work appears as **Updating**, or **Retry scheduled** during
+transient failures. Repeated failures and unresolved legacy mismatches remain
+warnings, including when other dates are updating. Verified
+daily receipts update source count totals and clear only resolved count issues
+against the saved per-day audit baseline. **Counts updated** is separate from
+**Full check**: automatic maintenance does not rerun the full audit or refresh
+its coverage ranges and bucket-table snapshot. Jobs polls pending maintenance
+every five seconds and idle status every 30 seconds; Timeline uses the same
+pending interval and a 60-second idle interval.
+
+The manual exact check compares UTC-day raw counts with daily density totals and
+automatically queues any mismatched days for bounded maintenance. Manual repair
+controls can also merge adjacent affected days into a sparse durable campaign,
+or select a known continuous period. Rebuilding all history is reserved for a density
+schema change or widespread corruption that cannot be localized and always
+requires an explicit manual action. Direct database writes that bypass the
+Mongo resource hooks, and mismatches that predate automatic maintenance, still
+need **Check now** to discover and queue the affected dates.
+
+Every manual repair creates a durable `timeline_rebuild_campaigns` row before
+its first bounded job. Long continuous periods split into 31-day jobs; disjoint affected
 dates remain disjoint. `histRecalculation` runs at concurrency one and reports
 its delete, 5-minute, hourly, daily, and weekly phases. The backend reconciles
 an explicitly started, unpaused campaign every 30 seconds and restores the next
@@ -655,6 +709,38 @@ or changes transcript text.
 The Jobs summary keeps Timeline density integrity in a compact two-row card
 above **Work ready now**. **Details** opens the full recovery controls in a
 centered modal on the same page.
+
+For the automatic-maintenance rollout:
+
+1. Apply migration `0085_timeline_density_maintenance.ts`. Normal `serve`
+   startup applies pending migrations before starting workers, unless
+   `--skip-checks` is set. The migration creates the pending-date, write-intent,
+   receipt, and maintenance-state collections and their indexes, plus required
+   `start` indexes on sources and density buckets. It does not rebuild history.
+   Check migration status with:
+
+   ```bash
+   docker compose exec backend deno run -A server.ts migrate-status
+   ```
+
+   Use the migration commands below if startup checks are disabled.
+
+2. Follow **Readiness and reload diagnostics** for source mounts, `APP_MODE`,
+   application reloads, `[READY]`, and Docker health. Workers must be enabled;
+   a paused `histRecalculation` queue remains paused. Source-only backend edits
+   require no backend image build; production frontend changes require the
+   normal frontend build and recreation.
+
+3. Run **Check now** once to establish the per-day audit baseline on an older
+   installation. Old snapshots without that baseline retain their historical
+   differences until a new exact check. That check queues existing mismatches
+   for automatic bounded repair; manual controls remain available for exceptions.
+
+4. Verify a representative source change reaches **Updating** and then reduces
+   the pending-day count, advances **Counts updated**, and changes the affected
+   density bars. Backend readiness alone does not establish that maintenance
+   completed. The **Full check** timestamp should remain unchanged during this
+   automatic update.
 
 Recent source-file metadata loads independently once and is ordered by
 `source_files.updatedAt`, `start`, and `_id`; it is not described as downstream
@@ -1324,6 +1410,57 @@ opt-in rather than the normal LaunchAgent configuration. If no interactive
 process may read the protected library either, export recordings from Voice
 Memos to a user-readable folder and import that folder instead.
 
+The optional [native Voice Memos Bridge](native/voice-memos-bridge/README.md)
+uses a read-only folder grant without granting FDA to an interpreter.
+Run `bash scripts/test-voice-memos-bridge.sh`, build with
+`bash scripts/build-voice-memos-bridge.sh`, and open the resulting `.app` as
+documented there. Its sandboxed Swift process has read-only source access,
+outgoing network permission and read-only access to one private pairing file.
+There is no staging write exception or permanent archive copy. The code fixes
+all importer traffic to `127.0.0.1:8012` and refuses redirects/proxies; the OS
+network entitlement itself is not destination-scoped. The UI's **Importer setup**
+shows/copies a shell-quoted command for the user to run in Terminal, installing the idle
+`tech.mycelia.voicememos-importer` LaunchAgent. It uses the existing `.env` and
+does not alter the legacy 8001 ingestion service or access Apple's folder.
+No executable Terminal document is opened from the sandbox. Setup is disabled
+while the helper is ready or an import is active, so it cannot replace an import
+headline. The app icon is built from the existing Mycelia SVG with `BuildIcon.swift`
+and `iconutil`; no new sandbox entitlements are added.
+
+**Scan library / Import pending / Retry failed / Pause** drive direct imports.
+The helper accepts one SHA-256-verified transient recording at a time, reuses
+`chunking.ingest_source` with cancellable ffmpeg, and preserves UUID/source/date
+identity and bounded idempotent Opus upserts. Temporary input/chunks are removed
+before success/failure/cancellation is reported. A hard kill can leave temp
+files; inspect the exact helper-owned candidate before cleanup. A 1 GiB disk
+reserve is enforced. Mongo still needs storage. Status polls use in-memory
+progress; explicit scans page through projected `source_files` metadata using
+the `_id` index (100 rows/page, 101-row lookahead, 5-second deadlines, 10,000-row
+client cap). They never scan audio payloads. Full-catalog reconciliation happens
+before local date filtering; absent source files are not proof of deletion.
+The UI separates Apple presence from Mycelia import state, retains the last
+completed summary as explicitly stale on reopen, and shows duplicate IDs,
+checked time, selected date range and actual pending-recording dates. Removed
+or missing sources never enter the transfer queue. These are display-only
+observations: no source deletion flags or cached errors are changed in Mongo.
+Sandboxed preferences retain a bounded metadata-only catalog history, so later
+removal remains visible even for scanned recordings that never reached Mongo.
+Import-time UUID lookups still use the bounded UUID index.
+Encoding telemetry uses a bounded nonblocking ffmpeg `-progress` pipe with
+one-second callbacks: encoded audio seconds, speed, elapsed time and last actual
+audio progress time. It adds no Mongo queries. The UI displays encoding separately
+from acknowledged chunk writes; a 30-second progress gap is a visible warning,
+not an automatic retry or failure. Reload the host helper only after pausing
+and confirming a terminal job state; resume with a fresh scan / Import pending.
+Updated CLI/server imports share `ingestion_lock.py`; stop older running
+processes before using the UI. Cross-host concurrency is not covered.
+
+Closing the window keeps the menu-bar process running; **Pause/Quit** stop new
+work. Automatic imports default off, with 1/5/15-minute intervals. Bridge login
+startup is not configured. Builds remain local ad-hoc signatures, not notarized
+apps. Readiness, source access, successful ingestion and downstream VAD/STT
+remain separately verified states. See the native guide for setup and tests.
+
 When `/health` is `degraded`, inspect `appleVoiceMemosMode` and
 `lastCycle.sources` and `lastCycle.ingestion` before changing any data. The
 ingestion counts are `attempted`, `succeeded`, `failed`, `remaining`, and
@@ -1390,6 +1527,7 @@ mycelia/
 │   └── Dockerfile.prod # Production nginx build
 ├── backend/            # Deno API server
 ├── python/             # Audio import, STT, conversation extraction
+├── native/             # macOS Voice Memos sandbox access experiment
 ├── diarizator/         # Speaker diarization service (FastAPI)
 ├── friend/             # Friend-Lite companion app
 ├── gpu/                # GPU inference stack

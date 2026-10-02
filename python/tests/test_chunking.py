@@ -4,7 +4,7 @@ from subprocess import CalledProcessError
 from sys import path
 from tempfile import TemporaryDirectory, mkdtemp
 from unittest import TestCase, main
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -12,6 +12,38 @@ import chunking
 
 
 class SplitToOpusChunksTest(TestCase):
+    def test_encoding_progress_is_bounded_and_tracks_audio_not_heartbeat(self):
+        callback = Mock()
+        tracker = chunking.EncodingProgress(callback)
+        with patch("chunking.time.time", return_value=100):
+            tracker.feed(b"out_time_us=1500")
+            tracker.feed(b"000\nspeed=2.5x\nprogress=continue\n")
+        tracker.report(force=True)
+        result = callback.call_args.args[0]
+        self.assertEqual(result["encoded_seconds"], 1.5)
+        self.assertEqual(result["encoding_speed"], 2.5)
+        self.assertEqual(result["encoding_updated_at"], 100)
+        with patch("chunking.time.time", return_value=200):
+            tracker.feed(b"out_time_us=500000\nspeed=N/A\nout_time_us=nan\n")
+            tracker.report(force=True)
+        self.assertEqual(callback.call_args.args[0]["encoding_updated_at"], 100)
+        self.assertEqual(callback.call_args.args[0]["encoded_seconds"], 1.5)
+        with self.assertRaisesRegex(RuntimeError, "safety limit"):
+            tracker.feed(b"x" * 65537)
+
+    def test_bridge_cancellation_terminates_ffmpeg(self):
+        process = Mock()
+        process.poll.return_value = None
+        with TemporaryDirectory() as root:
+            staging = str(Path(root) / "chunks")
+            with patch("chunking.subprocess.Popen", return_value=process), self.assertRaisesRegex(RuntimeError, "paused"):
+                chunking.split_to_opus_chunks(
+                    "fixture.m4a", work_dir=staging,
+                    cancel_check=Mock(side_effect=RuntimeError("paused")),
+                )
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=5)
+
     def test_retry_removes_files_left_by_an_interrupted_attempt(self):
         with TemporaryDirectory() as temp_dir:
             staging = Path(temp_dir) / "chunks"

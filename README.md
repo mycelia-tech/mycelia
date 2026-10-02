@@ -25,6 +25,8 @@ your own words.
 
 - D3.js-powered multi-track timeline with zoom and pan.
 - Multi-resolution views (5 min, 1 hour, 1 day, 1 week).
+- Audio ingestion, transcription, VAD, and source deletion automatically refresh
+  density for affected UTC dates at every resolution.
 - Transcript-synced audio playback with jump controls.
 - Track visibility controls, object overlays, and event creation from selection.
 - Persisted object-density bars at far zoom; individual object intervals load
@@ -204,6 +206,9 @@ your own words.
   advanced controls.
 - Persistent manual snapshots for exact backlog, incremental run history, and
   Timeline integrity; refresh failures retain the last successful values.
+- Durable, coalesced daily Timeline density updates with restart recovery and
+  retry status. Timeline shows a short notice only during updates or incomplete
+  recovery; Jobs holds diagnostics, check freshness, and recovery controls.
 - Durable, pausable Timeline density repair campaigns for exact affected dates
   or a selected period, with bounded batches, progress, missing-successor
   recovery, and explicit final verification.
@@ -437,11 +442,112 @@ Invalid ingestion batch or interval settings prevent startup. The installer
 bounds each complete HTTP request within its overall 90-second deadline and
 retries interrupted or malformed readiness responses.
 
-Open **Audio → Pipeline → Audio processing overview** for ingestion reachability,
+For an explicitly requested direct Voice Memos import, use `live` mode from an
+already trusted interactive Terminal. Set `MYCELIA_APPLE_VOICEMEMOS_MODE=live`
+and point both `MYCELIA_APPLE_VOICEMEMOS_ROOT` and
+`MYCELIA_APPLE_VOICEMEMOS_DB` in `.env` to Apple's `Recordings` directory and its
+`CloudRecordings.db`. Quote paths containing spaces and keep the desired
+`MYCELIA_APPLE_VOICEMEMOS_NOT_BEFORE` cutoff. The current Python loaders override
+shell variables with `.env`, so a command-prefix override alone is insufficient.
+Stop the registered LaunchAgent before running the same service in Terminal:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/tech.mycelia.ingestion.plist"
+bash scripts/run-ingestion-service.sh
+```
+
+The terminal service keeps port 8001 and Pipeline status available while it
+runs; Ctrl+C stops it. It is not an unattended login service. `Operation not
+permitted` from launchd means that process lacks access even if an interactive
+process can read the same library. Do not grant Full Disk Access to `uv` as a
+routine fix. A successful single-file import proves that file's import only;
+cached failures still need targeted recovery. Switch the mode and both paths
+back to staging before reinstalling the background service.
+
+#### Voice Memos Bridge: build and launch on macOS
+
+Use the [Voice Memos Bridge](native/voice-memos-bridge/README.md) for direct
+Voice Memos import with a native UI, without Full Disk Access for `uv`.
+Requires macOS 13+, Xcode Command Line Tools, `uv`, `ffmpeg`/`ffprobe`, and
+the running Mycelia backend configured in this checkout's `.env`.
+
+From the repository root, with Bridge **quit** (closing its window is not Quit):
+
+```bash
+bash scripts/test-voice-memos-bridge.sh
+bash scripts/build-voice-memos-bridge.sh
+open 'build/voice-memos-bridge/Mycelia Voice Memos Bridge.app'
+```
+
+On subsequent launches, run only the `open` command above. No terminal daemon
+or rebuild is needed. To install in Applications, quit Bridge first, then run
+from the repository root:
+
+```bash
+ditto 'build/voice-memos-bridge/Mycelia Voice Memos Bridge.app' '/Applications/Mycelia Voice Memos Bridge.app'
+open '/Applications/Mycelia Voice Memos Bridge.app'
+```
+
+Keep the repository in place: the app embeds its path for importer setup.
+After rebuilding, repeat the copy with Bridge quit.
+
+Alternatively, **Audio → Pipeline → Import from a folder** uses the existing
+host daemon without building Bridge. Enter an absolute folder path, **Save
+folder** to start automatic scanning (20 files per batch). For manual mode,
+uncheck **Scan and import automatically** before saving, then use **Scan and
+import**. Only the selected folder and subfolders
+are scanned and imported. The daemon must already have read access. This does
+not grant access to Apple's protected library; use Bridge for that workflow.
+Voice Memos catalogs preserve Apple dates/IDs; ordinary exported audio uses file
+dates/paths. Folder settings replace legacy source scanning once saved.
+
+1. If **Local importer** is unavailable, click **Importer setup… → Copy command**.
+   Open Terminal yourself, paste the command and press Return. It installs/starts
+   `tech.mycelia.voicememos-importer` on `127.0.0.1:8012`; close Terminal after
+   it reports Ready. Bridge does not open executable Terminal documents or need
+   extra macOS permissions. When ready, the disabled button says **Importer running**.
+2. **Choose source folder…** →
+   `~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings`.
+   Reuse the saved read-only folder permission when available.
+3. Select **All recordings** or a **since** date, then **Scan library**.
+   This checks metadata only and shows date coverage, existing imports,
+   missing/removed sources and pending recordings.
+4. Click **Import pending** to import new usable recordings in that date range.
+   Imported UUIDs and cached errors are skipped; **Retry failed** is a separate,
+   explicit action. Import progress is in Bridge; VAD/STT progress is in
+   **Open pipeline**.
+5. Leave Bridge running or choose **Run in background**. **Pause** stops new
+   transfers safely; **Quit** exits. Enable **Automatic import** only if you
+   also want future recordings imported every 1, 5 or 15 minutes.
+
+**Choose source folder → Scan library → Import pending** replaces the manual
+Voice Memos daemon workflow. Separate source/import columns show remaining local
+audio, missing local files, historical UUIDs absent from the catalog, existing
+imports and duplicate identities. Counts, check time and recording-date coverage
+make scan-only results explicit; missing files are not assumed deleted.
+**Retry failed** is explicit. The helper reuses the daemon's
+10-second Opus/Mongo ingestion and removes each recording's temporary files.
+Encoding shows processed audio time, percentage, speed, elapsed time and age of
+the last progress update. Saved chunk counts appear only during database writes,
+not as a misleading `0/0` during encoding. The built app includes a native icon
+derived from the existing Mycelia logo.
+There is no permanent staging archive, but transient processing and Mongo still
+need free disk space. Source access stays read-only; the network-enabled Bridge
+only sends to its authenticated local helper. **Automatic import** is off by
+default, with 1/5/15-minute intervals. Closing the window keeps the menu-bar app
+running; **Pause/Quit** stop new work. Bridge login auto-start is not configured.
+VAD/transcription remain in Pipeline. The legacy 8001 service is separate and
+is not reconfigured by Bridge setup; old already-running daemons should be
+stopped before using the new importer. Details and security boundaries are in
+the linked Bridge guide.
+
+Open **Pipeline → Audio import** for current import status and **Import Voice
+Memos…** for the Mac app steps. **Import diagnostics** contains ingestion reachability,
 last completed scan, last imported files (recording and import dates), staging
 publication time, and the Import → VAD → Transcription backlog in one place.
-**Check service** refreshes lightweight status; **Scan staging now** queues one
-serialized ingestion batch, not a refresh of Apple's protected library.
+**Check service** refreshes lightweight status; **Scan local copy** (staged mode)
+or **Scan configured sources** queues one serialized ingestion batch. These
+controls do not grant access to Apple's protected library.
 **Update audio counts** explicitly recalculates the corpus snapshot. Counts keep
 their calculation time, and unavailable counts appear as `—`, not zero. Service
 and queue status refresh every 15 seconds while the page is visible; exact audio

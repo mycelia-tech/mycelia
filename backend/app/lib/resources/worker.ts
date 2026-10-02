@@ -3,6 +3,14 @@ import { ObjectId } from "bson";
 import { type Auth, getServerAuth } from "@/lib/auth/core.server.ts";
 import type { Resource, ResourcePath } from "@/lib/auth/resources.ts";
 import { getMongoResource } from "@/lib/mongo/core.server.ts";
+import {
+  DENSITY_DAY_MS,
+  getTimelineDensityMaintenance,
+  queueTimelineDensityDays,
+  TIMELINE_DENSITY_PENDING,
+  TIMELINE_DENSITY_RECEIPTS,
+} from "@/lib/timeline/density-maintenance.ts";
+import { overlayTimelineDensityIntegrity } from "@/lib/timeline/density-integrity.ts";
 import { jobRegistry } from "@/lib/jobs/job-registry.ts";
 import { enqueueJob, EnqueueJobOptions, getQueue } from "@/lib/jobs/queue.ts";
 import { publishJobUpdate } from "@/lib/events/publisher.ts";
@@ -2380,7 +2388,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
     );
   }
 
-  private async timelineDailyRepairRanges(auth: Auth) {
+  private async timelineDailyComparisons(auth: Auth) {
     const mongo = await getMongoResource(auth);
     const [sourceDays, histogramDays] = await Promise.all([
       Promise.all(
@@ -2399,7 +2407,11 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
               },
               { $sort: { _id: 1 } },
             ],
-            options: { allowDiskUse: true, maxTimeMS: 60_000 },
+            options: {
+              allowDiskUse: true,
+              maxTimeMS: 60_000,
+              hint: { start: 1 },
+            },
           }) as Array<{ _id: Date; count: number }>,
         })),
       ),
@@ -2447,29 +2459,24 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       }
     }
 
-    return findTimelineRepairRanges(
-      [...rawByDay.entries()].map(([start, counts]) => ({
-        start: new Date(start),
-        counts,
-      })),
-      histogramDays.flatMap((row) => {
-        const start = validDate(row._id);
-        return start
-          ? [{
-            start,
-            counts: {
-              audio_chunks: Number(row.audio_chunks ?? 0),
-              transcriptions: Number(row.transcriptions ?? 0),
-            },
-          }]
-          : [];
-      }),
-    ).map((range) => ({
-      start: range.start.toISOString(),
-      end: range.end.toISOString(),
-      days: range.days,
-      differences: range.differences,
+    const histogramByDay = new Map(histogramDays.flatMap((row) => {
+      const start = validDate(row._id);
+      return start
+        ? [
+          [start.getTime(), {
+            audio_chunks: Number(row.audio_chunks ?? 0),
+            transcriptions: Number(row.transcriptions ?? 0),
+          }] as const,
+        ]
+        : [];
     }));
+    const empty = () => ({ audio_chunks: 0, transcriptions: 0 });
+    return [...new Set([...rawByDay.keys(), ...histogramByDay.keys()])]
+      .sort((a, b) => a - b).map((start) => ({
+        start: new Date(start).toISOString(),
+        raw: rawByDay.get(start) ?? empty(),
+        histogram: histogramByDay.get(start) ?? empty(),
+      }));
   }
 
   private async terminalTranscriptionMarkerStats(
@@ -2638,6 +2645,8 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       options: {
         sort: { createdAt: -1 },
         projection: { "data.timelineRebuildCampaignId": 1 },
+        hint: "timeline_rebuild_campaign_jobs",
+        maxTimeMS: 5_000,
       },
     });
     const campaignId = latest?.data?.timelineRebuildCampaignId;
@@ -2657,6 +2666,8 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       },
       options: {
         sort: { "data.timelineRebuildBatchIndex": 1 },
+        hint: "timeline_rebuild_campaign_jobs",
+        maxTimeMS: 5_000,
         projection: {
           state: 1,
           data: 1,
@@ -2761,40 +2772,101 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
 
   private async timelineIntegrityReport(auth: Auth) {
     const mongo = await getMongoResource(auth);
-    const [snapshot, campaign] = await Promise.all([
+    const [snapshot, campaign, maintenance, pendingDays] = await Promise.all([
       readDashboardSnapshot<any>(mongo, TIMELINE_INTEGRITY_SNAPSHOT_ID),
       this.latestTimelineCampaign(auth),
+      getTimelineDensityMaintenance(mongo),
+      mongo({
+        action: "find",
+        collection: TIMELINE_DENSITY_PENDING,
+        query: {},
+        options: { projection: { _id: 1 }, limit: 0, maxTimeMS: 5_000 },
+      }) as Promise<Array<{ _id: string }>>,
     ]);
-    if (snapshot?.data) {
-      return {
-        ...snapshot.data,
-        campaign,
-        snapshot: serializeDashboardSnapshot(snapshot),
-      };
-    }
-    return {
-      checkedAt: null,
-      status: "not_checked",
-      sources: [],
-      histograms: [],
-      repairPlan: { ranges: [], days: 0 },
-      bookkeeping: {
-        checked: false,
-        terminalSequences: null,
-        eligibleChunks: null,
-        modifiedChunks: 0,
-        applied: false,
-      },
-      lastBookkeepingRepair: await this.latestTimelineBookkeepingRepair(auth),
+    const baselineAt = validDate(
+      snapshot?.data?.auditStartedAt ?? snapshot?.data?.checkedAt,
+    );
+    const receipts = baselineAt
+      ? await mongo({
+        action: "find",
+        collection: TIMELINE_DENSITY_RECEIPTS,
+        query: { verifiedAt: { $gte: baselineAt } },
+        options: { limit: 0, maxTimeMS: 5_000 },
+      })
+      : [];
+    const currentStaleBuckets = snapshot?.data?.histograms?.some(
+        (row: { stale: number }) => row.stale > 0,
+      )
+      ? await this.timelineCurrentStaleBuckets(
+        auth,
+        pendingDays.map((day) => day._id),
+      )
+      : undefined;
+    const report = overlayTimelineDensityIntegrity(
+      snapshot?.data ? { ...snapshot.data, currentStaleBuckets } : undefined,
+      receipts,
+      pendingDays.map((day) => day._id),
+      maintenance,
       campaign,
-      issues: [],
-      scope: {
-        verifies: [],
-        note: "No persisted Timeline integrity snapshot exists yet.",
-      },
-      performance: { totalMs: 0, stages: {} },
-      snapshot: serializeDashboardSnapshot(snapshot),
+    );
+    const { data: _snapshotData, ...snapshotMetadata } =
+      serializeDashboardSnapshot(snapshot);
+    return {
+      ...report,
+      lastBookkeepingRepair: snapshot?.data?.lastBookkeepingRepair ??
+        await this.latestTimelineBookkeepingRepair(auth),
+      campaign,
+      snapshot: snapshotMetadata,
     };
+  }
+
+  private async timelineCurrentStaleBuckets(auth: Auth, pendingDays: string[]) {
+    // An audit may observe temporary parent flags mid-rebuild. Read only the
+    // stale index to distinguish pending maintenance from unresolved flags.
+    const mongo = await getMongoResource(auth);
+    const rows: Array<{ pending: number; untracked: number }> = await Promise
+      .all(
+        TIMELINE_RESOLUTIONS.map(async (resolution) => {
+          const bucketMs = resolution === "1week"
+            ? 7 * DENSITY_DAY_MS
+            : DENSITY_DAY_MS;
+          const pendingStarts = [
+            ...new Set(
+              pendingDays.map((day) =>
+                Math.floor(new Date(day).getTime() / bucketMs) * bucketMs
+              ),
+            ),
+          ].map((time) => new Date(time));
+          const pending = {
+            $in: [
+              resolution === "1week" ? "$start" : {
+                $dateTrunc: { date: "$start", unit: "day", timezone: "UTC" },
+              },
+              pendingStarts,
+            ],
+          };
+          const counts = await mongo({
+            action: "aggregate",
+            collection: `histogram_${resolution}`,
+            pipeline: [
+              { $match: { stale: true } },
+              {
+                $group: {
+                  _id: null,
+                  pending: { $sum: { $cond: [pending, 1, 0] } },
+                  untracked: { $sum: { $cond: [pending, 0, 1] } },
+                },
+              },
+            ],
+            options: { hint: "density_stale_dates", maxTimeMS: 5_000 },
+          });
+          return counts[0] ?? { pending: 0, untracked: 0 };
+        }),
+      );
+    return rows.reduce((sum, row) => ({
+      pending: sum.pending + Number(row.pending),
+      untracked: sum.untracked + Number(row.untracked),
+    }), { pending: 0, untracked: 0 });
   }
 
   private async refreshTimelineIntegrity(auth: Auth) {
@@ -2841,6 +2913,21 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
     if (!lease) return { accepted: false, reason: "already_refreshing" };
     try {
       const report = await this.computeTimelineIntegrityReport(auth);
+      // A full check establishes the exact baseline once. Durable day work then
+      // keeps it current without rescanning the raw corpus after each import.
+      const pending = await mongo({
+        action: "find",
+        collection: TIMELINE_DENSITY_PENDING,
+        query: {},
+        options: { projection: { _id: 1 }, limit: 0, maxTimeMS: 5_000 },
+      }) as Array<{ _id: string }>;
+      const alreadyPending = new Set(pending.map((day) => day._id));
+      const repairDays = report.dailyComparisons.filter((day) =>
+        !alreadyPending.has(day.start) &&
+        (day.raw.audio_chunks !== day.histogram.audio_chunks ||
+          day.raw.transcriptions !== day.histogram.transcriptions)
+      ).map((day) => new Date(day.start));
+      await queueTimelineDensityDays(mongo, repairDays);
       await completeDashboardRefresh(
         mongo,
         TIMELINE_INTEGRITY_SNAPSHOT_ID,
@@ -2848,8 +2935,25 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
         report,
       );
       if (report.campaign?.status === "verifying") {
+        const campaignRanges = report.campaign.ranges.length > 0
+          ? report.campaign.ranges
+          : [{ start: report.campaign.start, end: report.campaign.end }];
+        const campaignMismatch = report.dailyComparisons.some((day) =>
+          campaignRanges.some((
+            range: { start: string | null; end: string | null },
+          ) =>
+            range.start && range.end && day.start >= range.start &&
+            day.start < range.end
+          ) && (day.raw.audio_chunks !== day.histogram.audio_chunks ||
+            day.raw.transcriptions !== day.histogram.transcriptions)
+        );
+        // A selected-range campaign is verified only against its own dates.
+        // Later ingestion elsewhere must not retroactively fail that campaign.
+        const verificationStatus = campaignMismatch
+          ? "needs_attention"
+          : "healthy";
         const verification = timelineVerificationOutcome(
-          report.status === "healthy" ? "healthy" : "needs_attention",
+          verificationStatus,
         );
         await mongo({
           action: "updateOne",
@@ -2861,7 +2965,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
               autoRecover: false,
               completedAt: new Date(),
               verifiedAt: new Date(),
-              verificationStatus: report.status,
+              verificationStatus,
             },
           },
           options: { touchUpdatedAt: false },
@@ -2882,6 +2986,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
   private async computeTimelineIntegrityReport(auth: Auth) {
     const mongo = await getMongoResource(auth);
     const auditStartedAt = performance.now();
+    const auditDate = new Date();
     const stageMs: Record<string, number> = {};
     const timed = async <T>(name: string, task: () => Promise<T>) => {
       const startedAt = performance.now();
@@ -2896,8 +3001,9 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       histograms,
       campaign,
       lastBookkeepingRepair,
+      dailyComparisons,
     ] = await Promise.all([
-      timed("sourceExactCounts", () => this.timelineSourceStats(auth, true)),
+      timed("sourceRanges", () => this.timelineSourceStats(auth)),
       timed(
         "histogramTotals",
         () =>
@@ -2943,6 +3049,7 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
         "bookkeepingReport",
         () => this.latestTimelineBookkeepingRepair(auth),
       ),
+      timed("dailyExactCounts", () => this.timelineDailyComparisons(auth)),
     ]);
 
     // Exact marker reconciliation is intentionally kept behind its own
@@ -2956,21 +3063,37 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       applied: false,
     };
 
-    const daily = histograms.find((item) => item.resolution === "1day")!;
-    const sourcesWithHistogram = sources.map((source) => ({
-      ...source,
-      histogramDocuments:
-        daily.totals[source.collection as keyof typeof daily.totals],
-      difference: daily.totals[source.collection as keyof typeof daily.totals] -
-        source.documents,
+    const sourcesWithHistogram = sources.map((source) => {
+      const documents = dailyComparisons.reduce(
+        (sum, day) => sum + day.raw[source.collection],
+        0,
+      );
+      const histogramDocuments = dailyComparisons.reduce(
+        (sum, day) => sum + day.histogram[source.collection],
+        0,
+      );
+      return {
+        ...source,
+        documents,
+        histogramDocuments,
+        difference: histogramDocuments - documents,
+      };
+    });
+    // Compare each date even when opposite differences cancel in global totals.
+    const repairRanges = findTimelineRepairRanges(
+      dailyComparisons.map((day) => ({
+        start: new Date(day.start),
+        counts: day.raw,
+      })),
+      dailyComparisons.map((day) => ({
+        start: new Date(day.start),
+        counts: day.histogram,
+      })),
+    ).map((range) => ({
+      ...range,
+      start: range.start.toISOString(),
+      end: range.end.toISOString(),
     }));
-    const repairRanges =
-      sourcesWithHistogram.some((source) => source.difference !== 0)
-        ? await timed(
-          "repairRangePlan",
-          () => this.timelineDailyRepairRanges(auth),
-        )
-        : [];
     const issues: Array<{
       severity: "warning" | "error";
       code: string;
@@ -3000,28 +3123,13 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
         actionLabel: "Update stale ranges",
       });
     }
-    if (
-      campaign && (campaign.status === "completed_with_errors" ||
-        campaign.status === "paused_legacy" ||
-        campaign.status === "paused_error" ||
-        (campaign.missingJobs > 0 &&
-          !["queued", "running", "recovering"].includes(campaign.status)))
-    ) {
-      issues.push({
-        severity: "error",
-        code: "timeline_rebuild_campaign_failed",
-        message:
-          "The latest timeline rebuild campaign has failed, cancelled, or missing jobs.",
-        action: "resume_campaign",
-        actionLabel: `Resume from batch ${(campaign.nextBatchIndex ?? 0) + 1}`,
-      });
-    }
-
     return {
+      auditStartedAt: auditDate.toISOString(),
       checkedAt: new Date().toISOString(),
       status: issues.length === 0 ? "healthy" : "needs_attention",
       sources: sourcesWithHistogram,
       histograms,
+      dailyComparisons,
       repairPlan: {
         ranges: repairRanges,
         days: repairRanges.reduce((sum, range) => sum + range.days, 0),
@@ -3036,10 +3144,10 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
           "stored histogram totals at every resolution",
           "stale histogram flags",
           "terminal transcription bookkeeping when Preview repair is run",
-          "latest rebuild campaign completion",
+          "exact counts for each UTC day",
         ],
         note:
-          "Matching totals and ranges are a reconciliation check, not a byte-for-byte proof of every bucket. When totals differ, the repair plan identifies exact UTC days and rebuilds only those bounded ranges.",
+          "The full check compares exact UTC-day counts. Automatic maintenance rebuilds changed days and verifies every density resolution; unrelated historical campaign outcomes remain in campaign history.",
       },
       performance: {
         totalMs: Math.round(performance.now() - auditStartedAt),
@@ -4218,7 +4326,10 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       .all([
         readDashboardSnapshot(mongo, RUN_HISTORY_SNAPSHOT_ID),
         readDashboardSnapshot(mongo, EXACT_BACKLOG_SNAPSHOT_ID),
-        readDashboardSnapshot(mongo, TIMELINE_INTEGRITY_SNAPSHOT_ID),
+        readDashboardSnapshot<Record<string, unknown>>(
+          mongo,
+          TIMELINE_INTEGRITY_SNAPSHOT_ID,
+        ),
         this.getWorkerStatus(auth).catch((error) => {
           console.warn(
             "[jobs-dashboard] Live runtime status unavailable",
@@ -4250,7 +4361,12 @@ export class JobsResource implements Resource<WorkerProgressRequest, any> {
       snapshots: {
         runHistory: serializeDashboardSnapshot(runHistory),
         exactBacklog: serializeDashboardSnapshot(exactBacklog),
-        timelineIntegrity: serializeDashboardSnapshot(timelineIntegrity),
+        timelineIntegrity: {
+          ...serializeDashboardSnapshot(timelineIntegrity),
+          data: timelineIntegrity?.data
+            ? { ...timelineIntegrity.data, dailyComparisons: undefined }
+            : undefined,
+        },
       },
     };
   }

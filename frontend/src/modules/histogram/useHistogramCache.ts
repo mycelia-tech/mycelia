@@ -29,6 +29,9 @@ export interface HistogramItem {
 }
 
 type LoadedRange = { start: Timestamp; end: Timestamp };
+let invalidationTimer: ReturnType<typeof setTimeout> | null = null;
+const schedulerTimers = new Map<Resolution, ReturnType<typeof setTimeout>>();
+const requestControllers = new Set<AbortController>();
 
 function mergeRanges(ranges: LoadedRange[]): LoadedRange[] {
   const sorted = [...ranges].sort((a, b) => a.start - b.start);
@@ -54,7 +57,7 @@ function computeMissingRanges(
   loaded: LoadedRange[],
   inFlight: LoadedRange[],
 ): LoadedRange[] {
-  const allRanges = [...loaded, ...inFlight];
+  const allRanges = mergeRanges([...loaded, ...inFlight]);
   const missing: LoadedRange[] = [];
   let current = start;
 
@@ -73,6 +76,7 @@ function computeMissingRanges(
 }
 
 type HistogramCacheStore = {
+  generation: number;
   data: {
     [R in Resolution]?: {
       loadedRanges: LoadedRange[];
@@ -101,6 +105,7 @@ type HistogramCacheStore = {
     items: HistogramItem[],
   ) => void;
   invalidateAll: () => void;
+  scheduleInvalidation: () => void;
   getMissingRanges: (
     resolution: Resolution,
     start: Timestamp,
@@ -114,6 +119,7 @@ type HistogramCacheStore = {
 };
 
 export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
+  generation: 0,
   data: {},
   indexByResolution: {},
   inFlightRequests: {},
@@ -175,13 +181,25 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
   },
 
   invalidateAll: () => {
+    if (invalidationTimer) clearTimeout(invalidationTimer);
+    invalidationTimer = null;
+    for (const timer of schedulerTimers.values()) clearTimeout(timer);
+    schedulerTimers.clear();
+    for (const controller of requestControllers) controller.abort();
+    requestControllers.clear();
     set({
+      generation: get().generation + 1,
       data: {},
       indexByResolution: {},
       inFlightRequests: {},
       pendingByResolution: {},
       schedulerActive: {},
     });
+  },
+
+  scheduleInvalidation: () => {
+    if (invalidationTimer) clearTimeout(invalidationTimer);
+    invalidationTimer = setTimeout(() => get().invalidateAll(), 750);
   },
 
   getMissingRanges: (resolution, start, end) => {
@@ -191,6 +209,7 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
   },
 
   fetchMissingRanges: (resolution, start, end) => {
+    const generation = get().generation;
     const pending = get().pendingByResolution[resolution] ?? [];
     const nextPending = mergeRanges([...pending, { start, end }]);
     set((state) => ({
@@ -206,7 +225,9 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
     }));
 
     const DEBOUNCE_MS = 250;
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (generation !== get().generation) return;
+      schedulerTimers.delete(resolution);
       const pendingNow = get().pendingByResolution[resolution] ?? [];
       if (pendingNow.length === 0) {
         set((state) => ({
@@ -215,24 +236,23 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
         return;
       }
 
-      const minStart = Math.min(...pendingNow.map((r) => r.start));
-      const maxEnd = Math.max(...pendingNow.map((r) => r.end));
-
       set((state) => ({
         pendingByResolution: { ...state.pendingByResolution, [resolution]: [] },
         schedulerActive: { ...state.schedulerActive, [resolution]: false },
       }));
 
-      const missingRanges = get().getMissingRanges(
-        resolution,
-        minStart,
-        maxEnd,
+      // Separate consumers can have disjoint viewports. Keep those reads
+      // bounded instead of querying every date between them.
+      const missingRanges = mergeRanges(
+        pendingNow.flatMap((range) =>
+          get().getMissingRanges(resolution, range.start, range.end)
+        ),
       );
       if (missingRanges.length === 0) return;
 
       const existing = get().inFlightRequests[resolution];
       const currentInFlight = existing?.ranges ?? [];
-      const newRanges = mergeRanges([...currentInFlight, ...missingRanges]);
+      const newRanges = [...currentInFlight, ...missingRanges];
 
       set((state) => ({
         inFlightRequests: {
@@ -247,8 +267,11 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
       const queue = [...missingRanges];
       const MAX = 5;
       const runOne = async () => {
+        if (generation !== get().generation) return;
         const range = queue.shift();
         if (!range) return;
+        const controller = new AbortController();
+        requestControllers.add(controller);
         try {
           const queryStart = new Date(range.start);
           const queryEnd = new Date(range.end);
@@ -261,7 +284,10 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
               start: { $gte: queryStart, $lt: queryEnd },
             },
             options: { sort: { start: 1 } },
-          }) as any[];
+          }, { signal: controller.signal }) as any[];
+          if (generation !== get().generation || controller.signal.aborted) {
+            return;
+          }
 
           const items = histogramData.map((doc: any) => ({
             id: doc._id.toString(),
@@ -280,45 +306,34 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
             { start: range.start, end: range.end },
             items,
           );
-          const existing = store.inFlightRequests[resolution];
-          const updatedRanges = existing?.ranges?.filter(
-            (r) => !(r.start === range.start && r.end === range.end),
-          ) ?? [];
-          set((state) => {
-            const next = {
-              ...state.inFlightRequests,
-            } as typeof state.inFlightRequests;
-            if (updatedRanges.length > 0) {
-              next[resolution] = {
-                ranges: updatedRanges,
-                requestedAt: existing?.requestedAt ?? new Date(),
-              };
-            } else {
-              delete next[resolution];
-            }
-            return { inFlightRequests: next };
-          });
         } catch (error) {
+          if (generation !== get().generation || controller.signal.aborted) {
+            return;
+          }
           console.error("Failed to fetch histogram data:", error);
-          const store = get();
-          const existing = store.inFlightRequests[resolution];
-          const updatedRanges = existing?.ranges?.filter(
-            (r) => !(r.start === range.start && r.end === range.end),
-          ) ?? [];
-          set((state) => {
-            const next = {
-              ...state.inFlightRequests,
-            } as typeof state.inFlightRequests;
-            if (updatedRanges.length > 0) {
-              next[resolution] = {
-                ranges: updatedRanges,
-                requestedAt: existing?.requestedAt ?? new Date(),
-              };
-            } else {
-              delete next[resolution];
-            }
-            return { inFlightRequests: next };
-          });
+        } finally {
+          requestControllers.delete(controller);
+          if (generation === get().generation) {
+            const store = get();
+            const existing = store.inFlightRequests[resolution];
+            const updatedRanges = existing?.ranges?.filter(
+              (r) => !(r.start === range.start && r.end === range.end),
+            ) ?? [];
+            set((state) => {
+              const next = {
+                ...state.inFlightRequests,
+              } as typeof state.inFlightRequests;
+              if (updatedRanges.length > 0) {
+                next[resolution] = {
+                  ranges: updatedRanges,
+                  requestedAt: existing?.requestedAt ?? new Date(),
+                };
+              } else {
+                delete next[resolution];
+              }
+              return { inFlightRequests: next };
+            });
+          }
         }
         await runOne();
       };
@@ -329,5 +344,6 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
         await Promise.all(workers);
       })();
     }, DEBOUNCE_MS);
+    schedulerTimers.set(resolution, timer);
   },
 }));

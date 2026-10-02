@@ -11,7 +11,17 @@ export type TimelineBookkeepingRepair = {
 
 export type TimelineIntegrityReport = {
   checkedAt: string | null;
-  status: "not_checked" | "healthy" | "needs_attention";
+  status: "not_checked" | "healthy" | "updating" | "needs_attention";
+  countsUpdatedAt?: string | null;
+  auditStale?: boolean;
+  maintenance?: {
+    state: "idle" | "updating" | "retrying" | "failed";
+    pendingDays: number;
+    lastCompletedAt: string | null;
+    lastError: string | null;
+    retryAt: string | null;
+    oldestPendingAt: string | null;
+  };
   sources: Array<{
     collection: "audio_chunks" | "transcriptions";
     label: string;

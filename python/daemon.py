@@ -12,6 +12,7 @@ from pydub import AudioSegment
 
 import settings
 from discovery import Importer, extract_device_info
+from ingestion_lock import serialized_ingestion
 from lib.api import exchange_api_key_for_jwt, job_token_var
 from lib.resources import call_resource
 
@@ -52,6 +53,7 @@ def initialize_auth() -> str:
 _importer_error_state: dict[str, tuple[str, float]] = {}
 
 
+@serialized_ingestion
 def import_new_files() -> list[dict]:
     results = []
     for importer in settings.importers:
@@ -86,12 +88,15 @@ importer_map = {importer.code: importer for importer in settings.importers}
 unknown_importer = Importer(code="unknown")
 
 
+@serialized_ingestion
 def ingests_missing_sources(
     limit=None,
     retry_errors=False,
     only_errors=False,
     source_ids=None,
     source_path_overrides=None,
+    progress_callback=None,
+    source_root=None,
 ) -> dict[str, int]:
     """Ingest a bounded selection and report failures, including cached ones."""
     source_ids = list(source_ids or [])
@@ -100,7 +105,10 @@ def ingests_missing_sources(
         for source_id, path in (source_path_overrides or {}).items()
     }
     scope_query = {}
-    if source_ids:
+    if source_root is not None:
+        from folder_ingestion import source_scope
+        scope_query = source_scope(source_root)
+    elif source_ids:
         # An explicit operator-selected ID is authoritative, including legacy
         # records whose importer code or host name predates current settings.
         scope_query["_id"] = {"$in": source_ids}
@@ -153,6 +161,20 @@ def ingests_missing_sources(
         "cached_errors": errored_count,
     }
 
+    def publish_progress(file_name=None):
+        if progress_callback is not None:
+            try:
+                progress_callback({
+                    **result,
+                    "already_ingested": already_ingested + result["succeeded"],
+                    "batch_total": min(limit or total_pending, total_pending),
+                    "file": file_name,
+                })
+            except Exception:
+                logger.warning("Could not publish local ingestion progress", exc_info=True)
+
+    publish_progress()
+
     if total_pending == 0:
         if errored_count > 0:
             logger.info(f"Ingestion idle: {already_ingested}/{total_files} files successfully ingested, {errored_count} errored files cached")
@@ -186,8 +208,12 @@ def ingests_missing_sources(
         file_name = os.path.basename(file_path) if 'path' in source else str(source['_id'])
 
         logger.info(f"Processing [{idx}/{min(limit or total_pending, total_pending)}]: {file_name}")
+        publish_progress(file_name)
 
         try:
+            if source_root is not None:
+                from folder_ingestion import checked_audio_path
+                source_for_upload = {**source_for_upload, 'path': checked_audio_path(source_root, source_for_upload.get('path', ''))}
             importer = importer_map.get(
                 source['platform'].get('importer'),
                 unknown_importer
@@ -230,6 +256,10 @@ def ingests_missing_sources(
                     }
                 }}
             })
+
+        result.update(attempted=processed + errors, succeeded=processed, failed=errors,
+                      remaining=total_pending - processed - errors)
+        publish_progress(file_name)
 
     remaining = total_pending - processed - errors
     new_ingested_total = already_ingested + processed

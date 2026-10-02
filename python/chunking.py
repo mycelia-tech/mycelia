@@ -1,9 +1,11 @@
 import base64
 import io
 import logging
+import math
 import os
 import shutil
 import subprocess
+import time
 import wave
 from datetime import datetime, timedelta
 
@@ -24,8 +26,51 @@ CHUNK_WRITE_BATCH_SIZE = 50
 def get_tmp_dir(original):
     return os.path.join(TMP_DIR, sha(original))
 
-def split_to_opus_chunks(original, *, quiet=False):
-    dest_dir = get_tmp_dir(original)
+class EncodingProgress:
+    """Bounded ffmpeg -progress parser; elapsed/heartbeat is not saved audio."""
+    def __init__(self, callback):
+        self.callback = callback
+        self.started = time.monotonic()
+        self.last_report = 0.0
+        self.encoded = 0.0
+        self.speed = 0.0
+        self.updated_at = time.time()
+        self.buffer = b""
+
+    def feed(self, data):
+        self.buffer += data
+        if len(self.buffer) > 65536:
+            raise RuntimeError("ffmpeg progress exceeded its safety limit")
+        lines = self.buffer.split(b"\n")
+        self.buffer = lines.pop()
+        for line in lines:
+            key, _, value = line.partition(b"=")
+            try:
+                if key == b"out_time_us":
+                    seconds = float(value) / 1_000_000
+                    if math.isfinite(seconds) and seconds > self.encoded:
+                        self.encoded = seconds
+                        self.updated_at = time.time()
+                elif key == b"speed":
+                    speed = float(value.rstrip(b"x"))
+                    if math.isfinite(speed) and speed >= 0:
+                        self.speed = speed
+            except ValueError:
+                pass  # ffmpeg can emit N/A before its first packet.
+
+    def report(self, *, force=False):
+        now = time.monotonic()
+        if force or now - self.last_report >= 1:
+            self.callback({"phase": "encoding", "encoded_seconds": self.encoded,
+                           "encoding_elapsed_seconds": now - self.started,
+                           "encoding_speed": self.speed,
+                           "encoding_updated_at": self.updated_at})
+            self.last_report = now
+
+
+def split_to_opus_chunks(original, *, quiet=False, work_dir=None, cancel_check=None,
+                         progress_callback=None):
+    dest_dir = work_dir or get_tmp_dir(original)
 
     if os.path.exists(dest_dir):
         # A previous interrupted attempt can leave hundreds of chunks behind.
@@ -46,13 +91,51 @@ def split_to_opus_chunks(original, *, quiet=False):
         '-nostats',
     ]
 
+    if cancel_check is not None:
+        # The native transport accepts audio bytes, never remote media URLs.
+        command[1:1] = ['-protocol_whitelist', 'file,pipe', '-format_whitelist',
+                        'mov,mp4,m4a,3gp,3g2,mj2,caf,wav,aac,mp3']
+
     try:
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        if cancel_check is None and progress_callback is None:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        else:
+            # Bridge can pause a long encode; never leave an orphan ffmpeg.
+            if progress_callback:
+                command[1:1] = ['-progress', 'pipe:1', '-stats_period', '1']
+            tracker = EncodingProgress(progress_callback) if progress_callback else None
+            with open(os.path.join(dest_dir, "ffmpeg.stderr"), "w+b") as errors:
+                process = subprocess.Popen(command, stdout=subprocess.PIPE if tracker else subprocess.DEVNULL,
+                                           stderr=errors)
+                try:
+                    if tracker:
+                        os.set_blocking(process.stdout.fileno(), False)
+                    while process.poll() is None:
+                        if cancel_check:
+                            cancel_check()
+                        if tracker:
+                            tracker.feed(process.stdout.read(65536) or b"")
+                            tracker.report()
+                        time.sleep(0.2)
+                    if tracker:
+                        tracker.feed(process.stdout.read(65536) or b"")
+                        tracker.report(force=True)
+                    if process.returncode:
+                        errors.seek(0)
+                        raise subprocess.CalledProcessError(
+                            process.returncode, command,
+                            stderr=errors.read(8192).decode(errors="replace"),
+                        )
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+                    if process.stdout:
+                        process.stdout.close()
     except subprocess.CalledProcessError as error:
         details = (error.stderr or error.stdout or "").strip()
         if "Operation not permitted" in details:
@@ -70,7 +153,7 @@ def split_to_opus_chunks(original, *, quiet=False):
 
     return [
         (i * CHUNK_MAX_LEN, os.path.join(dest_dir, f))
-        for i, f in enumerate(sorted(os.listdir(dest_dir)))
+        for i, f in enumerate(sorted(f for f in os.listdir(dest_dir) if f.endswith(".opus")))
     ]
 
 def get_os_metadata(file):
@@ -276,20 +359,38 @@ def fetch_audio(
     return array_to_wav(result[:int(duration.total_seconds() * sample_rate)])
 
 
-def ingest_source(original: dict):
+def ingest_source(original: dict, *, work_dir=None, progress_callback=None, cancel_check=None,
+                  resource_callback=None):
     path = original["path"]
-    tmp_dir = get_tmp_dir(path)
+    tmp_dir = work_dir or get_tmp_dir(path)
+    resource = resource_callback or call_resource
+    def report(phase, completed=0, total=0):
+        if cancel_check:
+            cancel_check()
+        if progress_callback:
+            progress_callback({"phase": phase, "completed_chunks": completed, "total_chunks": total})
     try:
+        report("encoding")
         logger.info("splitting '%s' into chunks", path)
-        chunk_files = split_to_opus_chunks(path)
+        chunk_files = (
+            split_to_opus_chunks(path, work_dir=tmp_dir, cancel_check=cancel_check,
+                                 progress_callback=progress_callback)
+            if work_dir is not None or cancel_check is not None or progress_callback is not None
+            else split_to_opus_chunks(path)
+        )
+        if not chunk_files:
+            raise RuntimeError("ffmpeg produced no audio chunks")
         start: datetime = original["start"]
         logger.info("ingesting %s chunks of '%s'",len(chunk_files), path)
 
         operations = []
+        report("saving", 0, len(chunk_files))
         for i, [offset, file] in tqdm(
             enumerate(chunk_files),
             total=len(chunk_files),
         ):
+            if cancel_check:
+                cancel_check()
             with open(file, "rb") as f:
                 operations.append({
                     "updateOne": {
@@ -322,20 +423,24 @@ def ingest_source(original: dict):
                 })
 
             if len(operations) >= CHUNK_WRITE_BATCH_SIZE:
-                call_resource('mongo', {
+                resource('mongo', {
                     "action": "bulkWrite",
                     "collection": "audio_chunks",
                     "operations": operations,
                     "options": {"ordered": False},
                 })
                 operations = []
+                report("saving", i + 1, len(chunk_files))
 
         if operations:
-            call_resource('mongo', {
+            resource('mongo', {
                 "action": "bulkWrite",
                 "collection": "audio_chunks",
                 "operations": operations,
                 "options": {"ordered": False},
             })
+        report("saved", len(chunk_files), len(chunk_files))
+        return len(chunk_files)
     finally:
-        shutil.rmtree(tmp_dir)
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir)

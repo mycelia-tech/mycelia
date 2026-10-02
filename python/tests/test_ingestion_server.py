@@ -1,4 +1,6 @@
 import asyncio
+import json
+import tempfile
 import threading
 from pathlib import Path
 from sys import path
@@ -20,8 +22,34 @@ SUCCESS = {
 
 class IngestionServerHealthTest(TestCase):
     def setUp(self):
+        self.settings = patch("ingestion_server.load_folder_settings", return_value=None).start()
+        self.addCleanup(patch.stopall)
         ingestion_server.last_cycle.clear()
         ingestion_server.last_cycle.update({"status": "not_started"})
+
+    def test_bridge_heartbeat_is_local_atomic_and_never_queries_mongo(self):
+        with (
+            tempfile.TemporaryDirectory(dir="/private/tmp") as directory,
+            patch("ingestion_server.get_apple_voicememos_mode", return_value="staged"),
+            patch.dict("os.environ", {"MYCELIA_APPLE_VOICEMEMOS_DB": f"{directory}/snapshot.db"}),
+            patch("ingestion_server.call_resource") as resource,
+        ):
+            payload = {"checkedAt": "2026-09-14T16:00:00+00:00", "currentCycle": {"phase": "ingestion"}}
+            ingestion_server.write_bridge_status(payload)
+            output = Path(directory) / "bridge-import-status.json"
+            self.assertEqual(json.loads(output.read_text()), payload)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(len(list(Path(directory).iterdir())), 1)
+            resource.assert_not_called()
+            with patch("ingestion_server.get_apple_voicememos_mode", return_value="live"):
+                ingestion_server.write_bridge_status({"ignored": True})
+            self.assertEqual(json.loads(output.read_text()), payload)
+
+    def test_ingestion_progress_is_an_in_memory_snapshot(self):
+        with patch.object(ingestion_server, "current_cycle", {"phase": "ingestion"}):
+            value = {"succeeded": 2, "remaining": 3}
+            ingestion_server.update_ingestion_progress(value)
+            self.assertEqual(ingestion_server.current_cycle["ingestion"], value)
 
     def test_discovery_failure_degrades_cycle_but_still_ingests_pending(self):
         source_results = [{
@@ -37,7 +65,7 @@ class IngestionServerHealthTest(TestCase):
 
         self.assertEqual(result["status"], "degraded")
         self.assertEqual(result["sources"], source_results)
-        ingest.assert_called_once_with(limit=20)
+        ingest.assert_called_once_with(limit=20, progress_callback=ingestion_server.update_ingestion_progress)
 
         with patch(
             "ingestion_server.get_apple_voicememos_mode",
@@ -214,7 +242,7 @@ class IngestionServerHealthTest(TestCase):
         started = threading.Event()
         release = threading.Event()
 
-        def ingest(*, limit):
+        def ingest(*, limit, progress_callback=None):
             started.set()
             if not release.wait(3):
                 raise TimeoutError("Test batch was not released")

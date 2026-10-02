@@ -10,6 +10,10 @@ import { Filter } from "mongodb";
 import { Auth } from "../auth/index.ts";
 import { env } from "#/env.ts";
 import { withObjectListCategories } from "@/lib/objects/list-categories.ts";
+import {
+  TIMELINE_DENSITY_SOURCE_WRITE_TIMEOUT_MS,
+  withTimelineDensityWrite,
+} from "@/lib/timeline/density-write.ts";
 
 let client: MongoClient | null = null;
 let changeStreamClient: MongoClient | null = null;
@@ -525,200 +529,12 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
 
     await this.ensureCollectionExists(db, input.collection);
 
-    const collection = db.collection(input.collection);
-
     try {
-      switch (input.action) {
-        case "find": {
-          const limit = input.options?.limit ?? 1000;
-          return collection.find(input.query, input.options).batchSize(limit)
-            .limit(limit).toArray();
-        }
-        case "findOne":
-          return collection.findOne(input.query, input.options);
-        case "getFirstBatch": {
-          return this.executeFindWithCursor(
-            collection,
-            input.query,
-            input.options,
-            input.batchSize,
-            auth.principal,
-          );
-        }
-        case "getMore": {
-          return this.continueCursor(
-            input.collection,
-            input.cursorId,
-            input.batchSize,
-            auth.principal,
-          );
-        }
-        case "closeCursor":
-          return this.closeCursor(input.cursorId, auth.principal);
-        case "insertOne": {
-          const doc = {
-            ...normalizeInsertedDocument(input.collection, input.doc),
-            updatedAt: new Date(),
-          };
-          return collection.insertOne(doc);
-        }
-        case "insertMany": {
-          const docs = input.docs.map((doc) => ({
-            ...normalizeInsertedDocument(input.collection, doc),
-            updatedAt: new Date(),
-          }));
-          return collection.insertMany(docs);
-        }
-        case "updateOne": {
-          const update = { ...input.update };
-          if (input.options?.touchUpdatedAt !== false) {
-            if (update.$set) {
-              update.$set = { ...update.$set, updatedAt: new Date() };
-            } else {
-              update.$set = { updatedAt: new Date() };
-            }
-          }
-          const { touchUpdatedAt: _touchUpdatedAt, ...options } =
-            input.options ?? {};
-          return collection.updateOne(input.query, update, options);
-        }
-        case "updateMany": {
-          const update = { ...input.update };
-          if (input.options?.touchUpdatedAt !== false) {
-            if (update.$set) {
-              update.$set = { ...update.$set, updatedAt: new Date() };
-            } else {
-              update.$set = { updatedAt: new Date() };
-            }
-          }
-          const { touchUpdatedAt: _touchUpdatedAt, ...options } =
-            input.options ?? {};
-          return collection.updateMany(
-            input.query,
-            update,
-            options,
-          );
-        }
-        case "deleteOne":
-          return collection.deleteOne(input.query);
-        case "deleteMany":
-          return collection.deleteMany(input.query);
-        case "count":
-          return collection.countDocuments(input.query, input.options);
-        case "aggregate":
-          return collection.aggregate(input.pipeline, input.options).toArray();
-        case "bulkWrite": {
-          const touchUpdatedAt = input.options?.touchUpdatedAt !== false;
-          const operations = input.operations.map((op: any) => {
-            if (op.insertOne) {
-              return {
-                ...op,
-                insertOne: {
-                  ...op.insertOne,
-                  document: {
-                    ...normalizeInsertedDocument(
-                      input.collection,
-                      op.insertOne.document,
-                    ),
-                    updatedAt: new Date(),
-                  },
-                },
-              };
-            }
-            if (op.insertMany) {
-              return {
-                ...op,
-                insertMany: {
-                  ...op.insertMany,
-                  documents: op.insertMany.documents.map((doc: any) => ({
-                    ...normalizeInsertedDocument(input.collection, doc),
-                    updatedAt: new Date(),
-                  })),
-                },
-              };
-            }
-            if (op.updateOne) {
-              const updateOp = op.updateOne;
-              const update = { ...updateOp.update };
-              if (touchUpdatedAt) {
-                if (update.$set) {
-                  update.$set = { ...update.$set, updatedAt: new Date() };
-                } else {
-                  update.$set = { updatedAt: new Date() };
-                }
-              }
-              return { ...op, updateOne: { ...updateOp, update } };
-            }
-            if (op.updateMany) {
-              const updateOp = op.updateMany;
-              const update = { ...updateOp.update };
-              if (touchUpdatedAt) {
-                if (update.$set) {
-                  update.$set = { ...update.$set, updatedAt: new Date() };
-                } else {
-                  update.$set = { updatedAt: new Date() };
-                }
-              }
-              return { ...op, updateMany: { ...updateOp, update } };
-            }
-            if (op.replaceOne) {
-              const replaceOp = op.replaceOne;
-              return {
-                ...op,
-                replaceOne: {
-                  ...replaceOp,
-                  replacement: {
-                    ...normalizeInsertedDocument(
-                      input.collection,
-                      replaceOp.replacement,
-                    ),
-                    ...(touchUpdatedAt ? { updatedAt: new Date() } : {}),
-                  },
-                },
-              };
-            }
-            return op;
-          });
-          const { touchUpdatedAt: _touchUpdatedAt, ...options } =
-            input.options ?? {};
-          return collection.bulkWrite(operations as any, options);
-        }
-        case "createIndex":
-          return collection.createIndex(input.index, input.options);
-        case "listIndexes":
-          if (
-            !(await db.listCollections({ name: input.collection }).hasNext())
-          ) {
-            return [];
-          }
-          return collection.indexes();
-        case "findOneAndUpdate": {
-          const update = { ...input.update };
-          if (input.options?.touchUpdatedAt !== false) {
-            if (update.$set) {
-              update.$set = { ...update.$set, updatedAt: new Date() };
-            } else {
-              update.$set = { updatedAt: new Date() };
-            }
-          }
-          const { touchUpdatedAt: _touchUpdatedAt, ...options } =
-            input.options ?? {};
-          if (options.returnDocument === "before") {
-            options.returnDocument = "before";
-          } else if (options.returnDocument === "after") {
-            options.returnDocument = "after";
-          }
-          const result = await collection.findOneAndUpdate(
-            input.query,
-            update,
-            options,
-          );
-          // MongoDB driver returns the document directly (or null if not found)
-          return result;
-        }
-        default:
-          throw new Error("Unknown action");
-      }
+      return await withTimelineDensityWrite(
+        db,
+        input,
+        () => this.execute(db, input, auth),
+      );
     } catch (error) {
       if (isDiarizationRecordingLeaseCollision(input, error)) {
         return Response.json({
@@ -736,6 +552,220 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
           error instanceof Error ? error.message : "Unknown error"
         }`,
       );
+    }
+  }
+
+  private async execute(
+    db: Db,
+    input: MongoRequest,
+    auth: Auth,
+  ): Promise<MongoResponse> {
+    const collection = db.collection(input.collection);
+    // Bound both the whole driver operation (including multi-command bulks)
+    // and each server command before the durable density intent expires.
+    const sourceWriteOptions = input.collection === "audio_chunks" ||
+        input.collection === "transcriptions"
+      ? {
+        maxTimeMS: TIMELINE_DENSITY_SOURCE_WRITE_TIMEOUT_MS,
+        timeoutMS: TIMELINE_DENSITY_SOURCE_WRITE_TIMEOUT_MS,
+      }
+      : {};
+    switch (input.action) {
+      case "find": {
+        const limit = input.options?.limit ?? 1000;
+        return collection.find(input.query, input.options).batchSize(limit)
+          .limit(limit).toArray();
+      }
+      case "findOne":
+        return collection.findOne(input.query, input.options);
+      case "getFirstBatch": {
+        return this.executeFindWithCursor(
+          collection,
+          input.query,
+          input.options,
+          input.batchSize,
+          auth.principal,
+        );
+      }
+      case "getMore": {
+        return this.continueCursor(
+          input.collection,
+          input.cursorId,
+          input.batchSize,
+          auth.principal,
+        );
+      }
+      case "closeCursor":
+        return this.closeCursor(input.cursorId, auth.principal);
+      case "insertOne": {
+        const doc = {
+          ...normalizeInsertedDocument(input.collection, input.doc),
+          updatedAt: new Date(),
+        };
+        return collection.insertOne(doc, sourceWriteOptions);
+      }
+      case "insertMany": {
+        const docs = input.docs.map((doc) => ({
+          ...normalizeInsertedDocument(input.collection, doc),
+          updatedAt: new Date(),
+        }));
+        return collection.insertMany(docs, sourceWriteOptions);
+      }
+      case "updateOne": {
+        const update = { ...input.update };
+        if (input.options?.touchUpdatedAt !== false) {
+          if (update.$set) {
+            update.$set = { ...update.$set, updatedAt: new Date() };
+          } else {
+            update.$set = { updatedAt: new Date() };
+          }
+        }
+        const { touchUpdatedAt: _touchUpdatedAt, ...options } = input.options ??
+          {};
+        return collection.updateOne(input.query, update, {
+          ...options,
+          ...sourceWriteOptions,
+        });
+      }
+      case "updateMany": {
+        const update = { ...input.update };
+        if (input.options?.touchUpdatedAt !== false) {
+          if (update.$set) {
+            update.$set = { ...update.$set, updatedAt: new Date() };
+          } else {
+            update.$set = { updatedAt: new Date() };
+          }
+        }
+        const { touchUpdatedAt: _touchUpdatedAt, ...options } = input.options ??
+          {};
+        return collection.updateMany(
+          input.query,
+          update,
+          { ...options, ...sourceWriteOptions },
+        );
+      }
+      case "deleteOne":
+        return collection.deleteOne(input.query, sourceWriteOptions);
+      case "deleteMany":
+        return collection.deleteMany(input.query, sourceWriteOptions);
+      case "count":
+        return collection.countDocuments(input.query, input.options);
+      case "aggregate":
+        return collection.aggregate(input.pipeline, input.options).toArray();
+      case "bulkWrite": {
+        const touchUpdatedAt = input.options?.touchUpdatedAt !== false;
+        const operations = input.operations.map((op: any) => {
+          if (op.insertOne) {
+            return {
+              ...op,
+              insertOne: {
+                ...op.insertOne,
+                document: {
+                  ...normalizeInsertedDocument(
+                    input.collection,
+                    op.insertOne.document,
+                  ),
+                  updatedAt: new Date(),
+                },
+              },
+            };
+          }
+          if (op.insertMany) {
+            return {
+              ...op,
+              insertMany: {
+                ...op.insertMany,
+                documents: op.insertMany.documents.map((doc: any) => ({
+                  ...normalizeInsertedDocument(input.collection, doc),
+                  updatedAt: new Date(),
+                })),
+              },
+            };
+          }
+          if (op.updateOne) {
+            const updateOp = op.updateOne;
+            const update = { ...updateOp.update };
+            if (touchUpdatedAt) {
+              if (update.$set) {
+                update.$set = { ...update.$set, updatedAt: new Date() };
+              } else {
+                update.$set = { updatedAt: new Date() };
+              }
+            }
+            return { ...op, updateOne: { ...updateOp, update } };
+          }
+          if (op.updateMany) {
+            const updateOp = op.updateMany;
+            const update = { ...updateOp.update };
+            if (touchUpdatedAt) {
+              if (update.$set) {
+                update.$set = { ...update.$set, updatedAt: new Date() };
+              } else {
+                update.$set = { updatedAt: new Date() };
+              }
+            }
+            return { ...op, updateMany: { ...updateOp, update } };
+          }
+          if (op.replaceOne) {
+            const replaceOp = op.replaceOne;
+            return {
+              ...op,
+              replaceOne: {
+                ...replaceOp,
+                replacement: {
+                  ...normalizeInsertedDocument(
+                    input.collection,
+                    replaceOp.replacement,
+                  ),
+                  ...(touchUpdatedAt ? { updatedAt: new Date() } : {}),
+                },
+              },
+            };
+          }
+          return op;
+        });
+        const { touchUpdatedAt: _touchUpdatedAt, ...options } = input.options ??
+          {};
+        return collection.bulkWrite(operations as any, {
+          ...options,
+          ...sourceWriteOptions,
+        });
+      }
+      case "createIndex":
+        return collection.createIndex(input.index, input.options);
+      case "listIndexes":
+        if (
+          !(await db.listCollections({ name: input.collection }).hasNext())
+        ) {
+          return [];
+        }
+        return collection.indexes();
+      case "findOneAndUpdate": {
+        const update = { ...input.update };
+        if (input.options?.touchUpdatedAt !== false) {
+          if (update.$set) {
+            update.$set = { ...update.$set, updatedAt: new Date() };
+          } else {
+            update.$set = { updatedAt: new Date() };
+          }
+        }
+        const { touchUpdatedAt: _touchUpdatedAt, ...options } = input.options ??
+          {};
+        if (options.returnDocument === "before") {
+          options.returnDocument = "before";
+        } else if (options.returnDocument === "after") {
+          options.returnDocument = "after";
+        }
+        const result = await collection.findOneAndUpdate(
+          input.query,
+          update,
+          { ...options, ...sourceWriteOptions },
+        );
+        // MongoDB driver returns the document directly (or null if not found)
+        return result;
+      }
+      default:
+        throw new Error("Unknown action");
     }
   }
 

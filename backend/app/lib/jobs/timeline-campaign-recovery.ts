@@ -35,7 +35,11 @@ export async function ensureTimelineCampaignDocument(
       type: "histRecalculation",
       "data.timelineRebuildCampaignId": campaignId,
     },
-    options: { sort: { "data.timelineRebuildBatchIndex": 1 } },
+    options: {
+      sort: { "data.timelineRebuildBatchIndex": 1 },
+      hint: "timeline_rebuild_campaign_jobs",
+      maxTimeMS: 5_000,
+    },
   });
   if (!first) return null;
   const now = new Date();
@@ -74,6 +78,8 @@ async function campaignJobs(mongo: MongoCall, campaignId: string) {
     },
     options: {
       sort: { "data.timelineRebuildBatchIndex": 1 },
+      hint: "timeline_rebuild_campaign_jobs",
+      maxTimeMS: 5_000,
       projection: {
         _id: 1,
         state: 1,
