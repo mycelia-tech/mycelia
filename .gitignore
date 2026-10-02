@@ -6,6 +6,11 @@ python/conversations-to-reextract.jsonl
 /build
 # Local environment files and checker backups can contain secrets
 .env
+.env.backup
+!.env.backup.example
+**/.backup-state-*.tmp
+**/backup.lock
+**/backup.lock.guard
 .env.backup-*
 .env.tmp-*
 !.env.media.example

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+SCRIPT_DIR="$REPO_ROOT/scripts"
+# Use the same reviewed tool path as restic's children. A login shell may
+# otherwise select a different Deno than a noninteractive launch.
+BACKUP_DENO=$(PATH="${HOME}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" command -v deno) || {
+  echo 'backupctl requires Deno 2.9 or later' >&2
+  exit 69
+}
+if ! "$BACKUP_DENO" eval 'if (typeof Deno.FsFile.prototype.tryLock !== "function") Deno.exit(69);' >/dev/null 2>&1; then
+  echo 'backupctl requires Deno with synchronous file locking; use Deno 2.9 or later' >&2
+  exit 69
+fi
+exec "$BACKUP_DENO" run --allow-read --allow-write --allow-run --allow-env --allow-sys \
+  "$SCRIPT_DIR/backupctl.ts" "$@"
