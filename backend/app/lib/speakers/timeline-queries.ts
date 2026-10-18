@@ -118,10 +118,18 @@ export function buildSpeakerTimelinePipeline(input: {
     {
       $match: {
         lifecycleStatus: "active",
-        start: { $lt: input.end },
-        end: { $gt: input.start },
+        $or: [
+          {
+            start: { $gte: input.start, $lt: input.end },
+          },
+          {
+            start: { $lt: input.start },
+            end: { $gt: input.start },
+          },
+        ],
       },
     },
+    { $project: TIMELINE_SPEAKER_SEGMENT_PROJECTION },
     {
       $lookup: {
         from: "speaker_annotations",

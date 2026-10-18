@@ -89,9 +89,22 @@ Deno.test("speaker timeline reads only the active model-set projection and keeps
   assertEquals(pipeline[0], {
     $match: {
       lifecycleStatus: "active",
-      start: { $lt: new Date("2026-08-02T00:00:00Z") },
-      end: { $gt: new Date("2026-08-01T00:00:00Z") },
+      $or: [
+        {
+          start: {
+            $gte: new Date("2026-08-01T00:00:00Z"),
+            $lt: new Date("2026-08-02T00:00:00Z"),
+          },
+        },
+        {
+          start: { $lt: new Date("2026-08-01T00:00:00Z") },
+          end: { $gt: new Date("2026-08-01T00:00:00Z") },
+        },
+      ],
     },
+  });
+  assertEquals(pipeline[1], {
+    $project: TIMELINE_SPEAKER_SEGMENT_PROJECTION,
   });
   const lookups = pipeline.filter((stage) => "$lookup" in stage) as any[];
   assertEquals(lookups.map((stage) => stage.$lookup.from), [
@@ -109,7 +122,9 @@ Deno.test("speaker timeline reads only the active model-set projection and keeps
     lookups[1].$lookup.pipeline[0].$match.$expr.$and[1],
     { $eq: ["$modelSetId", "model-set-active"] },
   );
-  const projection = pipeline.find((stage) => "$project" in stage) as any;
+  const projection = pipeline.find((stage) =>
+    "$project" in stage && (stage as any).$project.state
+  ) as any;
   assertEquals(
     projection.$project.state.$switch.branches[0].then,
     "identified",
@@ -131,7 +146,9 @@ Deno.test("speaker timeline keeps manual profile decisions without a calibration
     targetProfileIncluded: false,
   });
 
-  const projection = pipeline.find((stage) => "$project" in stage) as any;
+  const projection = pipeline.find((stage) =>
+    "$project" in stage && (stage as any).$project.state
+  ) as any;
   const stateBranches = projection.$project.state.$switch.branches;
   assertEquals(stateBranches[0], {
     case: "$_manualSelected",
