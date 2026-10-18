@@ -3,7 +3,9 @@ import { ObjectId } from "bson";
 import {
   buildIdentityEligibleMatch,
   buildIdentityPartitionPipeline,
+  isCompleteIdentityCampaign,
   normalizeIdentityScope,
+  remainingIdentityPartitionSegments,
 } from "./identity-campaign.ts";
 
 const snapshot = {
@@ -74,4 +76,23 @@ Deno.test("custom identity scope is fixed and rejects reversed ranges", () => {
       end: "2026-08-01T00:00:00Z",
     })
   ).toThrow();
+});
+
+Deno.test("identity campaigns are complete only after real remaining reaches zero", () => {
+  expect(isCompleteIdentityCampaign({
+    status: "completed",
+    pendingSegments: 0,
+    sourceChanged: false,
+  })).toBe(true);
+  expect(isCompleteIdentityCampaign({
+    status: "completed",
+    pendingSegments: 1,
+  })).toBe(false);
+  expect(isCompleteIdentityCampaign({
+    status: "completed",
+    pendingSegments: 0,
+    sourceChanged: true,
+  })).toBe(false);
+  expect(remainingIdentityPartitionSegments(100, 96)).toBe(4);
+  expect(remainingIdentityPartitionSegments(100, 120)).toBe(0);
 });

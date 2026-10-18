@@ -18,6 +18,7 @@ const DEFAULTS = {
   // New diarization segments are classified only after the operator has
   // completed the first full-history identity campaign.
   speakerIdentity: { debounceMs: 5000, interval: 300 },
+  speakerIdentitySourceIndex: { debounceMs: 5000, interval: 300 },
 } as const;
 
 // Fast mode values (for testing)
@@ -32,6 +33,7 @@ const FAST = {
   location_processing: { debounceMs: 500, interval: 60 },
   diarization: { debounceMs: 1000, interval: 60 },
   speakerIdentity: { debounceMs: 1000, interval: 60 },
+  speakerIdentitySourceIndex: { debounceMs: 1000, interval: 60 },
 } as const;
 
 type WorkerName = keyof typeof DEFAULTS;

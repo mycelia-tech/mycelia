@@ -19,5 +19,10 @@ export default new NetworkJobCapability({
     { resource: "fs/voice_samples", action: "download", effect: "allow" },
     { resource: "db/voice_samples.files", action: "read", effect: "allow" },
     { resource: "db/voice_samples.chunks", action: "read", effect: "allow" },
+    {
+      resource: "speaker-segments",
+      action: "invalidate-profile-identity-evidence",
+      effect: "allow",
+    },
   ],
 });

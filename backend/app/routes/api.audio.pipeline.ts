@@ -121,37 +121,110 @@ async function hasDiarizationBacklog(
   }
 }
 
-async function hasSpeakerIdentityBacklog(
+export async function hasSpeakerIdentityBacklog(
   mongo: ReturnType<typeof getMongoResource>,
 ): Promise<boolean> {
-  const request = {
-    action: "findOne" as const,
-    collection: "diarizations",
+  const heads = await mongo({
+    action: "find",
+    collection: "identity_model_set_heads",
+    query: { activeModelSetId: { $type: "string" } },
+    options: {
+      projection: { activeModelSetId: 1, embeddingSpaceId: 1 },
+      limit: 100,
+    },
+  }) as any[];
+  const modelSetIds = (heads ?? []).map((head) =>
+    String(head.activeModelSetId ?? "")
+  ).filter(Boolean);
+  if (modelSetIds.length === 0) return false;
+
+  const [modelSets, runningCampaign, sourceIndex] = await Promise.all([
+    mongo({
+      action: "find",
+      collection: "identity_model_sets",
+      query: { modelSetId: { $in: modelSetIds }, status: "active" },
+      options: {
+        projection: {
+          modelSetId: 1,
+          embeddingSpaceId: 1,
+          coverage: 1,
+          sourceSnapshot: 1,
+        },
+        limit: modelSetIds.length,
+      },
+    }),
+    mongo({
+      action: "findOne",
+      collection: "speaker_identity_campaigns",
+      query: {
+        modelSetId: { $in: modelSetIds },
+        active: true,
+        status: { $in: ["queued", "counting", "running"] },
+      },
+      options: { projection: { _id: 1 } },
+    }),
+    mongo({
+      action: "findOne",
+      collection: "speaker_identity_source_index",
+      query: { _id: "active" },
+      options: {
+        projection: {
+          status: 1,
+          publishedBuildId: 1,
+          membershipRevision: 1,
+        },
+      },
+    }),
+  ]) as [any[], any, any];
+  if (runningCampaign) return true;
+  if (!Array.isArray(modelSets) || modelSets.length === 0) return false;
+  if (
+    modelSets.some((modelSet) =>
+      Number(modelSet.coverage?.projectedSegments ?? 0) <
+        Number(modelSet.coverage?.totalSegments ?? 0)
+    )
+  ) return true;
+  if (
+    sourceIndex?.status !== "ready" ||
+    typeof sourceIndex.publishedBuildId !== "string"
+  ) return false;
+
+  const eligibleSets = modelSets.filter((modelSet) =>
+    Number(modelSet.sourceSnapshot?.membershipRevision ?? -1) ===
+      Number(sourceIndex.membershipRevision ?? -2)
+  );
+  if (eligibleSets.length === 0) return false;
+  const spaces = [
+    ...new Set(
+      eligibleSets.map((modelSet) => String(modelSet.embeddingSpaceId ?? ""))
+        .filter(Boolean),
+    ),
+  ];
+  const partitions = spaces.length === 0 ? [] : await mongo({
+    action: "find",
+    collection: "speaker_identity_source_partitions",
     query: {
-      lifecycleStatus: "active",
-      embedding: { $exists: true },
-      "speakerIdentity.identityState": { $exists: false },
+      buildId: sourceIndex.publishedBuildId,
+      status: "ready",
+      embeddingSpaceId: { $in: spaces },
     },
     options: {
-      hint: "pipeline_speaker_identity_state",
-      projection: { _id: 1 },
-      maxTimeMS: DIARIZATION_BACKLOG_PROBE_MAX_TIME_MS,
+      projection: { embeddingSpaceId: 1, sourceSegments: 1 },
+      limit: 2_000,
     },
-  };
-  try {
-    return Boolean(await mongo(request));
-  } catch (error) {
-    if (!isMissingIndexHint(error)) throw error;
-    return Boolean(
-      await mongo({
-        ...request,
-        options: {
-          projection: { _id: 1 },
-          maxTimeMS: DIARIZATION_BACKLOG_PROBE_MAX_TIME_MS,
-        },
-      }),
+  }) as any[];
+  const sourceBySpace = new Map<string, number>();
+  for (const partition of partitions) {
+    const space = String(partition.embeddingSpaceId ?? "");
+    sourceBySpace.set(
+      space,
+      (sourceBySpace.get(space) ?? 0) + Number(partition.sourceSegments ?? 0),
     );
   }
+  return eligibleSets.some((modelSet) =>
+    (sourceBySpace.get(String(modelSet.embeddingSpaceId)) ?? 0) >
+      Number(modelSet.coverage?.projectedSegments ?? 0)
+  );
 }
 
 interface PipelineSession {
@@ -1675,9 +1748,14 @@ export async function apiAudioPipelineHandler(req: Request, res: Response) {
     };
 
     if (!includeSources) {
-      await saveAudioOperations(mongo, stats, failedStatsLabels).catch((error) => {
-        console.warn("[audio-pipeline] could not save operations snapshot", error);
-      });
+      await saveAudioOperations(mongo, stats, failedStatsLabels).catch(
+        (error) => {
+          console.warn(
+            "[audio-pipeline] could not save operations snapshot",
+            error,
+          );
+        },
+      );
     }
 
     // Serialize dates properly

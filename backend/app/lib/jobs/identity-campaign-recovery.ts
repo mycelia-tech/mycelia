@@ -27,16 +27,37 @@ export function buildIdentityCampaignRecoveryJob(
     : campaign.snapshotCutoff
     ? { end: campaign.snapshotCutoff }
     : {};
+  if (
+    campaign.modelSetId &&
+    (!campaign.sourceSnapshot || !Array.isArray(campaign.profileSnapshots) ||
+      campaign.profileSnapshots.length === 0)
+  ) {
+    throw new Error("Identity model-set campaign snapshot is incomplete");
+  }
+  const identityContext = campaign.modelSetId
+    ? {
+      modelSetId: String(campaign.modelSetId),
+      profileSnapshots: Array.isArray(campaign.profileSnapshots)
+        ? campaign.profileSnapshots
+        : [],
+      sourceSnapshot: campaign.sourceSnapshot,
+    }
+    : {
+      profileId: String(campaign.profileId),
+      profileRevision: Number(campaign.profileRevision),
+      calibrationId: String(campaign.calibrationId),
+      evidenceSnapshotHash: String(campaign.evidenceSnapshotHash),
+    };
   return {
     type: "speakerIdentity",
     runId: String(partition.runId),
-    profileId: String(campaign.profileId),
-    profileRevision: Number(campaign.profileRevision),
-    calibrationId: String(campaign.calibrationId),
-    evidenceSnapshotHash: String(campaign.evidenceSnapshotHash),
+    ...identityContext,
     ...range,
     ...(campaign.snapshotCutoff
       ? { snapshotCutoff: campaign.snapshotCutoff }
+      : {}),
+    ...(!campaign.modelSetId && campaign.sourceSnapshot
+      ? { sourceSnapshot: campaign.sourceSnapshot }
       : {}),
     partitions,
     partitionIndex,

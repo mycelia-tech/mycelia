@@ -1,5 +1,6 @@
 import { expect } from "@std/expect";
 import {
+  applyManualIdentityProjection,
   assertPurgeAllowed,
   buildActivationUpdates,
   getObservedRunStatus,
@@ -11,6 +12,40 @@ Deno.test("active and building diarization runs cannot be purged", () => {
     expect(() => assertPurgeAllowed({ status })).toThrow();
   }
   expect(() => assertPurgeAllowed({ status: "superseded" })).not.toThrow();
+});
+
+Deno.test("manual projection normalizes legacy and multi-profile identity fields", () => {
+  expect(applyManualIdentityProjection({
+    state: "matched",
+    identityState: "ambiguous",
+    resolution: "ambiguous",
+    profileId: null,
+    candidates: [{ profileId: "sky", score: 0.9 }],
+  }, {
+    state: "matched",
+    profileId: "belka",
+    source: "manual_projection",
+  })).toEqual({
+    state: "matched",
+    identityState: "identified",
+    resolution: "identified",
+    profileId: "belka",
+    candidates: [{ profileId: "sky", score: 0.9 }],
+    source: "manual_projection",
+  });
+
+  const rejected = applyManualIdentityProjection({
+    state: "matched",
+    identityState: "identified",
+    profileId: "sky",
+  }, {
+    state: "rejected",
+    profileId: null,
+    source: "manual_projection",
+  });
+  expect(rejected.identityState).toBe("unknown");
+  expect(rejected.resolution).toBe("unknown");
+  expect(rejected.profileId).toBeNull();
 });
 
 Deno.test("stale building generation without a live campaign is interrupted", () => {

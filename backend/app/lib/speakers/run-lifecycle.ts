@@ -69,3 +69,24 @@ export function projectAnnotationState(input: {
   }
   return null;
 }
+
+export function applyManualIdentityProjection(
+  current: Record<string, unknown> | null | undefined,
+  projected: {
+    state: "matched" | "rejected";
+    profileId: string | null;
+    source: "manual_projection";
+  },
+): Record<string, unknown> {
+  return {
+    ...(current ?? {}),
+    ...projected,
+    // Consumers such as Transcript prefer the multi-profile projection field
+    // over the legacy state. Keep both projections coherent when a manual
+    // annotation overrides an automatic or ambiguous decision. Candidate
+    // scores remain available for audit, but they no longer choose the visible
+    // identity while the manual projection is present.
+    identityState: projected.state === "matched" ? "identified" : "unknown",
+    resolution: projected.state === "matched" ? "identified" : "unknown",
+  };
+}

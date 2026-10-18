@@ -4,7 +4,10 @@ export const TIMELINE_SPEAKER_SEGMENT_PROJECTION = {
   end: 1,
   original_id: 1,
   original: 1,
+  runId: 1,
+  embeddingSpaceId: 1,
   speakerIdentity: 1,
+  matched_speaker: 1,
 } as const;
 
 export function buildDiarizationCoveragePipeline(
@@ -69,50 +72,48 @@ export function buildDiarizationCoveragePipeline(
   ];
 }
 
-export interface SpeakerTimelineSnapshot {
-  profileRevision: number;
-  embeddingSpaceId: string;
-  calibrationId: string;
-  validity: "verified" | "provisional";
-}
-
 export function buildSpeakerTimelinePipeline(input: {
   start: Date;
   end: Date;
   detail: "intervals" | "buckets";
   bucketMs?: number;
   targetProfileId: unknown;
-  snapshot?: SpeakerTimelineSnapshot | null;
-  states?: Array<"matched" | "rejected" | "uncertain" | "unclassified">;
+  modelSetId?: string | null;
+  targetProfileIncluded?: boolean;
+  states?: Array<
+    | "identified"
+    | "ambiguous"
+    | "unknown"
+    | "matched"
+    | "rejected"
+    | "uncertain"
+    | "unclassified"
+  >;
   validities?: Array<"verified" | "provisional" | "manual">;
+  inclusion?: "selected_only" | "includes_candidate";
+  sources?: Array<"manual" | "automatic">;
 }): Record<string, unknown>[] {
   if (input.detail === "buckets" && !input.bucketMs) {
     throw new Error("Far Timeline summary requires bucketMs");
   }
-  const target = input.targetProfileId;
-  const currentAutomatic = input.snapshot
-    ? {
-      $and: [
-        {
-          $eq: ["$speakerIdentity.calibrationId", input.snapshot.calibrationId],
-        },
-        {
-          $eq: [
-            "$speakerIdentity.profileRevision",
-            input.snapshot.profileRevision,
-          ],
-        },
-        {
-          $eq: [
-            "$speakerIdentity.embeddingSpaceId",
-            input.snapshot.embeddingSpaceId,
-          ],
-        },
-        { $eq: ["$speakerIdentity.source", "automatic"] },
-        { $eq: ["$speakerIdentity.validity", input.snapshot.validity] },
-      ],
-    }
-    : { $eq: [1, 0] };
+  const target = String(input.targetProfileId);
+  const automaticEnabled = Boolean(
+    input.modelSetId && input.targetProfileIncluded,
+  );
+  const targetIdList = (field: string) => ({
+    $map: {
+      input: { $ifNull: [field, []] },
+      as: "candidate",
+      in: { $toString: "$$candidate.profileId" },
+    },
+  });
+  const excludedIdList = {
+    $map: {
+      input: { $ifNull: ["$_manual.excludedProfileIds", []] },
+      as: "profileId",
+      in: { $toString: "$$profileId" },
+    },
+  };
   const pipeline: Record<string, unknown>[] = [
     {
       $match: {
@@ -147,6 +148,30 @@ export function buildSpeakerTimelinePipeline(input: {
               },
             },
           },
+          {
+            // A negative label for an unrelated profile must not hide an
+            // older label for the selected profile. Any positive assignment
+            // remains relevant because assigning the segment to another
+            // speaker is an explicit negative result for this profile.
+            $match: {
+              $expr: {
+                $or: [
+                  {
+                    $ne: [{ $ifNull: ["$profileId", null] }, null],
+                  },
+                  {
+                    $in: [target, {
+                      $map: {
+                        input: { $ifNull: ["$excludedProfileIds", []] },
+                        as: "profileId",
+                        in: { $toString: "$$profileId" },
+                      },
+                    }],
+                  },
+                ],
+              },
+            },
+          },
           { $sort: { updatedAt: -1, createdAt: -1 } },
           { $limit: 1 },
           { $project: { profileId: 1, excludedProfileIds: 1 } },
@@ -154,7 +179,129 @@ export function buildSpeakerTimelinePipeline(input: {
         as: "_manualAnnotations",
       },
     },
-    { $set: { _manual: { $first: "$_manualAnnotations" } } },
+    {
+      $lookup: {
+        from: "speaker_identity_projections",
+        let: { segmentId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: input.modelSetId
+                ? {
+                  $and: [
+                    { $eq: ["$segmentId", "$$segmentId"] },
+                    { $eq: ["$modelSetId", input.modelSetId] },
+                  ],
+                }
+                : { $eq: [1, 0] },
+            },
+          },
+          { $limit: 1 },
+          {
+            $project: {
+              resolution: 1,
+              profileId: 1,
+              candidates: 1,
+              complete: 1,
+              source: 1,
+              topTwoMargin: 1,
+            },
+          },
+        ],
+        as: "_identityProjections",
+      },
+    },
+    {
+      $set: {
+        _manual: { $first: "$_manualAnnotations" },
+        _projection: { $first: "$_identityProjections" },
+      },
+    },
+    {
+      $set: {
+        _manualProfileId: {
+          $cond: [
+            { $ne: [{ $ifNull: ["$_manual.profileId", null] }, null] },
+            { $toString: "$_manual.profileId" },
+            null,
+          ],
+        },
+        _manualExcludedSelected: { $in: [target, excludedIdList] },
+        _matchedCandidates: {
+          $filter: {
+            input: { $ifNull: ["$_projection.candidates", []] },
+            as: "candidate",
+            cond: { $eq: ["$$candidate.state", "matched"] },
+          },
+        },
+        _uncertainCandidates: {
+          $filter: {
+            input: { $ifNull: ["$_projection.candidates", []] },
+            as: "candidate",
+            cond: { $eq: ["$$candidate.state", "uncertain"] },
+          },
+        },
+        _selectedCandidate: {
+          $first: {
+            $filter: {
+              input: { $ifNull: ["$_projection.candidates", []] },
+              as: "candidate",
+              cond: {
+                $eq: [{ $toString: "$$candidate.profileId" }, target],
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      $set: {
+        _manualSelected: { $eq: ["$_manualProfileId", target] },
+        _manualOther: {
+          $and: [
+            { $ne: ["$_manualProfileId", null] },
+            { $ne: ["$_manualProfileId", target] },
+          ],
+        },
+        _automaticAvailable: {
+          $and: [automaticEnabled, { $ne: ["$_projection", null] }],
+        },
+        _automaticResolution: {
+          $switch: {
+            branches: [
+              {
+                case: { $ne: ["$_projection.complete", true] },
+                then: "unclassified",
+              },
+              {
+                case: { $eq: [{ $size: "$_matchedCandidates" }, 1] },
+                then: "identified",
+              },
+              {
+                case: { $gt: [{ $size: "$_matchedCandidates" }, 1] },
+                then: "ambiguous",
+              },
+              {
+                case: { $gt: [{ $size: "$_uncertainCandidates" }, 0] },
+                then: "uncertain",
+              },
+            ],
+            default: "unknown",
+          },
+        },
+        _automaticProfileId: {
+          $cond: [
+            { $eq: [{ $size: "$_matchedCandidates" }, 1] },
+            {
+              $toString: {
+                $arrayElemAt: ["$_matchedCandidates.profileId", 0],
+              },
+            },
+            null,
+          ],
+        },
+      },
+    },
     {
       $project: {
         _id: 1,
@@ -165,20 +312,58 @@ export function buildSpeakerTimelinePipeline(input: {
           $switch: {
             branches: [
               {
-                case: { $eq: ["$_manual.profileId", target] },
-                then: "matched",
+                case: "$_manualSelected",
+                then: "identified",
               },
               {
                 case: {
-                  $in: [target, {
-                    $ifNull: ["$_manual.excludedProfileIds", []],
-                  }],
+                  $or: ["$_manualOther", "$_manualExcludedSelected"],
                 },
-                then: "rejected",
+                then: "unknown",
               },
               {
-                case: currentAutomatic,
-                then: { $ifNull: ["$speakerIdentity.state", "unclassified"] },
+                case: {
+                  $and: [
+                    "$_automaticAvailable",
+                    { $eq: ["$_automaticResolution", "identified"] },
+                    { $eq: ["$_automaticProfileId", target] },
+                  ],
+                },
+                then: "identified",
+              },
+              {
+                case: {
+                  $and: [
+                    "$_automaticAvailable",
+                    { $eq: ["$_automaticResolution", "ambiguous"] },
+                    {
+                      $in: [target, targetIdList("$_matchedCandidates")],
+                    },
+                  ],
+                },
+                then: "ambiguous",
+              },
+              {
+                case: {
+                  $and: [
+                    "$_automaticAvailable",
+                    { $eq: ["$_automaticResolution", "uncertain"] },
+                    {
+                      $in: [target, targetIdList("$_uncertainCandidates")],
+                    },
+                  ],
+                },
+                then: "uncertain",
+              },
+              {
+                case: "$_automaticAvailable",
+                then: {
+                  $cond: [
+                    { $eq: ["$_automaticResolution", "unclassified"] },
+                    "unclassified",
+                    "unknown",
+                  ],
+                },
               },
             ],
             default: "unclassified",
@@ -190,43 +375,113 @@ export function buildSpeakerTimelinePipeline(input: {
               {
                 case: {
                   $or: [
-                    { $eq: ["$_manual.profileId", target] },
-                    {
-                      $in: [target, {
-                        $ifNull: ["$_manual.excludedProfileIds", []],
-                      }],
-                    },
+                    "$_manualSelected",
+                    "$_manualOther",
+                    "$_manualExcludedSelected",
                   ],
                 },
                 then: "manual",
               },
-              { case: currentAutomatic, then: "$speakerIdentity.validity" },
+              { case: "$_automaticAvailable", then: "verified" },
+            ],
+            default: null,
+          },
+        },
+        source: {
+          $switch: {
+            branches: [
+              {
+                case: {
+                  $or: [
+                    "$_manualSelected",
+                    "$_manualOther",
+                    "$_manualExcludedSelected",
+                  ],
+                },
+                then: "manual",
+              },
+              { case: "$_automaticAvailable", then: "automatic" },
             ],
             default: null,
           },
         },
         profileId: {
           $cond: [
-            { $eq: ["$_manual.profileId", target] },
+            "$_manualSelected",
             target,
             {
               $cond: [
-                currentAutomatic,
-                "$speakerIdentity.profileId",
+                {
+                  $and: [
+                    "$_automaticAvailable",
+                    { $eq: ["$_automaticResolution", "identified"] },
+                    { $eq: ["$_automaticProfileId", target] },
+                  ],
+                },
+                target,
                 null,
               ],
             },
           ],
         },
         score: {
-          $cond: [currentAutomatic, "$speakerIdentity.primaryScore", null],
+          $cond: [
+            "$_automaticAvailable",
+            { $ifNull: ["$_selectedCandidate.score", null] },
+            null,
+          ],
+        },
+        candidates: {
+          $cond: [
+            "$_automaticAvailable",
+            { $ifNull: ["$_projection.candidates", []] },
+            [],
+          ],
+        },
+        includesSelectedCandidate: {
+          $or: [
+            "$_manualSelected",
+            {
+              $and: [
+                "$_automaticAvailable",
+                {
+                  $in: [
+                    target,
+                    targetIdList("$_projection.candidates"),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        modelSetId: {
+          $cond: ["$_automaticAvailable", input.modelSetId ?? null, null],
         },
       },
     },
   ];
   const filtered: Record<string, unknown> = {};
-  if (input.states?.length) filtered.state = { $in: input.states };
+  if (input.states?.length) {
+    filtered.state = {
+      $in: [
+        ...new Set(
+          input.states.map((state) =>
+            state === "matched"
+              ? "identified"
+              : state === "rejected"
+              ? "unknown"
+              : state
+          ),
+        ),
+      ],
+    };
+  }
   if (input.validities?.length) filtered.validity = { $in: input.validities };
+  if (input.sources?.length) filtered.source = { $in: input.sources };
+  if (input.inclusion === "selected_only") filtered.state = "identified";
+  if (input.inclusion === "includes_candidate") {
+    filtered.includesSelectedCandidate = true;
+  }
   if (Object.keys(filtered).length > 0) pipeline.push({ $match: filtered });
 
   if (input.detail === "intervals") {
@@ -243,16 +498,46 @@ export function buildSpeakerTimelinePipeline(input: {
             },
           }, input.bucketMs],
         },
+        durationMs: {
+          $max: [0, { $subtract: ["$end", "$start"] }],
+        },
       },
     },
     {
       $group: {
         _id: "$bucket",
         segments: { $sum: 1 },
-        matched: { $sum: { $cond: [{ $eq: ["$state", "matched"] }, 1, 0] } },
-        rejected: { $sum: { $cond: [{ $eq: ["$state", "rejected"] }, 1, 0] } },
+        identified: {
+          $sum: { $cond: [{ $eq: ["$state", "identified"] }, 1, 0] },
+        },
+        ambiguous: {
+          $sum: { $cond: [{ $eq: ["$state", "ambiguous"] }, 1, 0] },
+        },
+        unknown: {
+          $sum: { $cond: [{ $eq: ["$state", "unknown"] }, 1, 0] },
+        },
         uncertain: {
           $sum: { $cond: [{ $eq: ["$state", "uncertain"] }, 1, 0] },
+        },
+        identifiedMs: {
+          $sum: {
+            $cond: [{ $eq: ["$state", "identified"] }, "$durationMs", 0],
+          },
+        },
+        ambiguousMs: {
+          $sum: {
+            $cond: [{ $eq: ["$state", "ambiguous"] }, "$durationMs", 0],
+          },
+        },
+        uncertainMs: {
+          $sum: {
+            $cond: [{ $eq: ["$state", "uncertain"] }, "$durationMs", 0],
+          },
+        },
+        unclassifiedMs: {
+          $sum: {
+            $cond: [{ $eq: ["$state", "unclassified"] }, "$durationMs", 0],
+          },
         },
         unclassified: {
           $sum: { $cond: [{ $eq: ["$state", "unclassified"] }, 1, 0] },
@@ -268,5 +553,51 @@ export function buildSpeakerTimelinePipeline(input: {
     },
     { $sort: { _id: 1 } },
   );
+  return pipeline;
+}
+
+export function buildIdentityClassificationSummaryPipeline(input: {
+  asOf: Date;
+  targetProfileId: unknown;
+  modelSetId?: string | null;
+  targetProfileIncluded?: boolean;
+}): Record<string, unknown>[] {
+  const pipeline = buildSpeakerTimelinePipeline({
+    start: new Date(0),
+    end: input.asOf,
+    detail: "intervals",
+    targetProfileId: input.targetProfileId,
+    modelSetId: input.modelSetId,
+    targetProfileIncluded: input.targetProfileIncluded,
+  });
+  // The shared projection stages already enforce active-segment membership,
+  // selected-profile semantics, and manual precedence. Replace the UI page
+  // sort/limit with an exact corpus-wide aggregate.
+  pipeline.splice(-2, 2);
+  pipeline.push({
+    $group: {
+      _id: null,
+      identified: {
+        $sum: { $cond: [{ $eq: ["$state", "identified"] }, 1, 0] },
+      },
+      unknown: {
+        $sum: { $cond: [{ $eq: ["$state", "unknown"] }, 1, 0] },
+      },
+      uncertain: {
+        $sum: {
+          $cond: [{ $in: ["$state", ["uncertain", "ambiguous"]] }, 1, 0],
+        },
+      },
+      unclassified: {
+        $sum: { $cond: [{ $eq: ["$state", "unclassified"] }, 1, 0] },
+      },
+      verified: {
+        $sum: { $cond: [{ $eq: ["$validity", "verified"] }, 1, 0] },
+      },
+      manual: {
+        $sum: { $cond: [{ $eq: ["$validity", "manual"] }, 1, 0] },
+      },
+    },
+  });
   return pipeline;
 }

@@ -2,7 +2,13 @@ import { expect } from "@std/expect";
 import speakerIdentity, { schema } from "./speakerIdentity.ts";
 
 const evidenceSnapshotHash = "sha256:evidence-v5";
-const baselineFinishedAt = new Date("2026-08-24T12:00:00Z");
+const sourceSnapshot = {
+  buildId: "source-build-4",
+  revision: 4,
+  membershipRevision: 0,
+  builtAt: new Date("2026-08-24T13:00:00Z"),
+  maxSegmentId: "6a8d00000000000000000020",
+};
 
 const profile = {
   _id: "698349a50dadb6125cb83312",
@@ -14,6 +20,7 @@ const profile = {
   enrollmentStatus: "ready",
   activeCalibrationIds: { full: "calibration-v5" },
   calibrationHeadsInitialized: true,
+  calibrationEvidenceRevision: 2,
 };
 
 const calibration = {
@@ -42,34 +49,104 @@ const calibration = {
   negativeThreshold: -1,
   negativeDecisionMode: "uncertain_only",
   evidenceSnapshotHash,
+  evidenceRevision: 2,
 };
 
+const belkaProfile = {
+  ...profile,
+  _id: "698349a50dadb6125cb83313",
+  name: "Belka",
+  activeCalibrationIds: { full: "calibration-belka-v3" },
+  revision: 3,
+};
+
+const belkaCalibration = {
+  ...calibration,
+  calibrationId: "calibration-belka-v3",
+  profileId: String(belkaProfile._id),
+  profileRevision: 3,
+  evidenceSnapshotHash: "sha256:evidence-belka-v3",
+};
+
+const profileSnapshots = [
+  {
+    profileId: String(profile._id),
+    profileRevision: 5,
+    calibrationId: calibration.calibrationId,
+    embeddingSpaceId: "space-v5",
+    evidenceSnapshotHash,
+  },
+  {
+    profileId: String(belkaProfile._id),
+    profileRevision: 3,
+    calibrationId: belkaCalibration.calibrationId,
+    embeddingSpaceId: "space-v5",
+    evidenceSnapshotHash: belkaCalibration.evidenceSnapshotHash,
+  },
+];
+
 function createAutomaticMongo(
-  { newerAnnotation = null, profileOverride = profile }: {
-    newerAnnotation?: any;
+  { profileOverride = profile, includeBaseline = true }: {
     profileOverride?: Record<string, any>;
+    includeBaseline?: boolean;
   } = {},
 ) {
   const requests: Record<string, any>[] = [];
   let insertedCampaign: Record<string, any> | null = null;
-  const newerUnheadedCalibration = {
-    ...calibration,
-    calibrationId: "calibration-unheaded",
-    evidenceSnapshotHash: "sha256:unheaded",
-  };
-  const mongo = (request: Record<string, any>) => {
+  const mongo = async (request: Record<string, any>) => {
     requests.push(request);
-    if (request.collection === "speaker_profiles") return profileOverride;
+    if (request.collection === "identity_model_set_heads") {
+      return [{
+        embeddingSpaceId: "space-v5",
+        activeModelSetId: "model-set-active",
+      }];
+    }
+    if (request.collection === "identity_model_sets") {
+      return {
+        modelSetId: "model-set-active",
+        status: "active",
+        embeddingSpaceId: "space-v5",
+        profiles: profileSnapshots,
+        coverage: { totalSegments: 23, projectedSegments: 23 },
+      };
+    }
+    if (request.collection === "speaker_profiles") {
+      return String(request.query?._id) === String(belkaProfile._id)
+        ? belkaProfile
+        : profileOverride;
+    }
     if (request.collection === "speaker_calibrations") {
-      return [newerUnheadedCalibration, calibration];
+      return request.query?.calibrationId === belkaCalibration.calibrationId
+        ? belkaCalibration
+        : calibration;
     }
     if (
       request.collection === "speaker_identity_campaigns" &&
-      request.query?.mode === "classify_all_compatible"
+      request.query?.status === "completed"
     ) {
-      return { _id: "baseline", finishedAt: baselineFinishedAt };
+      return includeBaseline
+        ? {
+          _id: "baseline",
+          campaignId: "baseline-model-set",
+          finishedAt: new Date("2026-08-24T12:00:00Z"),
+          sourceSnapshot: { ...sourceSnapshot, revision: 3 },
+          partitions: [
+            {
+              runId: "unchanged",
+              embeddingSpaceId: "space-v5",
+              sourceSegments: 5,
+              maxSegmentId: "6a8c00000000000000000005",
+            },
+            {
+              runId: "legacy-v0",
+              embeddingSpaceId: "space-v5",
+              sourceSegments: 18,
+              maxSegmentId: "6a8d00000000000000000018",
+            },
+          ],
+        }
+        : null;
     }
-    if (request.collection === "speaker_annotations") return newerAnnotation;
     if (
       request.collection === "speaker_identity_campaigns" &&
       request.action === "insertOne"
@@ -78,26 +155,42 @@ function createAutomaticMongo(
       return { insertedId: "automatic-campaign" };
     }
     if (request.collection === "speaker_identity_campaigns") return null;
-    if (request.collection === "diarizations" && request.action === "find") {
-      return [{ _id: "pending" }];
+    if (request.collection === "speaker_identity_source_index") {
+      return {
+        _id: "active",
+        status: "ready",
+        publishedBuildId: sourceSnapshot.buildId,
+        publishedRevision: sourceSnapshot.revision,
+        membershipRevision: sourceSnapshot.membershipRevision,
+        publishedAt: sourceSnapshot.builtAt,
+        publishedMaxSegmentId: sourceSnapshot.maxSegmentId,
+      };
     }
-    if (
-      request.collection === "diarizations" &&
-      request.action === "aggregate"
-    ) {
-      return request.pipeline?.[0]?.$match?.$nor
-        ? [{
-          _id: { runId: "legacy-v0", embeddingSpaceId: "space-v5" },
-          eligibleSegments: 2,
-          start: new Date("2026-08-24T00:00:00Z"),
-          end: new Date("2026-08-24T00:00:10Z"),
-        }]
-        : [{
-          _id: { runId: "legacy-v0", embeddingSpaceId: "space-v5" },
+    if (request.collection === "speaker_identity_source_partitions") {
+      return [
+        {
+          buildId: sourceSnapshot.buildId,
+          sourceRevision: sourceSnapshot.revision,
+          runId: "unchanged",
+          embeddingSpaceId: "space-v5",
+          sourceSegments: 5,
+          start: new Date("2026-08-23T00:00:00Z"),
+          end: new Date("2026-08-23T00:00:10Z"),
+          maxSegmentId: "6a8c00000000000000000005",
+          status: "ready",
+        },
+        {
+          buildId: sourceSnapshot.buildId,
+          sourceRevision: sourceSnapshot.revision,
+          runId: "legacy-v0",
+          embeddingSpaceId: "space-v5",
           sourceSegments: 20,
           start: new Date("2026-08-24T00:00:00Z"),
           end: new Date("2026-08-24T00:00:10Z"),
-        }];
+          maxSegmentId: sourceSnapshot.maxSegmentId,
+          status: "ready",
+        },
+      ];
     }
     throw new Error(`Unexpected request: ${JSON.stringify(request)}`);
   };
@@ -123,50 +216,53 @@ Deno.test("automatic identity waits for a completed baseline then snapshots new 
     { mongo: fixture.mongo },
   );
   expect(schema.safeParse(data).success).toBe(true);
-  const { evidenceSnapshotHash: _omitted, ...withoutEvidenceHash } = data ?? {};
-  expect(schema.safeParse(withoutEvidenceHash).success).toBe(false);
+  const { profileSnapshots: _omitted, ...withoutProfileSnapshots } = data ?? {};
+  expect(schema.safeParse(withoutProfileSnapshots).success).toBe(false);
   expect(data?.type).toBe("speakerIdentity");
   expect(data?.campaignMode).toBe("classify_automatic");
-  expect(data?.campaignTotalSegments).toBe(2);
+  expect(data?.modelSetId).toBe("model-set-active");
+  expect(data?.profileSnapshots).toEqual(profileSnapshots);
+  expect(data?.campaignTotalSegments).toBe(25);
   expect(data?.runId).toBe("legacy-v0");
-  expect(data?.calibrationId).toBe(calibration.calibrationId);
-  expect(data?.evidenceSnapshotHash).toBe(evidenceSnapshotHash);
-  expect((data?.partitions as any[])?.[0]?.sourceSegments).toBe(20);
-  expect(fixture.insertedCampaign()?.evidenceSnapshotHash).toBe(
-    evidenceSnapshotHash,
-  );
+  expect(data?.partitionIndex).toBe(1);
+  expect((data?.partitions as any[])?.length).toBe(2);
+  expect((data?.partitions as any[])?.[0]?.eligibleSegments).toBe(0);
+  expect((data?.partitions as any[])?.[1]).toMatchObject({
+    sourceSegments: 20,
+    eligibleSegments: 2,
+    afterSegmentId: "6a8d00000000000000000018",
+  });
+  expect(data?.sourceSnapshot).toEqual(sourceSnapshot);
+  expect(fixture.insertedCampaign()).toMatchObject({
+    modelSetId: "model-set-active",
+    profileIds: profileSnapshots.map((snapshot) => snapshot.profileId),
+    totalSegments: 25,
+    processedSegments: 23,
+    pendingSegments: 2,
+    partitionIndex: 1,
+  });
 
   const baselineRequest = fixture.requests.find((request) =>
     request.collection === "speaker_identity_campaigns" &&
-    request.query?.mode === "classify_all_compatible"
+    request.query?.status === "completed"
   );
-  expect(baselineRequest?.query?.classificationPolicy).toBe("full");
-  expect(baselineRequest?.query?.evidenceSnapshotHash).toBe(
-    evidenceSnapshotHash,
-  );
+  expect(baselineRequest?.query?.modelSetId).toBe("model-set-active");
 
-  const profileRequest = fixture.requests.find((request) =>
+  const profileRequests = fixture.requests.filter((request) =>
     request.collection === "speaker_profiles"
   );
-  expect(profileRequest?.options?.projection?.activeCalibrationIds).toBe(1);
-  expect(profileRequest?.options?.projection?.calibrationHeadsInitialized).toBe(
-    1,
-  );
-
-  const annotationRequest = fixture.requests.find((request) =>
-    request.collection === "speaker_annotations"
-  );
+  expect(profileRequests).toHaveLength(4);
+  expect(profileRequests[0]?.options?.projection?.activeCalibrationIds).toBe(1);
   expect(
-    String(annotationRequest?.query?.$and?.[0]?.$or?.[0]?.profileId),
-  ).toBe(String(profile._id));
-  expect(
-    annotationRequest?.query?.$and?.[1]?.$or?.[0]?.updatedAt?.$gt,
-  ).toEqual(baselineFinishedAt);
+    fixture.requests.some((request) =>
+      request.collection === "diarizations" && request.action === "aggregate"
+    ),
+  ).toBe(false);
 });
 
-Deno.test("automatic identity waits when profile evidence changed after baseline", async () => {
+Deno.test("automatic identity waits when a frozen profile changed", async () => {
   const fixture = createAutomaticMongo({
-    newerAnnotation: { _id: "newer-manual-evidence" },
+    profileOverride: { ...profile, revision: 6 },
   });
   expect(
     await speakerIdentity.hasPendingWork?.({
@@ -176,33 +272,58 @@ Deno.test("automatic identity waits when profile evidence changed after baseline
   ).toBe(false);
 });
 
-Deno.test("automatic identity supports a legacy head but never bypasses initialized heads", async () => {
-  const legacyFixture = createAutomaticMongo({
-    profileOverride: {
-      ...profile,
-      activeCalibrationIds: undefined,
-      calibrationHeadsInitialized: undefined,
-      activeCalibrationId: calibration.calibrationId,
-    },
-  });
+Deno.test("automatic identity does not run before the active model set has a completed baseline", async () => {
+  const fixture = createAutomaticMongo({ includeBaseline: false });
   expect(
     await speakerIdentity.hasPendingWork?.({
-      mongo: legacyFixture.mongo,
+      mongo: fixture.mongo,
       reason: "test",
     }),
-  ).toBe(1);
+  ).toBe(false);
+});
 
-  const initializedWithoutFull = createAutomaticMongo({
-    profileOverride: {
-      ...profile,
-      activeCalibrationIds: { pilot: "calibration-pilot" },
-      calibrationHeadsInitialized: true,
+Deno.test("automatic identity listens for a published source snapshot", () => {
+  expect(speakerIdentity.triggers?.sources).toEqual([{
+    channel: "mycelia:mongo:speaker_identity_source_index",
+    name: "speaker_identity_source_ready",
+    filter: {
+      event: "mongo.change",
+      "data.document.status": "ready",
     },
-  });
+  }]);
+});
+
+Deno.test("model-set identity payload does not require legacy scalar fields", () => {
+  const modelSetPayload = {
+    type: "speakerIdentity",
+    runId: "legacy-v0",
+    modelSetId: "model-set-2",
+    profileSnapshots: [{
+      profileId: String(profile._id),
+      profileRevision: 5,
+      calibrationId: calibration.calibrationId,
+      embeddingSpaceId: "space-v5",
+      evidenceSnapshotHash,
+    }],
+    sourceSnapshot,
+    partitions: [{
+      runId: "legacy-v0",
+      embeddingSpaceId: "space-v5",
+      start: new Date("2026-08-24T00:00:00Z"),
+      end: new Date("2026-08-24T00:00:10Z"),
+      eligibleSegments: 20,
+      sourceSegments: 20,
+      indexedSourceSegments: 20,
+      sourceBuildId: sourceSnapshot.buildId,
+      sourceRevision: sourceSnapshot.revision,
+      maxSegmentId: sourceSnapshot.maxSegmentId,
+    }],
+  };
+  expect(schema.safeParse(modelSetPayload).success).toBe(true);
   expect(
-    await speakerIdentity.hasPendingWork?.({
-      mongo: initializedWithoutFull.mongo,
-      reason: "test",
-    }),
+    schema.safeParse({
+      ...modelSetPayload,
+      sourceSnapshot: undefined,
+    }).success,
   ).toBe(false);
 });

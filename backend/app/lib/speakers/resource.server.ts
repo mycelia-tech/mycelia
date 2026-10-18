@@ -5,10 +5,22 @@ import { type Resource } from "@/lib/auth/resources.ts";
 import { getMongoResource } from "@/lib/mongo/core.server.ts";
 import { zDateOrString } from "@myceliasdk/zod-json-schema.ts";
 import {
-  assertPurgeAllowed,
+  applyManualIdentityProjection,
   getObservedRunStatus,
   projectAnnotationState,
 } from "./run-lifecycle.ts";
+import {
+  assertProfileArchiveSnapshotCurrent,
+  buildProfileArchiveUpdate,
+  buildProfileRestoreUpdate,
+} from "./profile-lifecycle.ts";
+import { computeSpeakerProfileArchivePreview } from "./profile-lifecycle-resource.ts";
+import {
+  assertRunPurgeSnapshotCurrent,
+  buildRunPurgeQueries,
+  buildRunPurgeSnapshot,
+  type RunPurgeSnapshot,
+} from "./run-purge.ts";
 import {
   applyReviewDecisionRevision,
   attachReviewDecisionSummaries,
@@ -51,17 +63,41 @@ import {
 } from "./calibration-contract.ts";
 import {
   buildDiarizationCoveragePipeline,
+  buildIdentityClassificationSummaryPipeline,
   buildSpeakerTimelinePipeline,
   TIMELINE_SPEAKER_SEGMENT_PROJECTION,
 } from "./timeline-queries.ts";
 import {
   buildCurrentIdentityCondition,
-  buildIdentityPartitionPipeline,
-  buildIdentitySourceMatch,
   type IdentityCalibrationSnapshot,
   type IdentityPartition,
+  identityPartitionKey,
+  isCompleteIdentityCampaign,
   normalizeIdentityScope,
+  remainingIdentityPartitionSegments,
 } from "./identity-campaign.ts";
+import {
+  identitySourceIndexSnapshot,
+  identitySourceIndexView,
+  identitySourcePartitionMatches,
+  identitySourceSnapshotMatches,
+  markIdentitySourceIndexCounting,
+  SPEAKER_IDENTITY_SOURCE_INDEX,
+  SPEAKER_IDENTITY_SOURCE_INDEX_ID,
+  SPEAKER_IDENTITY_SOURCE_PARTITIONS,
+} from "./identity-source-index.ts";
+import {
+  activateIdentityModelSet,
+  prepareIdentityModelSet,
+} from "./identity-model-set-store.ts";
+import {
+  identityModelSetFingerprint,
+  type IdentityProfileSnapshot,
+} from "./identity-model-set.ts";
+import {
+  activeModelSetsByEmbeddingSpace,
+  activeProjectionIdentity,
+} from "./identity-projection-read.ts";
 import {
   assertActivationPreviewSafe,
   buildEmptyActivationRepairPlan,
@@ -194,6 +230,42 @@ function isValidReviewAssignment(value: {
     (!value.profileId || !value.excludedProfileIds.includes(value.profileId));
 }
 
+function sameStringSet(left: string[], right: string[]): boolean {
+  const normalizedLeft = [...new Set(left)].sort();
+  const normalizedRight = [...new Set(right)].sort();
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+export function sameIdentityProfileSnapshots(
+  left: IdentityProfileSnapshot[],
+  right: IdentityProfileSnapshot[],
+): boolean {
+  const canonical = (values: IdentityProfileSnapshot[]) =>
+    [...values]
+      .sort((a, b) => a.profileId.localeCompare(b.profileId))
+      .map((value) =>
+        JSON.stringify({
+          profileId: value.profileId,
+          profileRevision: value.profileRevision,
+          calibrationId: value.calibrationId,
+          embeddingSpaceId: value.embeddingSpaceId,
+          evidenceSnapshotHash: value.evidenceSnapshotHash ?? null,
+        })
+      );
+  const normalizedLeft = canonical(left);
+  const normalizedRight = canonical(right);
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+export function frozenIdentitySourceCeiling(
+  maxSegmentId: unknown,
+): Record<string, unknown> {
+  const value = String(maxSegmentId ?? "");
+  return ObjectId.isValid(value) ? { _id: { $lte: new ObjectId(value) } } : {};
+}
+
 export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("coverage"),
@@ -204,6 +276,8 @@ export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
     action: z.literal("list"),
     ...range,
     profileId: objectId.optional(),
+    selectedProfileId: objectId.optional(),
+    segmentId: objectId.optional(),
     state: z.enum(["matched", "rejected", "uncertain"]).optional(),
     view: z.enum(["full", "timeline"]).default("full"),
     limit: z.number().int().min(1).max(5000).default(1000),
@@ -234,6 +308,25 @@ export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
     action: z.literal("create-profile-from-segments"),
     name: profileName,
     segmentIds: z.array(objectId).min(1).max(100),
+  }),
+  z.object({
+    action: z.literal("profile-archive-preview"),
+    profileId: objectId,
+    replacementPrimaryProfileId: objectId.optional(),
+  }),
+  z.object({
+    action: z.literal("archive-profile"),
+    profileId: objectId,
+    replacementPrimaryProfileId: objectId.optional(),
+    snapshotFingerprint: z.string().min(1),
+    confirmation: z.string().min(1),
+  }),
+  z.object({ action: z.literal("restore-profile"), profileId: objectId }),
+  z.object({
+    action: z.literal("invalidate-profile-identity-evidence"),
+    profileId: objectId,
+    profileRevision: z.number().int().positive(),
+    reason: z.literal("profile_reenrollment"),
   }),
   z.object({ action: z.literal("delete-annotation"), id: objectId }),
   z.object({
@@ -410,6 +503,9 @@ export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("identity-preflight"),
     profileId: objectId,
+    profileIds: z.array(objectId).min(1).max(20).transform((
+      values,
+    ) => [...new Set(values)]).optional(),
     scope: z.discriminatedUnion("mode", [
       z.object({ mode: z.literal("all_compatible") }),
       z.object({ mode: z.literal("range"), ...range }),
@@ -419,6 +515,30 @@ export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
     action: z.literal("start-identity-campaign"),
     profileId: objectId,
     preflightToken: z.string().min(1).max(120),
+    profileIds: z.array(objectId).min(1).max(20).transform((
+      values,
+    ) => [...new Set(values)]).optional(),
+  }),
+  z.object({
+    action: z.literal("prepare-identity-model-set"),
+    preflightToken: z.string().min(1).max(120),
+    profileIds: z.array(objectId).min(1).max(20).transform((
+      values,
+    ) => [...new Set(values)]),
+  }),
+  z.object({
+    action: z.literal("list-identity-model-sets"),
+    profileId: objectId.optional(),
+    limit: z.number().int().min(1).max(100).default(20),
+  }),
+  z.object({
+    action: z.literal("identity-model-set-head"),
+    profileId: objectId.optional(),
+    embeddingSpaceId: z.string().trim().min(1).max(256).optional(),
+  }),
+  z.object({
+    action: z.literal("activate-identity-model-set"),
+    modelSetId: z.string().trim().min(1).max(160),
   }),
   z.object({
     action: z.literal("speaker-timeline-summary"),
@@ -428,11 +548,21 @@ export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
     bucketMs: z.number().int().min(1_000).max(86_400_000).optional(),
     filters: z.object({
       states: z.array(
-        z.enum(["matched", "rejected", "uncertain", "unclassified"]),
+        z.enum([
+          "identified",
+          "ambiguous",
+          "unknown",
+          "matched",
+          "rejected",
+          "uncertain",
+          "unclassified",
+        ]),
       )
-        .max(4).optional(),
+        .max(7).optional(),
       validities: z.array(z.enum(["verified", "provisional", "manual"]))
         .max(3).optional(),
+      inclusion: z.enum(["selected_only", "includes_candidate"]).optional(),
+      sources: z.array(z.enum(["manual", "automatic"])).max(2).optional(),
     }).default({}),
   }).superRefine((value, context) => {
     if (value.detail === "buckets" && !value.bucketMs) {
@@ -525,7 +655,8 @@ export const speakerSegmentsRequestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("purge-superseded"),
     runId: z.string().min(1),
-    confirmation: z.string(),
+    snapshotFingerprint: z.string().min(1),
+    confirmation: z.string().min(1),
   }),
 ]);
 
@@ -667,44 +798,64 @@ export async function resolveReviewCandidateContext(
   }
   let automaticIdentity: ReviewAutomaticIdentityContext | null = null;
   if (options.candidateMode === "auto_matched") {
-    const calibrations = await mongo({
-      action: "find",
-      collection: "speaker_calibrations",
-      query: { profileId: targetProfileId },
-      options: { sort: { createdAt: -1 }, limit: 20 },
-    }) as any[];
-    const profileRevision = Number(profile.revision ?? 1);
-    const headedCalibrations = calibrationsAtProfileHead(
-      profile,
-      calibrations,
-    ).filter((calibration) =>
-      calibrationEvidenceMatchesProfile(profile, calibration)
+    const head = await mongo({
+      action: "findOne",
+      collection: "identity_model_set_heads",
+      query: { embeddingSpaceId: profileSpace },
+      options: { projection: { activeModelSetId: 1 } },
+    }) as any;
+    const activeModelSet = head?.activeModelSetId
+      ? await mongo({
+        action: "findOne",
+        collection: "identity_model_sets",
+        query: { modelSetId: head.activeModelSetId, status: "active" },
+        options: { projection: { profileIds: 1, staleProfileIds: 1 } },
+      }) as any
+      : null;
+    const usesActiveProjection = Boolean(
+      activeModelSet?.profileIds?.map(String).includes(targetProfileId) &&
+        !activeModelSet?.staleProfileIds?.map(String).includes(targetProfileId),
     );
-    const calibration = findUsableCalibration(headedCalibrations, {
-      profileId: targetProfileId,
-      profileRevision,
-      embeddingSpaceId: profileSpace,
-    });
-    if (!calibration) {
-      throw new Error(
-        "Audit automatic matches requires a current server-validated calibration",
+    if (!usesActiveProjection) {
+      const calibrations = await mongo({
+        action: "find",
+        collection: "speaker_calibrations",
+        query: { profileId: targetProfileId },
+        options: { sort: { createdAt: -1 }, limit: 20 },
+      }) as any[];
+      const profileRevision = Number(profile.revision ?? 1);
+      const headedCalibrations = calibrationsAtProfileHead(
+        profile,
+        calibrations,
+      ).filter((calibration) =>
+        calibrationEvidenceMatchesProfile(profile, calibration)
       );
+      const calibration = findUsableCalibration(headedCalibrations, {
+        profileId: targetProfileId,
+        profileRevision,
+        embeddingSpaceId: profileSpace,
+      });
+      if (!calibration) {
+        throw new Error(
+          "Audit automatic matches requires an active model-set projection or current server-validated calibration",
+        );
+      }
+      const policy = normalizeCalibrationPolicy(calibration);
+      if (!policy) {
+        throw new Error(
+          "Audit automatic matches requires a current calibration policy",
+        );
+      }
+      automaticIdentity = {
+        calibrationId: String(calibration.calibrationId),
+        profileRevision,
+        embeddingSpaceId: profileSpace,
+        evidenceSnapshotHash: String(calibration.evidenceSnapshotHash),
+        decisionValidity: policy.classificationPolicy === "full"
+          ? "verified"
+          : "provisional",
+      };
     }
-    const policy = normalizeCalibrationPolicy(calibration);
-    if (!policy) {
-      throw new Error(
-        "Audit automatic matches requires a current calibration policy",
-      );
-    }
-    automaticIdentity = {
-      calibrationId: String(calibration.calibrationId),
-      profileRevision,
-      embeddingSpaceId: profileSpace,
-      evidenceSnapshotHash: String(calibration.evidenceSnapshotHash),
-      decisionValidity: policy.classificationPolicy === "full"
-        ? "verified"
-        : "provisional",
-    };
   }
   return { embeddingSpaceIds: [profileSpace], automaticIdentity };
 }
@@ -722,50 +873,66 @@ function safeObjectIdValues(ids: string[]): Array<string | ObjectId> {
   ]);
 }
 
-function buildReviewIdentityFilter(
+export function reviewCandidateMatchesIdentity(
+  segment: any,
   candidateMode: "reviewable" | "auto_matched",
   targetProfileId?: string,
   automaticIdentity?: ReviewAutomaticIdentityContext | null,
-): Record<string, unknown> {
-  const profileValues = targetProfileId && ObjectId.isValid(targetProfileId)
-    ? [targetProfileId, new ObjectId(targetProfileId)]
-    : [];
+): boolean {
+  const identity = segment?.speakerIdentity;
+  const target = String(targetProfileId ?? "");
   if (candidateMode === "auto_matched") {
-    if (!automaticIdentity || profileValues.length === 0) {
+    if (!target) {
+      throw new Error(
+        "Audit automatic matches requires a target voice profile",
+      );
+    }
+    if (identity?.modelSetId) {
+      return identity.source === "automatic" &&
+        identity.validity === "verified" &&
+        identity.selectedProfileState === "identified";
+    }
+    if (!automaticIdentity) {
       throw new Error(
         "Audit automatic matches requires a current identity calibration",
       );
     }
-    return {
-      "speakerIdentity.state": "matched",
-      "speakerIdentity.calibrationId": automaticIdentity.calibrationId,
-      "speakerIdentity.profileRevision": automaticIdentity.profileRevision,
-      "speakerIdentity.embeddingSpaceId": automaticIdentity.embeddingSpaceId,
-      "speakerIdentity.thresholds.evidenceSnapshotHash":
-        automaticIdentity.evidenceSnapshotHash,
-      "speakerIdentity.source": "automatic",
-      "speakerIdentity.validity": automaticIdentity.decisionValidity,
-      $or: [
-        { "speakerIdentity.profileId": { $in: profileValues } },
-        { "speakerIdentity.topCandidate.profileId": { $in: profileValues } },
-      ],
-    };
+    const candidateProfileIds = [
+      identity?.profileId,
+      identity?.topCandidate?.profileId,
+    ].map(String);
+    return identity?.state === "matched" &&
+      identity?.calibrationId === automaticIdentity.calibrationId &&
+      Number(identity?.profileRevision) === automaticIdentity.profileRevision &&
+      identity?.embeddingSpaceId === automaticIdentity.embeddingSpaceId &&
+      String(
+          identity?.thresholds?.evidenceSnapshotHash ??
+            identity?.evidenceSnapshotHash ?? "",
+        ) === automaticIdentity.evidenceSnapshotHash &&
+      identity?.source === "automatic" &&
+      identity?.validity === automaticIdentity.decisionValidity &&
+      candidateProfileIds.includes(target);
   }
-  return {
-    $or: [
-      { "speakerIdentity.state": "uncertain" },
-      { "speakerIdentity.identityState": "unclassified" },
-      { speakerIdentity: { $exists: false } },
-      { "speakerIdentity.identityState": { $exists: false } },
-    ],
-  };
+  if (!identity) return true;
+  const selectedState = identity.selectedProfileState ?? identity.identityState;
+  return ["ambiguous", "uncertain", "unclassified"].includes(
+    String(selectedState ?? ""),
+  ) || (selectedState == null && identity.state === "uncertain");
+}
+
+export function annotationResolvesReviewForProfile(
+  annotation: any,
+  targetProfileId?: string,
+): boolean {
+  if (annotation?.profileId) return true;
+  if (!targetProfileId) return true;
+  return (annotation?.excludedProfileIds ?? []).map(String).includes(
+    targetProfileId,
+  );
 }
 
 function buildStoredReviewScopeQuery(
   scope: ReviewCandidateScope,
-  candidateMode: "reviewable" | "auto_matched",
-  targetProfileId?: string,
-  automaticIdentity?: ReviewAutomaticIdentityContext | null,
 ): Record<string, unknown> {
   const query: Record<string, unknown> = { lifecycleStatus: "active" };
   if (scope.embeddingSpaceIds?.length) {
@@ -780,13 +947,6 @@ function buildStoredReviewScopeQuery(
       { original: { $in: recordingValues } },
     ];
   }
-  query.$and = [
-    buildReviewIdentityFilter(
-      candidateMode,
-      targetProfileId,
-      automaticIdentity,
-    ),
-  ];
   return query;
 }
 
@@ -799,11 +959,13 @@ export function buildReviewCandidateQuery(
   scope: ReviewCandidateScope = {},
   automaticIdentity?: ReviewAutomaticIdentityContext | null,
 ): Record<string, unknown> {
-  const identityFilter = buildReviewIdentityFilter(
-    candidateMode,
-    targetProfileId,
-    automaticIdentity,
-  );
+  // Identity is filtered after active-head projections are hydrated. Keeping
+  // legacy speakerIdentity predicates here would hide current model-set rows.
+  if (candidateMode === "auto_matched" && !targetProfileId) {
+    throw new Error(
+      "Audit automatic matches requires a current identity calibration",
+    );
+  }
   const cursorFilter = cursor
     ? {
       $or: [
@@ -815,7 +977,7 @@ export function buildReviewCandidateQuery(
       ],
     }
     : null;
-  const scopedConditions: Record<string, unknown>[] = [identityFilter];
+  const scopedConditions: Record<string, unknown>[] = [];
   if (cursorFilter) scopedConditions.push(cursorFilter);
   if (scope.embeddingSpaceIds?.length) {
     scopedConditions.push({
@@ -842,7 +1004,7 @@ export function buildReviewCandidateQuery(
     lifecycleStatus: "active",
     start: { $lt: end },
     end: { $gt: start },
-    $and: scopedConditions,
+    ...(scopedConditions.length > 0 ? { $and: scopedConditions } : {}),
   };
 }
 
@@ -886,7 +1048,26 @@ async function findReviewCandidates(
     },
   }) as any[];
   const scan = buildReviewScanMetadata(rawCandidates, scanLimit);
-  const candidateIds = rawCandidates.map((segment) => segment._id);
+  const activeModelSetSegments = await hydrateActiveIdentityModelSetProjections(
+    mongo,
+    rawCandidates,
+    targetProfileId,
+  );
+  await suppressStaleAutomaticIdentities(
+    mongo,
+    rawCandidates.filter((segment) =>
+      !activeModelSetSegments.has(String(segment._id))
+    ),
+  );
+  const identityCandidates = rawCandidates.filter((segment) =>
+    reviewCandidateMatchesIdentity(
+      segment,
+      candidateMode,
+      targetProfileId,
+      automaticIdentity,
+    )
+  );
+  const candidateIds = identityCandidates.map((segment) => segment._id);
   if (candidateIds.length === 0) return { ...scan, candidates: [] };
   const [annotations, skippedDecisions] = await Promise.all([
     mongo({
@@ -894,8 +1075,8 @@ async function findReviewCandidates(
       collection: "speaker_annotations",
       query: { segmentId: { $in: candidateIds } },
       options: {
-        projection: { segmentId: 1 },
-        limit: candidateIds.length,
+        projection: { segmentId: 1, profileId: 1, excludedProfileIds: 1 },
+        limit: candidateIds.length * 5,
         maxTimeMS: 10_000,
       },
     }),
@@ -918,14 +1099,16 @@ async function findReviewCandidates(
       : Promise.resolve([]),
   ]) as [any[], any[]];
   const excluded = new Set([
-    ...annotations.map((item) => String(item.segmentId)),
+    ...annotations.filter((annotation) =>
+      annotationResolvesReviewForProfile(annotation, targetProfileId)
+    ).map((item) => String(item.segmentId)),
     ...skippedDecisions.flatMap((decision) =>
       (decision.segmentIds ?? []).map(String)
     ),
   ]);
   return {
     ...scan,
-    candidates: rawCandidates.filter((segment) =>
+    candidates: identityCandidates.filter((segment) =>
       !excluded.has(String(segment._id))
     ),
   };
@@ -1002,21 +1185,38 @@ async function loadBufferedReviewCandidates(
     collection: "diarizations",
     query: {
       _id: { $in: objectIds },
-      ...buildStoredReviewScopeQuery(
-        scope,
-        candidateMode,
-        targetProfileId,
-        automaticIdentity,
-      ),
+      ...buildStoredReviewScopeQuery(scope),
     },
     options: { projection: { embedding: 0 }, limit: objectIds.length },
   }) as any[];
+  const activeModelSetSegments = await hydrateActiveIdentityModelSetProjections(
+    mongo,
+    candidates,
+    targetProfileId,
+  );
+  await suppressStaleAutomaticIdentities(
+    mongo,
+    candidates.filter((segment) =>
+      !activeModelSetSegments.has(String(segment._id))
+    ),
+  );
+  const identityCandidates = candidates.filter((segment) =>
+    reviewCandidateMatchesIdentity(
+      segment,
+      candidateMode,
+      targetProfileId,
+      automaticIdentity,
+    )
+  );
   const [annotations, skippedDecisions] = await Promise.all([
     mongo({
       action: "find",
       collection: "speaker_annotations",
       query: { segmentId: { $in: objectIds } },
-      options: { projection: { segmentId: 1 }, limit: objectIds.length },
+      options: {
+        projection: { segmentId: 1, profileId: 1, excludedProfileIds: 1 },
+        limit: objectIds.length * 5,
+      },
     }),
     targetProfileId
       ? mongo({
@@ -1033,12 +1233,16 @@ async function loadBufferedReviewCandidates(
       : Promise.resolve([]),
   ]) as [any[], any[]];
   const excluded = new Set([
-    ...annotations.map((item) => String(item.segmentId)),
+    ...annotations.filter((annotation) =>
+      annotationResolvesReviewForProfile(annotation, targetProfileId)
+    ).map((item) => String(item.segmentId)),
     ...skippedDecisions.flatMap((decision) =>
       (decision.segmentIds ?? []).map(String)
     ),
   ]);
-  const byId = new Map(candidates.map((item) => [String(item._id), item]));
+  const byId = new Map(
+    identityCandidates.map((item) => [String(item._id), item]),
+  );
   return objectIds.map((id) => byId.get(String(id))).filter((item) =>
     item && !excluded.has(String(item._id))
   );
@@ -1145,6 +1349,117 @@ async function suppressStaleAutomaticIdentities(
     delete identity.state;
     identity.identityState = "unclassified";
   }
+}
+
+async function hydrateActiveIdentityModelSetProjections(
+  mongo: any,
+  segments: any[],
+  selectedProfileId?: string,
+): Promise<Set<string>> {
+  const embeddingSpaceIds = [
+    ...new Set(
+      segments.map((segment) => String(segment.embeddingSpaceId ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (embeddingSpaceIds.length === 0 || segments.length === 0) {
+    return new Set();
+  }
+  const heads = await mongo({
+    action: "find",
+    collection: "identity_model_set_heads",
+    query: { embeddingSpaceId: { $in: embeddingSpaceIds } },
+    options: {
+      projection: { embeddingSpaceId: 1, activeModelSetId: 1 },
+      limit: embeddingSpaceIds.length,
+    },
+  }) as any[];
+  const activeModelSetIds = [
+    ...new Set(
+      heads.map((head) => String(head.activeModelSetId ?? "")).filter(Boolean),
+    ),
+  ];
+  if (activeModelSetIds.length === 0) return new Set();
+  const modelSets = await mongo({
+    action: "find",
+    collection: "identity_model_sets",
+    query: {
+      modelSetId: { $in: activeModelSetIds },
+      status: "active",
+    },
+    options: {
+      projection: {
+        modelSetId: 1,
+        embeddingSpaceId: 1,
+        profileIds: 1,
+        profiles: 1,
+        staleProfileIds: 1,
+        status: 1,
+      },
+      limit: activeModelSetIds.length,
+    },
+  }) as any[];
+  const modelSetBySpace = activeModelSetsByEmbeddingSpace({
+    heads,
+    modelSets,
+  });
+  if (modelSetBySpace.size === 0) return new Set();
+
+  const segmentIds = segments.map((segment) => segment._id).filter(Boolean);
+  const usableModelSetIds = [
+    ...new Set(
+      [...modelSetBySpace.values()].map((modelSet) => modelSet.modelSetId),
+    ),
+  ];
+  const projections = segmentIds.length === 0 ? [] : await mongo({
+    action: "find",
+    collection: "speaker_identity_projections",
+    query: {
+      modelSetId: { $in: usableModelSetIds },
+      segmentId: { $in: segmentIds },
+    },
+    options: {
+      projection: {
+        modelSetId: 1,
+        segmentId: 1,
+        resolution: 1,
+        profileId: 1,
+        candidates: 1,
+        complete: 1,
+        source: 1,
+        topTwoMargin: 1,
+        projectedAt: 1,
+      },
+      limit: segmentIds.length,
+    },
+  }) as any[];
+  const projectionByModelSetAndSegment = new Map(
+    projections.map((projection) => [
+      `${String(projection.modelSetId)}:${String(projection.segmentId)}`,
+      projection,
+    ]),
+  );
+  const activeSegmentIds = new Set<string>();
+  for (const segment of segments) {
+    const modelSet = modelSetBySpace.get(
+      String(segment.embeddingSpaceId ?? ""),
+    );
+    if (!modelSet) continue;
+    const segmentId = String(segment._id);
+    const projection = projectionByModelSetAndSegment.get(
+      `${modelSet.modelSetId}:${segmentId}`,
+    );
+    // Even before this particular segment has been projected, the active set
+    // is authoritative for its embedding space. Mark it unclassified rather
+    // than leaking an embedded decision from a superseded calibration/set.
+    segment.speakerIdentity = activeProjectionIdentity({
+      modelSet,
+      projection,
+      selectedProfileId,
+    });
+    activeSegmentIds.add(segmentId);
+  }
+  return activeSegmentIds;
 }
 
 async function hydrateReviewSession(
@@ -1340,7 +1655,43 @@ async function loadReviewHistory(
   };
 }
 
-async function commitReviewDecisionArtifacts(
+export function eligibleReviewDecisionProfileIds(decision: any): unknown[] {
+  if (
+    decision?.outcome !== "assigned" ||
+    (decision?.calibrationUse ?? "eligible") !== "eligible"
+  ) {
+    return [];
+  }
+  return [
+    ...(decision.targetProfileIds ?? []),
+    decision.profileId,
+    ...(decision.excludedProfileIds ?? []),
+  ];
+}
+
+export function buildReviewHistoryRevisionScope(input: {
+  segmentId: ObjectId;
+  profileId: ObjectId;
+  decisionId: ObjectId;
+  author: string;
+}) {
+  return {
+    currentDecision: {
+      segmentIds: input.segmentId,
+      targetProfileIds: input.profileId,
+      author: input.author,
+      status: "committed",
+    },
+    replacedAnnotation: {
+      segmentId: input.segmentId,
+      decisionId: input.decisionId,
+      source: "manual",
+      author: input.author,
+    },
+  };
+}
+
+export async function commitReviewDecisionArtifacts(
   mongo: any,
   decision: any,
   segments: any[],
@@ -1372,15 +1723,24 @@ async function commitReviewDecisionArtifacts(
       options: { upsert: true },
     });
   }
-  if ((decision.calibrationUse ?? "eligible") === "eligible") {
+  const supersededDecision = decision.supersedesDecisionId
+    ? await mongo({
+      action: "findOne",
+      collection: "speaker_review_decisions",
+      query: { _id: decision.supersedesDecisionId },
+    }) as any
+    : null;
+  const affectedProfileIds = [
+    ...eligibleReviewDecisionProfileIds(decision),
+    ...eligibleReviewDecisionProfileIds(supersededDecision),
+  ];
+  if (affectedProfileIds.length > 0) {
     await invalidateCalibrationsForProfiles(
       mongo,
-      [
-        ...(decision.targetProfileIds ?? []),
-        decision.profileId,
-        ...(decision.excludedProfileIds ?? []),
-      ],
-      "voice labels changed",
+      affectedProfileIds,
+      decision.supersedesDecisionId
+        ? "review label revised"
+        : "voice labels changed",
       now,
     );
   }
@@ -1399,11 +1759,12 @@ async function commitReviewDecisionArtifacts(
   });
 }
 
-async function invalidateCalibrationsForProfiles(
+export async function invalidateCalibrationsForProfiles(
   mongo: any,
   rawProfileIds: unknown[],
   reason: string,
   now = new Date(),
+  idempotencyKey?: string,
 ): Promise<void> {
   const profileIds = [
     ...new Set(
@@ -1434,15 +1795,82 @@ async function invalidateCalibrationsForProfiles(
       collection: "speaker_profiles",
       query: {
         _id: { $in: profileIds.map((id) => new ObjectId(id)) },
+        ...(idempotencyKey
+          ? { lastIdentityEvidenceInvalidationKey: { $ne: idempotencyKey } }
+          : {}),
       },
       update: {
         $unset: { activeCalibrationIds: "", activeCalibrationId: "" },
         $set: {
           calibrationHeadsInitialized: true,
           calibrationInvalidatedAt: now,
+          ...(idempotencyKey
+            ? { lastIdentityEvidenceInvalidationKey: idempotencyKey }
+            : {}),
           updatedAt: now,
         },
         $inc: { calibrationEvidenceRevision: 1 },
+      },
+    }),
+    mongo({
+      action: "updateMany",
+      collection: "speaker_identity_evaluations",
+      query: {
+        profileId: {
+          $in: [
+            ...profileIds,
+            ...profileIds.map((id) => new ObjectId(id)),
+          ],
+        },
+        lifecycleStatus: { $ne: "stale" },
+      },
+      update: {
+        $set: {
+          lifecycleStatus: "stale",
+          staleAt: now,
+          staleReason: reason,
+          updatedAt: now,
+        },
+      },
+    }),
+    mongo({
+      action: "updateMany",
+      collection: "identity_model_sets",
+      query: {
+        $or: [
+          { profileIds: { $in: profileIds } },
+          { "profiles.profileId": { $in: profileIds } },
+        ],
+        status: { $in: ["building", "ready"] },
+      },
+      update: {
+        $set: {
+          status: "failed",
+          failureReason: `profile_evidence_changed: ${reason}`,
+          failedAt: now,
+          updatedAt: now,
+        },
+      },
+    }),
+    mongo({
+      action: "updateMany",
+      collection: "identity_model_sets",
+      query: {
+        $or: [
+          { profileIds: { $in: profileIds } },
+          { "profiles.profileId": { $in: profileIds } },
+        ],
+        status: "active",
+      },
+      update: {
+        $addToSet: {
+          staleProfileIds: { $each: profileIds },
+          staleProfileReasons: reason,
+        },
+        $set: {
+          profileEvidenceStaleAt: now,
+          updatedAt: now,
+        },
       },
     }),
   ]);
@@ -2046,11 +2474,6 @@ async function resolveIdentityClassificationContext(
   ]) as [any, any[]];
   const blockers: string[] = [];
   if (!profile) blockers.push("Voice profile no longer exists");
-  if (profile && profile.is_primary !== true) {
-    blockers.push(
-      "Full-history classification currently requires the primary profile",
-    );
-  }
   if (!Array.isArray(profile?.embedding) || profile.embedding.length === 0) {
     blockers.push("Build the voice profile before classification");
   }
@@ -2120,6 +2543,206 @@ async function resolveIdentityClassificationContext(
   return { profile, calibration, snapshot, blockers };
 }
 
+async function resolveIdentityModelSetProfiles(
+  mongo: any,
+  profileIds: string[],
+): Promise<IdentityProfileSnapshot[]> {
+  const snapshots: IdentityProfileSnapshot[] = [];
+  for (const profileId of [...new Set(profileIds)]) {
+    const context = await resolveIdentityClassificationContext(
+      mongo,
+      profileId,
+    );
+    if (context.blockers.length > 0 || !context.snapshot) {
+      throw new Error(
+        `${context.profile?.name ?? profileId}: ${
+          context.blockers.join("; ") || "classification is not ready"
+        }`,
+      );
+    }
+    if (context.snapshot.classificationPolicy !== "full") {
+      throw new Error(
+        `${
+          context.profile?.name ?? profileId
+        } needs a full calibration before joining a model set`,
+      );
+    }
+    snapshots.push({
+      profileId,
+      profileRevision: context.snapshot.profileRevision,
+      calibrationId: context.snapshot.calibrationId,
+      embeddingSpaceId: context.snapshot.embeddingSpaceId,
+      evidenceSnapshotHash: context.snapshot.evidenceSnapshotHash,
+    });
+  }
+  if (
+    new Set(snapshots.map((snapshot) => snapshot.embeddingSpaceId)).size !== 1
+  ) {
+    throw new Error(
+      "Every profile in a model set must use the same voice model",
+    );
+  }
+  return snapshots;
+}
+
+async function resolveDefaultIdentityModelSetProfileIds(
+  mongo: any,
+  selectedProfileId: string,
+): Promise<string[]> {
+  const selected = await mongo({
+    action: "findOne",
+    collection: "speaker_profiles",
+    query: { _id: new ObjectId(selectedProfileId) },
+    options: { projection: { embeddingSpaceId: 1 } },
+  }) as any;
+  if (!selected?.embeddingSpaceId) return [selectedProfileId];
+  const head = await mongo({
+    action: "findOne",
+    collection: "identity_model_set_heads",
+    query: { embeddingSpaceId: selected.embeddingSpaceId },
+  }) as any;
+  const activeSet = head?.activeModelSetId
+    ? await mongo({
+      action: "findOne",
+      collection: "identity_model_sets",
+      query: { modelSetId: head.activeModelSetId, status: "active" },
+      options: { projection: { profileIds: 1 } },
+    }) as any
+    : null;
+  return [
+    ...new Set([
+      ...(activeSet?.profileIds ?? []).map(String),
+      selectedProfileId,
+    ]),
+  ];
+}
+
+async function prepareIdentityModelSetFromPreflight(
+  mongo: any,
+  preflight: any,
+  profileIds: string[],
+  principal: unknown,
+) {
+  if (
+    !preflight?.canStart || !preflight?.sourceSnapshot ||
+    !Array.isArray(preflight.partitions) || preflight.partitions.length === 0
+  ) {
+    throw new Error("Classification preview has no frozen source to build");
+  }
+  const profiles = await resolveIdentityModelSetProfiles(mongo, profileIds);
+  const frozenProfiles = preflight.resolved?.profileSnapshots;
+  if (
+    !Array.isArray(frozenProfiles) ||
+    !sameIdentityProfileSnapshots(profiles, frozenProfiles)
+  ) {
+    throw new Error(
+      "A selected profile or calibration changed after preview; check the source again",
+    );
+  }
+  const embeddingSpaceId = profiles[0].embeddingSpaceId;
+  if (
+    preflight.partitions.some((partition: any) =>
+      String(partition.embeddingSpaceId) !== embeddingSpaceId
+    )
+  ) {
+    throw new Error(
+      "Classification source does not match the selected profiles",
+    );
+  }
+  return await prepareIdentityModelSet(mongo, {
+    profiles,
+    sourceSnapshot: preflight.sourceSnapshot,
+    partitions: preflight.partitions,
+    scope: preflight.scope,
+    snapshotCutoff: preflight.snapshotCutoff,
+    createdBy: principal,
+  });
+}
+
+async function ensureIdentitySourceIndexQueued(
+  mongo: any,
+  currentState: any,
+): Promise<any> {
+  let state = currentState;
+  if (!state) {
+    await markIdentitySourceIndexCounting(
+      mongo,
+      "identity_preflight_requested",
+    );
+    state = await mongo({
+      action: "findOne",
+      collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+      query: { _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID },
+    });
+  }
+  if (state?.status === "ready" || state?.status === "blocked") return state;
+  if (state?.currentJobId) return state;
+  const staleQueuedAt = new Date(Date.now() - 2 * 60_000);
+  if (
+    state?.queuedJobId && state?.queuedAt &&
+    new Date(state.queuedAt) > staleQueuedAt
+  ) {
+    return state;
+  }
+  const reservedJobId = new ObjectId().toString();
+  const queuedAt = new Date();
+  const claimed = await mongo({
+    action: "updateOne",
+    collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+    query: {
+      _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID,
+      status: "counting",
+      currentJobId: { $exists: false },
+      $or: [
+        { queuedJobId: { $exists: false } },
+        { queuedAt: { $lte: staleQueuedAt } },
+      ],
+    },
+    update: {
+      $set: { queuedJobId: reservedJobId, queuedAt, updatedAt: queuedAt },
+    },
+  }) as any;
+  if (Number(claimed?.matchedCount ?? 0) !== 1) {
+    return await mongo({
+      action: "findOne",
+      collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+      query: { _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID },
+    });
+  }
+  try {
+    const { enqueueJob } = await import("@/lib/jobs/queue.ts");
+    await enqueueJob({ type: "speakerIdentitySourceIndex" }, {
+      jobId: reservedJobId,
+      priority: 4,
+      trigger: {
+        type: "auto",
+        reason: "prepare speaker identity source",
+      },
+    });
+  } catch (error) {
+    await mongo({
+      action: "updateOne",
+      collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+      query: {
+        _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID,
+        queuedJobId: reservedJobId,
+      },
+      update: {
+        $unset: { queuedJobId: "", queuedAt: "" },
+        $set: {
+          queueError: error instanceof Error ? error.message : String(error),
+          updatedAt: new Date(),
+        },
+      },
+    });
+  }
+  return await mongo({
+    action: "findOne",
+    collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+    query: { _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID },
+  });
+}
+
 async function computeIdentityPreflight(
   mongo: any,
   profileId: string,
@@ -2129,6 +2752,7 @@ async function computeIdentityPreflight(
     end?: Date | string;
   },
   snapshotCutoff: Date,
+  requestedProfileIds: string[] = [profileId],
 ): Promise<any> {
   const scope = normalizeIdentityScope(rawScope);
   const context = await resolveIdentityClassificationContext(mongo, profileId);
@@ -2136,6 +2760,7 @@ async function computeIdentityPreflight(
   if (!context.snapshot) {
     return {
       canStart: false,
+      status: "blocked",
       blockers,
       scope,
       snapshotCutoff,
@@ -2154,9 +2779,34 @@ async function computeIdentityPreflight(
         embeddingSpaceId: context.profile?.embeddingSpaceId ?? null,
         classificationPolicy: null,
       },
+      sourceIndex: identitySourceIndexView(null),
     };
   }
   const snapshot = context.snapshot;
+  const usesModelSet = snapshot.classificationPolicy === "full";
+  let modelSetProfiles: IdentityProfileSnapshot[] = [{
+    profileId,
+    profileRevision: snapshot.profileRevision,
+    calibrationId: snapshot.calibrationId,
+    embeddingSpaceId: snapshot.embeddingSpaceId,
+    evidenceSnapshotHash: snapshot.evidenceSnapshotHash,
+  }];
+  if (usesModelSet) {
+    if (!requestedProfileIds.includes(profileId)) {
+      blockers.push(
+        "The model set must include the profile used to preview the source",
+      );
+    } else {
+      try {
+        modelSetProfiles = await resolveIdentityModelSetProfiles(
+          mongo,
+          requestedProfileIds,
+        );
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
   const calibrationPolicy = normalizeCalibrationPolicy(context.calibration);
   if (snapshot.classificationPolicy === "pilot") {
     if (scope.mode !== "range") {
@@ -2178,65 +2828,272 @@ async function computeIdentityPreflight(
       }
     }
   }
-  const sourceMatch = buildIdentitySourceMatch(snapshot, scope, snapshotCutoff);
-  const currentIdentity = buildCurrentIdentityCondition(snapshot);
-  const [eligibleRows, sourceRows, alreadyCurrent, incompatible, running] =
-    await Promise.all([
-      mongo({
-        action: "aggregate",
-        collection: "diarizations",
-        pipeline: buildIdentityPartitionPipeline(
-          snapshot,
-          scope,
-          snapshotCutoff,
-        ),
-        options: { maxTimeMS: 20_000 },
-      }),
-      mongo({
-        action: "aggregate",
-        collection: "diarizations",
-        pipeline: [
-          { $match: sourceMatch },
-          {
-            $group: {
-              _id: { runId: "$runId", embeddingSpaceId: "$embeddingSpaceId" },
-              sourceSegments: { $sum: 1 },
-              start: { $min: "$start" },
-              end: { $max: "$end" },
-            },
-          },
-        ],
-        options: { maxTimeMS: 20_000 },
-      }),
-      mongo({
-        action: "count",
-        collection: "diarizations",
-        query: { ...sourceMatch, ...currentIdentity },
-        options: { maxTimeMS: 10_000 },
-      }),
-      mongo({
-        action: "count",
-        collection: "diarizations",
-        query: {
-          lifecycleStatus: "active",
-          embedding: { $exists: true },
-          embeddingSpaceId: { $ne: snapshot.embeddingSpaceId },
-          start: (sourceMatch as any).start,
-        },
-        options: { maxTimeMS: 10_000 },
-      }),
-      mongo({
+  let sourceIndexState = await mongo({
+    action: "findOne",
+    collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+    query: { _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID },
+  }) as any;
+  if (sourceIndexState?.status === "ready") {
+    const newer = await mongo({
+      action: "find",
+      collection: "diarizations",
+      query: {
+        lifecycleStatus: "active",
+        embedding: { $exists: true },
+        ...(sourceIndexState.publishedMaxSegmentId
+          ? { _id: { $gt: sourceIndexState.publishedMaxSegmentId } }
+          : {}),
+      },
+      options: {
+        projection: { _id: 1 },
+        sort: { _id: 1 },
+        limit: 1,
+        hint: "speaker_identity_source_index_scan",
+      },
+    }) as any[];
+    if (newer.length > 0) {
+      await markIdentitySourceIndexCounting(
+        mongo,
+        "preflight_detected_new_active_segment",
+      );
+      sourceIndexState = await mongo({
         action: "findOne",
-        collection: "speaker_identity_campaigns",
-        query: {
-          profileId,
-          status: { $in: ["queued", "counting", "running"] },
+        collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+        query: { _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID },
+      });
+    }
+  }
+  let sourceIndex = identitySourceIndexView(sourceIndexState);
+  const sourceSnapshot = identitySourceIndexSnapshot(sourceIndexState);
+  if (!sourceSnapshot) {
+    sourceIndexState = await ensureIdentitySourceIndexQueued(
+      mongo,
+      sourceIndexState,
+    );
+    sourceIndex = identitySourceIndexView(sourceIndexState);
+    if (sourceIndex.status === "blocked") {
+      blockers.push(
+        sourceIndex.error
+          ? `Voice source index is blocked: ${sourceIndex.error}`
+          : "Voice source index is blocked; retry its job",
+      );
+    }
+    return {
+      canStart: false,
+      status: sourceIndex.status,
+      blockers,
+      scope,
+      snapshotCutoff,
+      partitions: [],
+      totals: {
+        eligibleSegments: 0,
+        alreadyCurrent: 0,
+        incompatibleSegments: 0,
+        estimatedBatches: 0,
+      },
+      resolved: {
+        profileId,
+        profileName: context.profile?.name ?? null,
+        profileRevision: snapshot.profileRevision,
+        calibrationId: snapshot.calibrationId,
+        embeddingSpaceId: snapshot.embeddingSpaceId,
+        classificationPolicy: snapshot.classificationPolicy,
+        targetPrecision: Number(context.calibration?.targetPrecision ?? 0),
+        evidenceSnapshotHash: snapshot.evidenceSnapshotHash,
+      },
+      sourceIndex,
+      sourceSnapshot: null,
+      runningCampaign: null,
+      coverageRepair: null,
+    };
+  }
+
+  const [sourceRows, running, baseline] = await Promise.all([
+    mongo({
+      action: "find",
+      collection: SPEAKER_IDENTITY_SOURCE_PARTITIONS,
+      query: { buildId: sourceSnapshot.buildId, status: "ready" },
+      options: { sort: { start: 1, runId: 1 }, limit: 2_000 },
+    }),
+    mongo({
+      action: "findOne",
+      collection: "speaker_identity_campaigns",
+      query: {
+        $or: [
+          { profileId: { $in: requestedProfileIds } },
+          { profileIds: { $in: requestedProfileIds } },
+        ],
+        active: true,
+        status: { $in: ["queued", "counting", "running"] },
+      },
+      options: { sort: { updatedAt: -1, createdAt: -1 } },
+    }),
+    mongo({
+      action: "findOne",
+      collection: "speaker_identity_campaigns",
+      query: {
+        profileId,
+        profileRevision: snapshot.profileRevision,
+        calibrationId: snapshot.calibrationId,
+        embeddingSpaceId: snapshot.embeddingSpaceId,
+        "scope.mode": "all_compatible",
+        status: "completed",
+        pendingSegments: 0,
+        sourceChanged: { $ne: true },
+      },
+      options: {
+        sort: { finishedAt: -1, updatedAt: -1 },
+        projection: {
+          status: 1,
+          pendingSegments: 1,
+          sourceChanged: 1,
+          partitions: 1,
+          sourceSnapshot: 1,
         },
-        options: { sort: { updatedAt: -1, createdAt: -1 } },
-      }),
-    ]) as [any[], any[], number, number, any];
+      },
+    }),
+  ]) as [any[], any, any];
+  if (
+    Number(sourceIndexState?.partitionCount ?? sourceRows.length) !==
+      sourceRows.length
+  ) {
+    blockers.push(
+      "Voice source index is incomplete; rebuild it before classification",
+    );
+  }
   if (running) {
     blockers.push("An identity campaign is already running for this profile");
+  }
+
+  const effectiveStart = scope.mode === "range" ? scope.start! : new Date(0);
+  const effectiveEnd = scope.mode === "range"
+    ? new Date(Math.min(scope.end!.getTime(), snapshotCutoff.getTime()))
+    : snapshotCutoff;
+  const rowsInScope = sourceRows.filter((row) => {
+    const start = new Date(row.start);
+    const end = new Date(row.end);
+    return start < effectiveEnd && end > effectiveStart;
+  });
+  const compatibleRows = rowsInScope.filter((row) =>
+    String(row.embeddingSpaceId) === snapshot.embeddingSpaceId
+  );
+  const incompatibleRows = rowsInScope.filter((row) =>
+    String(row.embeddingSpaceId) !== snapshot.embeddingSpaceId
+  );
+  const baselineByKey = new Map<string, IdentityPartition>();
+  if (
+    isCompleteIdentityCampaign(baseline) &&
+    Number(baseline?.sourceSnapshot?.membershipRevision ?? 0) ===
+      sourceSnapshot.membershipRevision
+  ) {
+    for (const partition of baseline.partitions ?? []) {
+      baselineByKey.set(identityPartitionKey(partition), partition);
+    }
+  }
+  const currentIdentity = buildCurrentIdentityCondition(snapshot);
+  const runIds = [...new Set(compatibleRows.map((row) => String(row.runId)))];
+  const runs = runIds.length === 0 ? [] : await mongo({
+    action: "find",
+    collection: "diarization_runs",
+    query: { runId: { $in: runIds } },
+    options: {
+      projection: { runId: 1, generation: 1, status: 1 },
+      limit: runIds.length,
+    },
+  }) as any[];
+  const runById = new Map(runs.map((run) => [String(run.runId), run]));
+  let alreadyCurrent = 0;
+  const partitions: IdentityPartition[] = [];
+  for (const row of compatibleRows) {
+    const runId = String(row.runId);
+    const embeddingSpaceId = String(row.embeddingSpaceId);
+    let sourceSegments = Number(row.sourceSegments ?? 0);
+    let currentSegments = 0;
+    if (scope.mode === "range") {
+      const sourceQuery = {
+        lifecycleStatus: "active",
+        embedding: { $exists: true },
+        runId,
+        embeddingSpaceId,
+        start: { $gte: effectiveStart, $lt: effectiveEnd },
+        ...frozenIdentitySourceCeiling(row.maxSegmentId),
+      };
+      sourceSegments = Number(
+        await mongo({
+          action: "count",
+          collection: "diarizations",
+          query: sourceQuery,
+          options: {
+            maxTimeMS: 10_000,
+            hint: "speaker_identity_preflight_source",
+          },
+        }),
+      );
+      if (!usesModelSet) {
+        currentSegments = Number(
+          await mongo({
+            action: "count",
+            collection: "diarizations",
+            query: { ...sourceQuery, ...currentIdentity },
+            options: { maxTimeMS: 10_000 },
+          }),
+        );
+      }
+    } else if (!usesModelSet) {
+      const baselinePartition = baselineByKey.get(
+        identityPartitionKey({ runId, embeddingSpaceId }),
+      );
+      currentSegments = Math.min(
+        sourceSegments,
+        Number(baselinePartition?.sourceSegments ?? 0),
+      );
+    }
+    alreadyCurrent += currentSegments;
+    const eligibleSegments = remainingIdentityPartitionSegments(
+      sourceSegments,
+      currentSegments,
+    );
+    if (eligibleSegments <= 0) continue;
+    partitions.push({
+      runId,
+      embeddingSpaceId,
+      start: scope.mode === "range" ? effectiveStart : new Date(row.start),
+      end: scope.mode === "range" ? effectiveEnd : new Date(row.end),
+      eligibleSegments,
+      sourceSegments,
+      indexedSourceSegments: Number(row.sourceSegments ?? 0),
+      sourceBuildId: sourceSnapshot.buildId,
+      sourceRevision: sourceSnapshot.revision,
+      maxSegmentId: String(row.maxSegmentId ?? ""),
+      generation: runById.get(runId)?.generation ?? null,
+    });
+  }
+  let incompatible = incompatibleRows.reduce(
+    (total, row) => total + Number(row.sourceSegments ?? 0),
+    0,
+  );
+  if (scope.mode === "range") {
+    incompatible = 0;
+    for (const row of incompatibleRows) {
+      incompatible += Number(
+        await mongo({
+          action: "count",
+          collection: "diarizations",
+          query: {
+            lifecycleStatus: "active",
+            embedding: { $exists: true },
+            runId: String(row.runId),
+            embeddingSpaceId: String(row.embeddingSpaceId),
+            start: { $gte: effectiveStart, $lt: effectiveEnd },
+            ...frozenIdentitySourceCeiling(row.maxSegmentId),
+          },
+          options: {
+            maxTimeMS: 10_000,
+            hint: "speaker_identity_preflight_source",
+          },
+        }),
+      );
+    }
   }
   const activeRuns = await mongo({
     action: "find",
@@ -2253,77 +3110,70 @@ async function computeIdentityPreflight(
       limit: 100,
     },
   }) as any[];
-  const effectiveRange = {
-    start: scope.mode === "range" ? scope.start! : new Date(0),
-    end: scope.mode === "range" ? scope.end! : snapshotCutoff,
-  };
+  const effectiveRange = { start: effectiveStart, end: effectiveEnd };
   let coverageRepair: any | null = null;
+  const indexedRunIds = new Set(rowsInScope.map((row) => String(row.runId)));
   for (const activeRun of activeRuns) {
     if (!activeRun.range || !rangesOverlap(activeRun.range, effectiveRange)) {
       continue;
     }
-    const segmentCount = Number(
-      await mongo({
-        action: "count",
-        collection: "diarizations",
-        query: { runId: activeRun.runId },
-        options: { maxTimeMS: 5_000 },
-      }),
-    );
-    if (segmentCount !== 0) continue;
-    const repair = await computeEmptyActivationRepairPreview(
-      mongo,
-      String(activeRun.runId),
-    );
-    if (repair.repairable) {
-      coverageRepair = repair;
-      blockers.push(
-        `Repair empty diarization activation ${activeRun.runId} before classification`,
-      );
-      break;
-    }
-  }
-  const runIds = [
-    ...new Set(
-      sourceRows.map((row) => String(row?._id?.runId ?? "")).filter(Boolean),
-    ),
-  ];
-  const runs = runIds.length === 0 ? [] : await mongo({
-    action: "find",
-    collection: "diarization_runs",
-    query: { runId: { $in: runIds } },
-    options: {
-      projection: { runId: 1, generation: 1, status: 1 },
-      limit: runIds.length,
-    },
-  }) as any[];
-  const runById = new Map(runs.map((run) => [String(run.runId), run]));
-  const sourceByKey = new Map(sourceRows.map((row) => [
-    `${row?._id?.runId}\u0000${row?._id?.embeddingSpaceId}`,
-    row,
-  ]));
-  const partitions: IdentityPartition[] = eligibleRows.map((row) => {
-    const runId = String(row?._id?.runId ?? "");
-    const embeddingSpaceId = String(row?._id?.embeddingSpaceId ?? "");
-    const source = sourceByKey.get(`${runId}\u0000${embeddingSpaceId}`);
-    return {
-      runId,
-      embeddingSpaceId,
-      start: new Date(source?.start ?? row.start),
-      end: new Date(source?.end ?? row.end),
-      eligibleSegments: Number(row.eligibleSegments ?? 0),
-      sourceSegments: Number(
-        source?.sourceSegments ?? row.eligibleSegments ?? 0,
-      ),
-      generation: runById.get(runId)?.generation ?? null,
+    if (indexedRunIds.has(String(activeRun.runId))) continue;
+    coverageRepair = {
+      runId: String(activeRun.runId),
+      status: "preview_required",
+      repairable: null,
+      summary: "Active run has no indexed speaker segments",
     };
-  }).filter((partition) => partition.eligibleSegments > 0);
-  const eligibleSegments = partitions.reduce(
+    blockers.push(
+      `Check empty diarization activation ${activeRun.runId} before classification`,
+    );
+    break;
+  }
+  let eligibleSegments = partitions.reduce(
     (total, partition) => total + partition.eligibleSegments,
     0,
   );
+  let modelSetPreview: any | null = null;
+  if (usesModelSet && eligibleSegments > 0) {
+    const fingerprint = await identityModelSetFingerprint({
+      profiles: modelSetProfiles,
+      sourceSnapshot,
+      partitions: partitions.map((partition) => ({
+        ...partition,
+        maxSegmentId: String(partition.maxSegmentId),
+      })),
+      scope,
+      snapshotCutoff,
+    });
+    const existingModelSet = await mongo({
+      action: "findOne",
+      collection: "identity_model_sets",
+      query: { fingerprint },
+      options: { projection: { partitions: 0 } },
+    }) as any;
+    if (existingModelSet) {
+      const total = partitions.reduce(
+        (sum, partition) => sum + Number(partition.sourceSegments),
+        0,
+      );
+      const projected = Math.min(
+        total,
+        Number(existingModelSet.coverage?.projectedSegments ?? 0),
+      );
+      alreadyCurrent = projected;
+      eligibleSegments = Math.max(total - projected, 0);
+      modelSetPreview = {
+        modelSetId: existingModelSet.modelSetId,
+        status: existingModelSet.status,
+        coverage: existingModelSet.coverage,
+        activationRequired: existingModelSet.status === "ready" &&
+          eligibleSegments === 0,
+      };
+    }
+  }
   return {
     canStart: blockers.length === 0 && eligibleSegments > 0,
+    status: blockers.length === 0 ? "ready" : "blocked",
     blockers: eligibleSegments === 0 && blockers.length === 0
       ? ["No compatible segments need this calibration"]
       : blockers,
@@ -2335,6 +3185,7 @@ async function computeIdentityPreflight(
       alreadyCurrent: Number(alreadyCurrent ?? 0),
       incompatibleSegments: Number(incompatible ?? 0),
       estimatedBatches: Math.ceil(eligibleSegments / 1_000),
+      estimated: scope.mode === "all_compatible",
     },
     resolved: {
       profileId,
@@ -2348,9 +3199,15 @@ async function computeIdentityPreflight(
       evidenceSnapshotHash: String(
         context.calibration?.evidenceSnapshotHash ?? "",
       ),
+      identityContract: usesModelSet ? "model_set_v1" : "legacy_single_profile",
+      profileIds: modelSetProfiles.map((profile) => profile.profileId),
+      profileSnapshots: modelSetProfiles,
     },
     runningCampaign: running ?? null,
     coverageRepair,
+    sourceIndex,
+    sourceSnapshot,
+    modelSet: modelSetPreview,
   };
 }
 
@@ -2501,6 +3358,47 @@ async function computeEmptyActivationRepairPreview(
   };
 }
 
+async function computeRunPurgePreview(
+  mongo: any,
+  runId: string,
+): Promise<RunPurgeSnapshot> {
+  const run = await mongo({
+    action: "findOne",
+    collection: "diarization_runs",
+    query: { runId },
+    options: { projection: { runId: 1, status: 1, purgedAt: 1 } },
+  }) as any;
+  if (!run) throw new Error("Run not found");
+
+  const queries = buildRunPurgeQueries(runId);
+  const [documents, embeddings, activeSegments] = await Promise.all([
+    mongo({
+      action: "count",
+      collection: "diarizations",
+      query: queries.deletable,
+    }),
+    mongo({
+      action: "count",
+      collection: "diarizations",
+      query: queries.embeddings,
+    }),
+    mongo({
+      action: "count",
+      collection: "diarizations",
+      query: queries.active,
+    }),
+  ]);
+
+  return buildRunPurgeSnapshot({
+    runId,
+    status: String(run.status ?? ""),
+    documents: Number(documents ?? 0),
+    embeddings: Number(embeddings ?? 0),
+    activeSegments: Number(activeSegments ?? 0),
+    purgedAt: run.purgedAt,
+  });
+}
+
 export class SpeakerSegmentsResource
   implements Resource<SpeakerSegmentsRequest, unknown> {
   code = "speaker-segments";
@@ -2517,6 +3415,176 @@ export class SpeakerSegmentsResource
     const mongo = await getMongoResource(auth);
 
     switch (input.action) {
+      case "profile-archive-preview":
+        return await redlock.using(
+          ["mycelia:lock:speaker-profile-lifecycle"],
+          30_000,
+          async (signal) => {
+            assertActivationLock(signal, "profile archive preview");
+            const preview = await computeSpeakerProfileArchivePreview(
+              mongo,
+              input.profileId,
+              input.replacementPrimaryProfileId,
+            );
+            assertActivationLock(signal, "profile archive preview completion");
+            return preview;
+          },
+        );
+      case "archive-profile":
+        return await redlock.using(
+          ["mycelia:lock:speaker-profile-lifecycle"],
+          30_000,
+          async (signal) => {
+            assertActivationLock(signal, "profile archive validation");
+            const preview = await computeSpeakerProfileArchivePreview(
+              mongo,
+              input.profileId,
+              input.replacementPrimaryProfileId,
+            );
+            assertProfileArchiveSnapshotCurrent(
+              {
+                snapshotFingerprint: input.snapshotFingerprint,
+                confirmation: input.confirmation,
+              },
+              preview,
+              input.confirmation,
+            );
+
+            const profileId = new ObjectId(input.profileId);
+            const replacementPrimaryProfileId =
+              preview.isPrimary && input.replacementPrimaryProfileId
+                ? new ObjectId(input.replacementPrimaryProfileId)
+                : null;
+            let promotedReplacement = false;
+            try {
+              if (replacementPrimaryProfileId) {
+                assertActivationLock(signal, "primary profile replacement");
+                const promoted = await mongo({
+                  action: "updateOne",
+                  collection: "speaker_profiles",
+                  query: {
+                    _id: replacementPrimaryProfileId,
+                    lifecycleStatus: { $ne: "archived" },
+                  },
+                  update: {
+                    $set: { is_primary: true, updated_at: new Date() },
+                  },
+                }) as any;
+                if (Number(promoted?.matchedCount ?? 0) !== 1) {
+                  throw new Error(
+                    "Replacement primary profile changed; preview archive again",
+                  );
+                }
+                promotedReplacement = true;
+              }
+
+              assertActivationLock(signal, "profile archive write");
+              const archivedAt = new Date();
+              const archived = await mongo({
+                action: "updateOne",
+                collection: "speaker_profiles",
+                query: {
+                  _id: profileId,
+                  lifecycleStatus: { $ne: "archived" },
+                },
+                update: buildProfileArchiveUpdate({
+                  archivedAt,
+                  archivedBy: auth.principal,
+                  snapshotFingerprint: preview.snapshotFingerprint,
+                }),
+              }) as any;
+              if (Number(archived?.matchedCount ?? 0) !== 1) {
+                throw new Error(
+                  "Speaker profile changed before archive; preview archive again",
+                );
+              }
+              assertActivationLock(signal, "profile archive completion");
+              return {
+                archived: true,
+                profileId: input.profileId,
+                replacementPrimaryProfileId:
+                  input.replacementPrimaryProfileId ?? null,
+                retainedReferences: preview.retainedReferences,
+                snapshotFingerprint: preview.snapshotFingerprint,
+              };
+            } catch (error) {
+              // If promotion succeeded but archiving did not, restore the old
+              // primary invariant. If the archive write did succeed and only
+              // the response failed, leave the replacement primary intact.
+              if (promotedReplacement && replacementPrimaryProfileId) {
+                const archivedProfile = await mongo({
+                  action: "findOne",
+                  collection: "speaker_profiles",
+                  query: { _id: profileId },
+                  options: { projection: { lifecycleStatus: 1 } },
+                }) as any;
+                if (archivedProfile?.lifecycleStatus !== "archived") {
+                  await mongo({
+                    action: "updateOne",
+                    collection: "speaker_profiles",
+                    query: { _id: replacementPrimaryProfileId },
+                    update: {
+                      $set: { is_primary: false, updated_at: new Date() },
+                    },
+                  });
+                }
+              }
+              throw error;
+            }
+          },
+        );
+      case "restore-profile":
+        return await redlock.using(
+          ["mycelia:lock:speaker-profile-lifecycle"],
+          30_000,
+          async (signal) => {
+            assertActivationLock(signal, "profile restore");
+            const restored = await mongo({
+              action: "updateOne",
+              collection: "speaker_profiles",
+              query: {
+                _id: new ObjectId(input.profileId),
+                lifecycleStatus: "archived",
+              },
+              update: buildProfileRestoreUpdate({
+                restoredAt: new Date(),
+                restoredBy: auth.principal,
+              }),
+            }) as any;
+            if (Number(restored?.matchedCount ?? 0) !== 1) {
+              throw new Error("Archived speaker profile not found");
+            }
+            assertActivationLock(signal, "profile restore completion");
+            return { restored: true, profileId: input.profileId };
+          },
+        );
+      case "invalidate-profile-identity-evidence": {
+        const profile = await mongo({
+          action: "findOne",
+          collection: "speaker_profiles",
+          query: { _id: new ObjectId(input.profileId) },
+          options: { projection: { revision: 1 } },
+        }) as any;
+        if (
+          !profile || Number(profile.revision ?? 0) !== input.profileRevision
+        ) {
+          throw new Error(
+            "Voice profile changed before identity evidence invalidation",
+          );
+        }
+        await invalidateCalibrationsForProfiles(
+          mongo,
+          [input.profileId],
+          "voice profile re-enrolled",
+          new Date(),
+          `profile-reenrollment:${input.profileId}:${input.profileRevision}`,
+        );
+        return {
+          invalidated: true,
+          profileId: input.profileId,
+          profileRevision: input.profileRevision,
+        };
+      }
       case "create-profile": {
         await assertProfileNameAvailable(mongo, input.name);
         const now = new Date();
@@ -2528,6 +3596,7 @@ export class SpeakerSegmentsResource
           color: await nextProfileColor(mongo),
           source: "manual_profile",
           enrollmentStatus: "needs_samples",
+          lifecycleStatus: "active",
           revision: 1,
           created_at: now,
           updated_at: now,
@@ -2591,6 +3660,7 @@ export class SpeakerSegmentsResource
           color: await nextProfileColor(mongo),
           source: "review_segments",
           enrollmentStatus: "seeded_from_review",
+          lifecycleStatus: "active",
           revision: 1,
           enrollmentProvenance: {
             source: "review_segments",
@@ -2658,6 +3728,7 @@ export class SpeakerSegmentsResource
           lifecycleStatus: "active",
           start: { $lt: input.end },
           end: { $gt: input.start },
+          ...(input.segmentId ? { _id: new ObjectId(input.segmentId) } : {}),
         };
         const segments = await mongo({
           action: "find",
@@ -2671,7 +3742,18 @@ export class SpeakerSegmentsResource
               : {}),
           },
         }) as any[];
-        await suppressStaleAutomaticIdentities(mongo, segments);
+        const activeModelSetSegments =
+          await hydrateActiveIdentityModelSetProjections(
+            mongo,
+            segments,
+            input.selectedProfileId,
+          );
+        await suppressStaleAutomaticIdentities(
+          mongo,
+          segments.filter((segment) =>
+            !activeModelSetSegments.has(String(segment._id))
+          ),
+        );
         const originalIds = [
           ...new Set(
             segments.map((s) => String(s.original_id ?? s.original)).filter(
@@ -2695,6 +3777,15 @@ export class SpeakerSegmentsResource
             String(a.originalId) === original
           );
           for (const annotation of applicable) {
+            const excludedProfileIds = (annotation.excludedProfileIds ?? [])
+              .map(String);
+            // A negative manual label is evidence only against the profiles it
+            // names. In a selected-profile view it must not turn an unrelated
+            // profile into a global rejection.
+            if (
+              input.selectedProfileId && !annotation.profileId &&
+              !excludedProfileIds.includes(input.selectedProfileId)
+            ) continue;
             const projected = projectAnnotationState({
               segmentStart: new Date(segment.start),
               segmentEnd: new Date(segment.end),
@@ -2703,16 +3794,26 @@ export class SpeakerSegmentsResource
               profileId: annotation.profileId
                 ? String(annotation.profileId)
                 : undefined,
-              excludedProfileIds: (annotation.excludedProfileIds ?? []).map(
-                String,
-              ),
+              excludedProfileIds,
             });
             if (projected) {
               segment.speakerIdentity = {
-                ...segment.speakerIdentity,
-                ...projected,
+                ...applyManualIdentityProjection(
+                  segment.speakerIdentity,
+                  projected,
+                ),
                 annotationId: annotation._id,
                 validity: "manual",
+                excludedProfileIds,
+                ...(input.selectedProfileId
+                  ? {
+                    evaluatedProfileId: input.selectedProfileId,
+                    selectedProfileState: projected.state === "matched" &&
+                        String(projected.profileId) === input.selectedProfileId
+                      ? "identified"
+                      : "unknown",
+                  }
+                  : {}),
               };
             }
           }
@@ -3144,14 +4245,16 @@ export class SpeakerSegmentsResource
         );
       case "revise-review-history": {
         const segmentId = new ObjectId(input.segmentId);
+        const revisionScope = buildReviewHistoryRevisionScope({
+          segmentId,
+          profileId: new ObjectId(input.profileId),
+          decisionId: new ObjectId(input.replacesDecisionId),
+          author: auth.principal,
+        });
         const current = await mongo({
           action: "findOne",
           collection: "speaker_review_decisions",
-          query: {
-            segmentIds: segmentId,
-            author: auth.principal,
-            status: "committed",
-          },
+          query: revisionScope.currentDecision,
           options: { sort: { updatedAt: -1, createdAt: -1 } },
         }) as any;
         if (!current || String(current._id) !== input.replacesDecisionId) {
@@ -3230,7 +4333,7 @@ export class SpeakerSegmentsResource
         await mongo({
           action: "deleteMany",
           collection: "speaker_annotations",
-          query: { segmentId, source: "manual" },
+          query: revisionScope.replacedAnnotation,
         });
         if (input.outcome === "assigned") {
           await mongo({
@@ -3712,76 +4815,35 @@ export class SpeakerSegmentsResource
         }
         const now = new Date();
         const decisionId = existing?._id ?? new ObjectId();
+        const decision = {
+          _id: decisionId,
+          sessionId,
+          clientRequestId: input.clientRequestId,
+          author: auth.principal,
+          segmentIds: objectIds,
+          targetProfileIds: session.targetProfileIds ?? [],
+          originalGroups: session.groups,
+          outcome: "assigned",
+          profileId: input.profileId ? new ObjectId(input.profileId) : null,
+          excludedProfileIds: input.excludedProfileIds.map((id) =>
+            new ObjectId(id)
+          ),
+          calibrationUse: input.calibrationUse,
+          source: segmentIds.length > 1 ? "review_batch" : "review_single",
+          status: "building",
+          createdAt: now,
+        };
         await mongo({
           action: "updateOne",
           collection: "speaker_review_decisions",
           query: { sessionId, clientRequestId: input.clientRequestId },
           update: {
-            $setOnInsert: {
-              _id: decisionId,
-              sessionId,
-              clientRequestId: input.clientRequestId,
-              author: auth.principal,
-              segmentIds: objectIds,
-              targetProfileIds: session.targetProfileIds ?? [],
-              originalGroups: session.groups,
-              outcome: "assigned",
-              profileId: input.profileId ? new ObjectId(input.profileId) : null,
-              excludedProfileIds: input.excludedProfileIds.map((id) =>
-                new ObjectId(id)
-              ),
-              calibrationUse: input.calibrationUse,
-              source: segmentIds.length > 1 ? "review_batch" : "review_single",
-              status: "building",
-              createdAt: now,
-            },
+            $setOnInsert: decision,
             $set: { updatedAt: now },
           },
           options: { upsert: true },
         });
-        for (const segment of segments) {
-          await mongo({
-            action: "updateOne",
-            collection: "speaker_annotations",
-            query: { decisionId, segmentId: segment._id },
-            update: {
-              $setOnInsert: {
-                decisionId,
-                sessionId,
-                originalId: segment.original_id ?? segment.original,
-                segmentId: segment._id,
-                runId: segment.runId ?? null,
-                start: segment.start,
-                end: segment.end,
-                profileId: input.profileId
-                  ? new ObjectId(input.profileId)
-                  : null,
-                excludedProfileIds: input.excludedProfileIds.map((id) =>
-                  new ObjectId(id)
-                ),
-                calibrationUse: input.calibrationUse,
-                source: "manual",
-                author: auth.principal,
-                createdAt: now,
-              },
-              $set: { updatedAt: now },
-            },
-            options: { upsert: true },
-          });
-        }
-        await mongo({
-          action: "updateOne",
-          collection: "speaker_review_decisions",
-          query: { _id: decisionId },
-          update: {
-            $set: {
-              status: "committed",
-              annotationCount: segments.length,
-              committedAt: new Date(),
-              updatedAt: new Date(),
-            },
-          },
-        });
+        await commitReviewDecisionArtifacts(mongo, decision, segments);
         const selected = new Set(segmentIds);
         const selectedItems = (session.window ?? []).filter((item: any) =>
           selected.has(String(item.segmentId))
@@ -3903,6 +4965,17 @@ export class SpeakerSegmentsResource
         const objectIds = segmentIds.map((id) => new ObjectId(id));
         const now = new Date();
         const decisionId = existing?._id ?? new ObjectId();
+        const supersededDecision = input.replacesDecisionId
+          ? await mongo({
+            action: "findOne",
+            collection: "speaker_review_decisions",
+            query: {
+              _id: new ObjectId(input.replacesDecisionId),
+              sessionId,
+              status: "committed",
+            },
+          }) as any
+          : null;
         await mongo({
           action: "updateOne",
           collection: "speaker_review_decisions",
@@ -3991,10 +5064,13 @@ export class SpeakerSegmentsResource
           collection: "speaker_annotations",
           query: { segmentId: { $in: objectIds }, source: "manual" },
         });
-        if (reviewedRemoved > 0) {
+        const removedEligibleProfileIds = eligibleReviewDecisionProfileIds(
+          supersededDecision,
+        );
+        if (reviewedRemoved > 0 && removedEligibleProfileIds.length > 0) {
           await invalidateCalibrationsForProfiles(
             mongo,
-            session.targetProfileIds ?? [],
+            removedEligibleProfileIds,
             "review label changed to noise or unclear",
             now,
           );
@@ -4220,16 +5296,6 @@ export class SpeakerSegmentsResource
           collection: "speaker_annotations",
           query: { segmentId: { $in: objectIds }, source: "manual" },
         });
-        await invalidateCalibrationsForProfiles(
-          mongo,
-          [
-            ...(session.targetProfileIds ?? []),
-            input.profileId,
-            ...input.excludedProfileIds,
-          ],
-          "review label revised",
-          now,
-        );
         await commitReviewDecisionArtifacts(mongo, persistedDecision, segments);
         const latestSession = await mongo({
           action: "findOne",
@@ -4592,7 +5658,10 @@ export class SpeakerSegmentsResource
             collection: "jobs",
             query: {
               type: "speakerIdentity",
-              "data.profileId": input.profileId,
+              $or: [
+                { "data.profileId": input.profileId },
+                { "data.profileSnapshots.profileId": input.profileId },
+              ],
             },
             options: {
               sort: { updatedAt: -1, createdAt: -1 },
@@ -4610,7 +5679,12 @@ export class SpeakerSegmentsResource
           mongo({
             action: "find",
             collection: "speaker_identity_campaigns",
-            query: { profileId: input.profileId },
+            query: {
+              $or: [
+                { profileId: input.profileId },
+                { profileIds: input.profileId },
+              ],
+            },
             options: { sort: { updatedAt: -1 }, limit: 1 },
           }),
           mongo({
@@ -4724,7 +5798,6 @@ export class SpeakerSegmentsResource
           : null;
         const blockers: string[] = [];
         if (!profile) blockers.push("Profile no longer exists");
-        if (!profile?.is_primary) blockers.push("Profile is not primary");
         if (
           !Array.isArray(profile?.embedding) || profile.embedding.length === 0
         ) {
@@ -4826,14 +5899,136 @@ export class SpeakerSegmentsResource
           latestCampaign: latestCampaigns[0] ?? null,
         };
       }
+      case "prepare-identity-model-set": {
+        const preflight = await mongo({
+          action: "findOne",
+          collection: "speaker_identity_preflights",
+          query: {
+            preflightToken: input.preflightToken,
+            owner: auth.principal,
+          },
+        }) as any;
+        if (!preflight || new Date(preflight.expiresAt) <= new Date()) {
+          throw new Error(
+            "Classification preview expired; check the source again",
+          );
+        }
+        if (!input.profileIds.includes(String(preflight.profileId))) {
+          throw new Error(
+            "The model set must include the profile used to preview the source",
+          );
+        }
+        if (
+          !sameStringSet(
+            input.profileIds,
+            preflight.resolved?.profileIds ?? [String(preflight.profileId)],
+          )
+        ) {
+          throw new Error(
+            "The selected profiles changed after preview; check the source again",
+          );
+        }
+        const prepared = await prepareIdentityModelSetFromPreflight(
+          mongo,
+          preflight,
+          input.profileIds,
+          auth.principal,
+        );
+        return {
+          ...prepared,
+          modelSet: {
+            ...prepared.modelSet,
+            partitions: undefined,
+          },
+        };
+      }
+      case "list-identity-model-sets":
+        return await mongo({
+          action: "find",
+          collection: "identity_model_sets",
+          query: input.profileId ? { profileIds: input.profileId } : {},
+          options: {
+            projection: { partitions: 0 },
+            sort: { createdAt: -1 },
+            limit: input.limit,
+          },
+        });
+      case "identity-model-set-head": {
+        let embeddingSpaceId = input.embeddingSpaceId ?? null;
+        if (!embeddingSpaceId && input.profileId) {
+          const profile = await mongo({
+            action: "findOne",
+            collection: "speaker_profiles",
+            query: { _id: new ObjectId(input.profileId) },
+            options: { projection: { embeddingSpaceId: 1 } },
+          }) as any;
+          embeddingSpaceId = profile?.embeddingSpaceId ?? null;
+        }
+        if (!embeddingSpaceId) {
+          return {
+            heads: await mongo({
+              action: "find",
+              collection: "identity_model_set_heads",
+              query: {},
+              options: { sort: { updatedAt: -1 }, limit: 100 },
+            }),
+          };
+        }
+        const head = await mongo({
+          action: "findOne",
+          collection: "identity_model_set_heads",
+          query: { embeddingSpaceId },
+        }) as any;
+        const modelSet = head?.activeModelSetId
+          ? await mongo({
+            action: "findOne",
+            collection: "identity_model_sets",
+            query: {
+              modelSetId: head.activeModelSetId,
+              status: "active",
+            },
+            options: { projection: { partitions: 0 } },
+          })
+          : null;
+        return {
+          embeddingSpaceId,
+          head,
+          modelSet,
+          status: modelSet ? "active" : "no_active_model_set",
+        };
+      }
+      case "activate-identity-model-set":
+        return await redlock.using(
+          ["mycelia:lock:speaker-identity-model-set-activation"],
+          60_000,
+          async (signal) => {
+            assertActivationLock(signal, "identity model-set activation");
+            const result = await activateIdentityModelSet(
+              mongo,
+              input.modelSetId,
+              auth.principal,
+            );
+            assertActivationLock(signal, "identity model-set completion");
+            return result;
+          },
+        );
       case "identity-preflight": {
         const snapshotCutoff = new Date();
+        const profileIds = input.profileIds ??
+          await resolveDefaultIdentityModelSetProfileIds(
+            mongo,
+            input.profileId,
+          );
         const preflight = await computeIdentityPreflight(
           mongo,
           input.profileId,
           input.scope,
           snapshotCutoff,
+          profileIds,
         );
+        if (!preflight.canStart || preflight.status !== "ready") {
+          return { ...preflight, preflightToken: null };
+        }
         const preflightToken = crypto.randomUUID();
         await mongo({
           action: "insertOne",
@@ -4862,6 +6057,23 @@ export class SpeakerSegmentsResource
         if (!preflight || new Date(preflight.expiresAt) <= new Date()) {
           throw new Error(
             "Classification preview expired; check the source again",
+          );
+        }
+        const requestedProfileIds = input.profileIds ??
+          preflight.resolved?.profileIds ?? [input.profileId];
+        if (!requestedProfileIds.includes(input.profileId)) {
+          throw new Error(
+            "The model set must include the profile used to preview the source",
+          );
+        }
+        if (
+          !sameStringSet(
+            requestedProfileIds,
+            preflight.resolved?.profileIds ?? [input.profileId],
+          )
+        ) {
+          throw new Error(
+            "The selected profiles changed after preview; check the source again",
           );
         }
         if (preflight.campaignId) {
@@ -4905,28 +6117,75 @@ export class SpeakerSegmentsResource
             "The profile or calibration changed after preview; check the source again",
           );
         }
-        const scope = normalizeIdentityScope(preflight.scope);
         const snapshotCutoff = new Date(preflight.snapshotCutoff);
+        const sourceIndexState = await mongo({
+          action: "findOne",
+          collection: SPEAKER_IDENTITY_SOURCE_INDEX,
+          query: { _id: SPEAKER_IDENTITY_SOURCE_INDEX_ID },
+        });
+        if (
+          !preflight.sourceSnapshot ||
+          !identitySourceSnapshotMatches(
+            preflight.sourceSnapshot,
+            sourceIndexState,
+          )
+        ) {
+          throw new Error(
+            "Active diarization coverage changed after preview; check the source again",
+          );
+        }
+        const actualPartitions = await mongo({
+          action: "find",
+          collection: SPEAKER_IDENTITY_SOURCE_PARTITIONS,
+          query: { buildId: preflight.sourceSnapshot.buildId, status: "ready" },
+          options: { limit: 2_000 },
+        }) as any[];
+        const actualByKey = new Map(actualPartitions.map((partition) => [
+          identityPartitionKey(partition),
+          partition,
+        ]));
         for (const partition of preflight.partitions as IdentityPartition[]) {
-          const actualSource = await mongo({
-            action: "count",
-            collection: "diarizations",
-            query: {
-              ...buildIdentitySourceMatch(
-                context.snapshot,
-                scope,
-                snapshotCutoff,
-              ),
-              runId: partition.runId,
-              embeddingSpaceId: partition.embeddingSpaceId,
-            },
-            options: { maxTimeMS: 10_000 },
-          }) as number;
-          if (Number(actualSource) !== Number(partition.sourceSegments)) {
+          const actual = actualByKey.get(identityPartitionKey(partition));
+          if (!actual || !identitySourcePartitionMatches(partition, actual)) {
             throw new Error(
               "Active diarization coverage changed after preview; check the source again",
             );
           }
+        }
+        const preparedModelSet = preflight.resolved?.identityContract ===
+            "model_set_v1"
+          ? await prepareIdentityModelSetFromPreflight(
+            mongo,
+            preflight,
+            requestedProfileIds,
+            auth.principal,
+          )
+          : null;
+        const modelSet = preparedModelSet?.modelSet ?? null;
+        if (modelSet?.status === "superseded") {
+          throw new Error(
+            "This model-set source was already superseded; preview the current source again",
+          );
+        }
+        const modelSetTotal = modelSet
+          ? Number(modelSet.coverage?.totalSegments ?? 0)
+          : Number(preflight.totals.eligibleSegments ?? 0);
+        const modelSetProjected = modelSet
+          ? Number(modelSet.coverage?.projectedSegments ?? 0)
+          : 0;
+        const campaignPending = Math.max(
+          0,
+          modelSetTotal - modelSetProjected,
+        );
+        if (modelSet && campaignPending === 0) {
+          return {
+            campaignId: null,
+            jobId: null,
+            modelSetId: modelSet.modelSetId,
+            status: modelSet.status,
+            reused: true,
+            activationRequired: modelSet.status === "ready",
+          };
         }
         const campaignId = `speaker-identity-${new ObjectId()}`;
         const claimed = await mongo({
@@ -4995,6 +6254,13 @@ export class SpeakerSegmentsResource
             ? "classify_all_compatible"
             : "classify_range",
           profileId: input.profileId,
+          profileIds: modelSet?.profileIds ?? [input.profileId],
+          ...(modelSet
+            ? {
+              modelSetId: modelSet.modelSetId,
+              profileSnapshots: modelSet.profiles,
+            }
+            : {}),
           profileName: preflight.resolved.profileName,
           profileRevision: preflight.resolved.profileRevision,
           calibrationId: preflight.resolved.calibrationId,
@@ -5010,18 +6276,22 @@ export class SpeakerSegmentsResource
             ? { start: preflight.scope.start, end: preflight.scope.end }
             : { start: null, end: snapshotCutoff },
           snapshotCutoff,
+          sourceSnapshot: preflight.sourceSnapshot,
           partitions: preflight.partitions,
           partitionIndex: 0,
           status: "queued",
           active: true,
-          totalSegments: preflight.totals.eligibleSegments,
-          pendingSegments: preflight.totals.eligibleSegments,
-          processedSegments: 0,
+          totalSegments: modelSetTotal,
+          pendingSegments: campaignPending,
+          processedSegments: modelSetProjected,
           matched: 0,
           rejected: 0,
+          identified: 0,
+          ambiguous: 0,
+          unknown: 0,
           uncertain: 0,
           incompatibleSkipped: 0,
-          estimatedBatches: preflight.totals.estimatedBatches,
+          estimatedBatches: Math.ceil(campaignPending / 1_000),
           firstJobId: reservedJobId,
           currentJobId: reservedJobId,
           createdAt: now,
@@ -5037,7 +6307,13 @@ export class SpeakerSegmentsResource
           const concurrent = await mongo({
             action: "findOne",
             collection: "speaker_identity_campaigns",
-            query: { profileId: input.profileId, active: true },
+            query: {
+              active: true,
+              $or: [
+                { profileId: { $in: requestedProfileIds } },
+                { profileIds: { $in: requestedProfileIds } },
+              ],
+            },
             options: { sort: { updatedAt: -1, createdAt: -1 } },
           }) as any;
           if (!concurrent) throw error;
@@ -5066,9 +6342,16 @@ export class SpeakerSegmentsResource
             type: "speakerIdentity",
             runId: firstPartition.runId,
             profileId: input.profileId,
-            profileRevision: preflight.resolved.profileRevision,
-            calibrationId: preflight.resolved.calibrationId,
-            evidenceSnapshotHash: preflight.resolved.evidenceSnapshotHash,
+            ...(modelSet
+              ? {
+                modelSetId: modelSet.modelSetId,
+                profileSnapshots: modelSet.profiles,
+              }
+              : {
+                profileRevision: preflight.resolved.profileRevision,
+                calibrationId: preflight.resolved.calibrationId,
+                evidenceSnapshotHash: preflight.resolved.evidenceSnapshotHash,
+              }),
             ...(preflight.scope.mode === "range"
               ? {
                 start: preflight.scope.start,
@@ -5076,6 +6359,7 @@ export class SpeakerSegmentsResource
               }
               : { end: snapshotCutoff }),
             snapshotCutoff,
+            sourceSnapshot: preflight.sourceSnapshot,
             partitions: preflight.partitions,
             partitionIndex: 0,
             limit: 1_000,
@@ -5129,12 +6413,17 @@ export class SpeakerSegmentsResource
           return {
             mode: input.detail,
             status: "no_data",
-            reason: "No primary voice profile exists",
+            reason: input.profileId
+              ? "The selected voice profile does not exist"
+              : "No primary voice profile exists",
             intervals: [],
             buckets: [],
             totals: {
               segments: 0,
               matched: 0,
+              identified: 0,
+              ambiguous: 0,
+              unknown: 0,
               rejected: 0,
               uncertain: 0,
               unclassified: 0,
@@ -5142,27 +6431,36 @@ export class SpeakerSegmentsResource
           };
         }
         const profileId = String(profile._id);
-        const calibrations = await mongo({
-          action: "find",
-          collection: "speaker_calibrations",
-          query: { profileId },
-          options: { sort: { createdAt: -1 }, limit: 50 },
-        }) as any[];
-        const headedCalibrations = calibrationsAtProfileHead(
-          profile,
-          calibrations,
+        const head = profile.embeddingSpaceId
+          ? await mongo({
+            action: "findOne",
+            collection: "identity_model_set_heads",
+            query: { embeddingSpaceId: profile.embeddingSpaceId },
+          }) as any
+          : null;
+        const activeModelSet = head?.activeModelSetId
+          ? await mongo({
+            action: "findOne",
+            collection: "identity_model_sets",
+            query: {
+              modelSetId: head.activeModelSetId,
+              status: "active",
+            },
+            options: { projection: { partitions: 0 } },
+          }) as any
+          : null;
+        const selectedProfileSnapshot = activeModelSet?.profiles?.find(
+          (snapshot: any) => String(snapshot.profileId) === profileId,
+        ) ?? null;
+        const selectedProfileStale = Boolean(
+          activeModelSet?.staleProfileIds?.map(String).includes(profileId),
         );
-        const calibration = findUsableFullCalibration(headedCalibrations, {
-          profileId,
-          profileRevision: Number(profile.revision ?? 1),
-          embeddingSpaceId: profile.embeddingSpaceId,
-        }) ?? findUsablePilotCalibration(headedCalibrations, {
-          profileId,
-          profileRevision: Number(profile.revision ?? 1),
-          embeddingSpaceId: profile.embeddingSpaceId,
-        });
-        const policy = calibration
-          ? normalizeCalibrationPolicy(calibration)
+        const automaticReason = !activeModelSet
+          ? "Manual identity is shown; build and activate an identity model set for automatic results"
+          : !selectedProfileSnapshot
+          ? "The selected voice is not included in the active identity model set"
+          : selectedProfileStale
+          ? "The selected voice changed after this identity model set was built; automatic results are hidden until a replacement activates"
           : null;
         const rows = await mongo({
           action: "aggregate",
@@ -5172,19 +6470,15 @@ export class SpeakerSegmentsResource
             end: input.end,
             detail: input.detail,
             bucketMs: input.bucketMs,
-            targetProfileId: profile._id,
-            snapshot: calibration
-              ? {
-                profileRevision: Number(profile.revision ?? 1),
-                embeddingSpaceId: String(profile.embeddingSpaceId),
-                calibrationId: String(calibration.calibrationId),
-                validity: policy?.classificationPolicy === "pilot"
-                  ? "provisional"
-                  : "verified",
-              }
-              : null,
+            targetProfileId: profileId,
+            modelSetId: activeModelSet?.modelSetId ?? null,
+            targetProfileIncluded: Boolean(
+              selectedProfileSnapshot && !selectedProfileStale,
+            ),
             states: input.filters.states,
             validities: input.filters.validities,
+            inclusion: input.filters.inclusion,
+            sources: input.filters.sources,
           }),
           options: { maxTimeMS: 10_000 },
         }) as any[];
@@ -5199,33 +6493,52 @@ export class SpeakerSegmentsResource
             validity: row.validity,
             profileId: row.profileId ? String(row.profileId) : null,
             score: row.score ?? null,
+            source: row.source ?? null,
+            candidates: row.candidates ?? [],
+            includesSelectedCandidate: row.includesSelectedCandidate === true,
+            modelSetId: row.modelSetId ?? null,
           }));
           const totals = intervals.reduce((result, row) => {
             result.segments += 1;
-            result[
-              row.state as "matched" | "rejected" | "uncertain" | "unclassified"
-            ] += 1;
+            const state = row.state as
+              | "identified"
+              | "ambiguous"
+              | "unknown"
+              | "uncertain"
+              | "unclassified";
+            result[state] += 1;
             return result;
           }, {
             segments: 0,
             matched: 0,
+            identified: 0,
+            ambiguous: 0,
+            unknown: 0,
             rejected: 0,
             uncertain: 0,
             unclassified: 0,
           });
+          totals.matched = totals.identified;
+          totals.rejected = totals.unknown;
           return {
             mode: "intervals",
             status: intervals.length ? "ready" : "no_data",
-            profile: { id: profileId, name: profile.name },
-            calibration: calibration
+            profile: {
+              id: profileId,
+              name: profile.name,
+              color: profile.color ?? null,
+            },
+            calibration: selectedProfileSnapshot
+              ? { id: selectedProfileSnapshot.calibrationId, status: "full" }
+              : null,
+            modelSet: activeModelSet
               ? {
-                id: calibration.calibrationId,
-                status: policy?.classificationPolicy ?? "full",
+                id: activeModelSet.modelSetId,
+                status: activeModelSet.status,
+                profileIds: activeModelSet.profileIds ?? [],
               }
               : null,
-            reason: calibration
-              ? null
-              : "Manual identity is shown; save a current calibration for automatic results",
+            reason: automaticReason,
             intervals,
             totals,
             truncated,
@@ -5235,10 +6548,20 @@ export class SpeakerSegmentsResource
           start: new Date(Number(row._id)),
           end: new Date(Number(row._id) + Number(input.bucketMs)),
           counts: {
-            matched: Number(row.matched ?? 0),
-            rejected: Number(row.rejected ?? 0),
+            identified: Number(row.identified ?? 0),
+            ambiguous: Number(row.ambiguous ?? 0),
+            unknown: Number(row.unknown ?? 0),
+            // Compatibility aliases for older Timeline clients.
+            matched: Number(row.identified ?? 0),
+            rejected: Number(row.unknown ?? 0),
             uncertain: Number(row.uncertain ?? 0),
             unclassified: Number(row.unclassified ?? 0),
+          },
+          durationMs: {
+            identified: Number(row.identifiedMs ?? 0),
+            ambiguous: Number(row.ambiguousMs ?? 0),
+            uncertain: Number(row.uncertainMs ?? 0),
+            unclassified: Number(row.unclassifiedMs ?? 0),
           },
           validityCounts: {
             verified: Number(row.verified ?? 0),
@@ -5249,6 +6572,9 @@ export class SpeakerSegmentsResource
         }));
         const totals = buckets.reduce((result, bucket) => {
           result.segments += bucket.segments;
+          result.identified += bucket.counts.identified;
+          result.ambiguous += bucket.counts.ambiguous;
+          result.unknown += bucket.counts.unknown;
           result.matched += bucket.counts.matched;
           result.rejected += bucket.counts.rejected;
           result.uncertain += bucket.counts.uncertain;
@@ -5257,6 +6583,9 @@ export class SpeakerSegmentsResource
         }, {
           segments: 0,
           matched: 0,
+          identified: 0,
+          ambiguous: 0,
+          unknown: 0,
           rejected: 0,
           uncertain: 0,
           unclassified: 0,
@@ -5264,16 +6593,22 @@ export class SpeakerSegmentsResource
         return {
           mode: "buckets",
           status: buckets.length ? "ready" : "no_data",
-          profile: { id: profileId, name: profile.name },
-          calibration: calibration
+          profile: {
+            id: profileId,
+            name: profile.name,
+            color: profile.color ?? null,
+          },
+          calibration: selectedProfileSnapshot
+            ? { id: selectedProfileSnapshot.calibrationId, status: "full" }
+            : null,
+          modelSet: activeModelSet
             ? {
-              id: calibration.calibrationId,
-              status: policy?.classificationPolicy ?? "full",
+              id: activeModelSet.modelSetId,
+              status: activeModelSet.status,
+              profileIds: activeModelSet.profileIds ?? [],
             }
             : null,
-          reason: calibration
-            ? null
-            : "Manual identity is shown; save a current calibration for automatic results",
+          reason: automaticReason,
           buckets,
           totals,
         };
@@ -5303,116 +6638,100 @@ export class SpeakerSegmentsResource
             "pilot"
           ? usableCalibration
           : null;
-        const rawIdentityCounts = await mongo({
-          action: "aggregate",
-          collection: "diarizations",
-          pipeline: [
-            { $match: { lifecycleStatus: "active" } },
-            {
-              $group: {
-                _id: "$speakerIdentity.identityState",
-                count: { $sum: 1 },
+        const head = embeddingSpaceId
+          ? await mongo({
+            action: "findOne",
+            collection: "identity_model_set_heads",
+            query: { embeddingSpaceId },
+          }) as any
+          : null;
+        const activeModelSet = head?.activeModelSetId
+          ? await mongo({
+            action: "findOne",
+            collection: "identity_model_sets",
+            query: {
+              modelSetId: head.activeModelSetId,
+              status: "active",
+            },
+            options: {
+              projection: {
+                modelSetId: 1,
+                profileIds: 1,
+                staleProfileIds: 1,
               },
             },
-          ],
-          options: {
-            maxTimeMS: 10_000,
-            hint: "pipeline_speaker_identity_state",
-          },
-        }) as any[];
-        const raw = Object.fromEntries(
-          rawIdentityCounts.map((row) => [
-            row._id ?? "unclassified",
-            row.count,
-          ]),
+          }) as any
+          : null;
+        const targetProfileIncluded = Boolean(
+          activeModelSet?.profileIds?.map(String).includes(input.profileId) &&
+            !activeModelSet?.staleProfileIds?.map(String).includes(
+              input.profileId,
+            ),
         );
-        const verifiedCounts = usableFullCalibration
-          ? await mongo({
+        const asOf = new Date();
+        const [summaryRows, provisionalCounts] = await Promise.all([
+          mongo({
             action: "aggregate",
             collection: "diarizations",
-            pipeline: [
-              {
-                $match: {
-                  lifecycleStatus: "active",
-                  "speakerIdentity.calibrationId":
-                    usableFullCalibration.calibrationId,
-                  "speakerIdentity.profileRevision": profileRevision,
-                  "speakerIdentity.embeddingSpaceId": embeddingSpaceId,
-                  "speakerIdentity.source": "automatic",
-                  "speakerIdentity.validity": "verified",
+            pipeline: buildIdentityClassificationSummaryPipeline({
+              asOf,
+              targetProfileId: input.profileId,
+              modelSetId: activeModelSet?.modelSetId ?? null,
+              targetProfileIncluded,
+            }),
+            options: { maxTimeMS: 20_000 },
+          }) as Promise<any[]>,
+          usablePilotCalibration && !activeModelSet
+            ? await mongo({
+              action: "aggregate",
+              collection: "diarizations",
+              pipeline: [
+                {
+                  $match: {
+                    lifecycleStatus: "active",
+                    "speakerIdentity.calibrationId":
+                      usablePilotCalibration.calibrationId,
+                    "speakerIdentity.profileRevision": profileRevision,
+                    "speakerIdentity.embeddingSpaceId": embeddingSpaceId,
+                    "speakerIdentity.source": "automatic",
+                    "speakerIdentity.validity": "provisional",
+                  },
                 },
-              },
-              {
-                $group: {
-                  _id: "$speakerIdentity.identityState",
-                  count: { $sum: 1 },
+                {
+                  $group: {
+                    _id: "$speakerIdentity.identityState",
+                    count: { $sum: 1 },
+                  },
                 },
+              ],
+              options: {
+                maxTimeMS: 10_000,
+                hint: SPEAKER_IDENTITY_SNAPSHOT_INDEX,
               },
-            ],
-            options: {
-              maxTimeMS: 10_000,
-              hint: SPEAKER_IDENTITY_SNAPSHOT_INDEX,
-            },
-          }) as any[]
-          : [];
-        const provisionalCounts = usablePilotCalibration
-          ? await mongo({
-            action: "aggregate",
-            collection: "diarizations",
-            pipeline: [
-              {
-                $match: {
-                  lifecycleStatus: "active",
-                  "speakerIdentity.calibrationId":
-                    usablePilotCalibration.calibrationId,
-                  "speakerIdentity.profileRevision": profileRevision,
-                  "speakerIdentity.embeddingSpaceId": embeddingSpaceId,
-                  "speakerIdentity.source": "automatic",
-                  "speakerIdentity.validity": "provisional",
-                },
-              },
-              {
-                $group: {
-                  _id: "$speakerIdentity.identityState",
-                  count: { $sum: 1 },
-                },
-              },
-            ],
-            options: {
-              maxTimeMS: 10_000,
-              hint: SPEAKER_IDENTITY_SNAPSHOT_INDEX,
-            },
-          }) as any[]
-          : [];
-        const verified = Object.fromEntries(
-          verifiedCounts.map((row) => [row._id, row.count]),
-        );
+            }) as any[]
+            : Promise.resolve([]),
+        ]) as [any[], any[]];
+        const summary = summaryRows[0] ?? {};
         const provisional = Object.fromEntries(
           provisionalCounts.map((row) => [row._id, row.count]),
         );
-        const rawClassified = Number(raw.identified ?? 0) +
-          Number(raw.unknown ?? 0) + Number(raw.uncertain ?? 0);
-        const verifiedTotal = Number(verified.identified ?? 0) +
-          Number(verified.unknown ?? 0) + Number(verified.uncertain ?? 0);
-        const provisionalTotal = Number(provisional.identified ?? 0) +
-          Number(provisional.unknown ?? 0) +
-          Number(provisional.uncertain ?? 0);
         return {
-          asOf: new Date(),
+          asOf,
           classification: {
-            identified: verified.identified ?? 0,
-            unknown: verified.unknown ?? 0,
-            uncertain: verified.uncertain ?? 0,
+            identified: summary.identified ?? 0,
+            unknown: summary.unknown ?? 0,
+            uncertain: summary.uncertain ?? 0,
             provisional: {
               identified: provisional.identified ?? 0,
               unknown: provisional.unknown ?? 0,
               uncertain: provisional.uncertain ?? 0,
             },
-            stale: Math.max(
-              0,
-              rawClassified - verifiedTotal - provisionalTotal,
-            ),
-            unclassified: raw.unclassified ?? 0,
+            // Embedded pre-model-set decisions are intentionally ignored.
+            // Stale active snapshot metadata remains visible on the model set,
+            // while these counts describe only the active head plus manual
+            // annotations.
+            stale: 0,
+            unclassified: summary.unclassified ?? 0,
           },
           calibrationId: usableCalibration?.calibrationId ?? null,
           classificationPolicy: usablePolicy?.classificationPolicy ?? null,
@@ -5422,7 +6741,12 @@ export class SpeakerSegmentsResource
       }
       case "list-identity-campaigns": {
         const query: Record<string, unknown> = {};
-        if (input.profileId) query.profileId = input.profileId;
+        if (input.profileId) {
+          query.$or = [
+            { profileId: input.profileId },
+            { profileIds: input.profileId },
+          ];
+        }
         if (input.runId) query.runId = input.runId;
         return await mongo({
           action: "find",
@@ -5956,104 +7280,116 @@ export class SpeakerSegmentsResource
                 "Activation source changed before it could be claimed; preview again",
               );
             }
-            // Activate the replacement first. A short overlap is safer than a
-            // Timeline gap and makes the operation resume-safe after interruption.
-            assertActivationLock(signal, "replacement activation");
-            const activated = await mongo({
-              action: "updateMany",
-              collection: "diarizations",
-              query: {
-                runId: input.runId,
-                start: { $lt: preview.range.end },
-                end: { $gt: preview.range.start },
-              },
-              update: { $set: { lifecycleStatus: "active" } },
-            }) as any;
-            if (
-              Number(activated.matchedCount ?? 0) !==
-                preview.counts.targetSegmentsInRange
-            ) {
-              throw new Error(
-                "Activation stopped before superseding old coverage because the target segment count changed",
-              );
-            }
-            assertActivationLock(signal, "predecessor supersession");
-            if (preview.replacementRunIds.length > 0) {
-              await mongo({
+            let sourceMembershipMutated = false;
+            try {
+              // Activate the replacement first. A short overlap is safer than a
+              // Timeline gap and makes the operation resume-safe after interruption.
+              assertActivationLock(signal, "replacement activation");
+              const activated = await mongo({
                 action: "updateMany",
                 collection: "diarizations",
                 query: {
-                  runId: { $in: preview.replacementRunIds },
-                  lifecycleStatus: "active",
+                  runId: input.runId,
                   start: { $lt: preview.range.end },
                   end: { $gt: preview.range.start },
                 },
-                update: { $set: { lifecycleStatus: "superseded" } },
-              });
-            }
-            for (const oldRunId of preview.replacementRunIds) {
-              assertActivationLock(signal, `run ${oldRunId} supersession`);
-              const remainingActive = Number(
+                update: { $set: { lifecycleStatus: "active" } },
+              }) as any;
+              sourceMembershipMutated = true;
+              if (
+                Number(activated.matchedCount ?? 0) !==
+                  preview.counts.targetSegmentsInRange
+              ) {
+                throw new Error(
+                  "Activation stopped before superseding old coverage because the target segment count changed",
+                );
+              }
+              assertActivationLock(signal, "predecessor supersession");
+              if (preview.replacementRunIds.length > 0) {
                 await mongo({
-                  action: "count",
+                  action: "updateMany",
                   collection: "diarizations",
-                  query: { runId: oldRunId, lifecycleStatus: "active" },
-                }),
-              );
+                  query: {
+                    runId: { $in: preview.replacementRunIds },
+                    lifecycleStatus: "active",
+                    start: { $lt: preview.range.end },
+                    end: { $gt: preview.range.start },
+                  },
+                  update: { $set: { lifecycleStatus: "superseded" } },
+                });
+              }
+              for (const oldRunId of preview.replacementRunIds) {
+                assertActivationLock(signal, `run ${oldRunId} supersession`);
+                const remainingActive = Number(
+                  await mongo({
+                    action: "count",
+                    collection: "diarizations",
+                    query: { runId: oldRunId, lifecycleStatus: "active" },
+                  }),
+                );
+                await mongo({
+                  action: "updateOne",
+                  collection: "diarization_runs",
+                  query: { runId: oldRunId },
+                  update: remainingActive === 0
+                    ? {
+                      $set: {
+                        status: "superseded",
+                        supersededAt: now,
+                        supersededBy: input.runId,
+                        updatedAt: now,
+                      },
+                    }
+                    : {
+                      $set: { status: "active", updatedAt: now },
+                      $push: {
+                        partialSupersessions: {
+                          runId: input.runId,
+                          start: preview.range.start,
+                          end: preview.range.end,
+                          activatedAt: now,
+                        },
+                      },
+                    },
+                });
+              }
+              assertActivationLock(signal, "activation completion");
               await mongo({
                 action: "updateOne",
                 collection: "diarization_runs",
-                query: { runId: oldRunId },
-                update: remainingActive === 0
-                  ? {
-                    $set: {
-                      status: "superseded",
-                      supersededAt: now,
-                      supersededBy: input.runId,
-                      updatedAt: now,
-                    },
-                  }
-                  : {
-                    $set: { status: "active", updatedAt: now },
-                    $push: {
-                      partialSupersessions: {
-                        runId: input.runId,
-                        start: preview.range.start,
-                        end: preview.range.end,
-                        activatedAt: now,
-                      },
-                    },
-                  },
-              });
-            }
-            assertActivationLock(signal, "activation completion");
-            await mongo({
-              action: "updateOne",
-              collection: "diarization_runs",
-              query: {
-                runId: input.runId,
-                "activationProvenance.activationId": activationId,
-              },
-              update: {
-                $set: {
-                  status: "active",
-                  activatedAt: run.activatedAt ?? now,
-                  "activationProvenance.state": "completed",
-                  "activationProvenance.completedAt": now,
-                  "activationProvenance.activatedSegments": Number(
-                    activated.modifiedCount ?? activated.matchedCount ?? 0,
-                  ),
-                  updatedAt: now,
+                query: {
+                  runId: input.runId,
+                  "activationProvenance.activationId": activationId,
                 },
-              },
-            });
-            return {
-              success: true,
-              runId: input.runId,
-              activationId,
-              counts: preview.counts,
-              replacementRunIds: preview.replacementRunIds,
-            };
+                update: {
+                  $set: {
+                    status: "active",
+                    activatedAt: run.activatedAt ?? now,
+                    "activationProvenance.state": "completed",
+                    "activationProvenance.completedAt": now,
+                    "activationProvenance.activatedSegments": Number(
+                      activated.modifiedCount ?? activated.matchedCount ?? 0,
+                    ),
+                    updatedAt: now,
+                  },
+                },
+              });
+              return {
+                success: true,
+                runId: input.runId,
+                activationId,
+                counts: preview.counts,
+                replacementRunIds: preview.replacementRunIds,
+              };
+            } finally {
+              if (sourceMembershipMutated) {
+                await markIdentitySourceIndexCounting(
+                  mongo,
+                  `diarization_activation:${input.runId}`,
+                  { membershipChanged: true },
+                );
+              }
+            }
           },
         );
       }
@@ -6102,91 +7438,142 @@ export class SpeakerSegmentsResource
             const results: Array<
               { key: string; matched: number; modified: number }
             > = [];
-            for (const operation of plan.operations) {
-              assertActivationLock(signal, `repair step ${operation.key}`);
-              const result = await mongo({
-                action: operation.action,
-                collection: operation.collection,
-                query: operation.query,
-                update: operation.update,
-              }) as any;
-              const matched = Number(result.matchedCount ?? 0);
-              const modified = Number(result.modifiedCount ?? 0);
-              if (matched !== operation.expectedMatches) {
-                throw new Error(
-                  `Repair stopped at ${operation.key}: expected ${operation.expectedMatches} records, matched ${matched}. Preview again before retrying.`,
+            let sourceMembershipMutated = false;
+            try {
+              for (const operation of plan.operations) {
+                assertActivationLock(signal, `repair step ${operation.key}`);
+                const result = await mongo({
+                  action: operation.action,
+                  collection: operation.collection,
+                  query: operation.query,
+                  update: operation.update,
+                }) as any;
+                const matched = Number(result.matchedCount ?? 0);
+                const modified = Number(result.modifiedCount ?? 0);
+                if (operation.collection === "diarizations") {
+                  sourceMembershipMutated = true;
+                }
+                if (matched !== operation.expectedMatches) {
+                  throw new Error(
+                    `Repair stopped at ${operation.key}: expected ${operation.expectedMatches} records, matched ${matched}. Preview again before retrying.`,
+                  );
+                }
+                results.push({ key: operation.key, matched, modified });
+              }
+              assertActivationLock(signal, "repair completion");
+              return {
+                success: true,
+                repairId: plan.repairId,
+                runId: input.runId,
+                restoredSegments: preview.counts.recoverableSupersededSegments,
+                replacementRunIds: preview.replacementRunIds,
+                results,
+                deleted: 0,
+              };
+            } finally {
+              if (sourceMembershipMutated) {
+                await markIdentitySourceIndexCounting(
+                  mongo,
+                  `diarization_activation_repair:${input.runId}`,
+                  { membershipChanged: true },
                 );
               }
-              results.push({ key: operation.key, matched, modified });
             }
-            assertActivationLock(signal, "repair completion");
-            return {
-              success: true,
-              repairId: plan.repairId,
-              runId: input.runId,
-              restoredSegments: preview.counts.recoverableSupersededSegments,
-              replacementRunIds: preview.replacementRunIds,
-              results,
-              deleted: 0,
-            };
           },
         );
       }
       case "preview-purge": {
-        const run = await mongo({
-          action: "findOne",
-          collection: "diarization_runs",
-          query: { runId: input.runId },
-        }) as any;
-        if (!run) throw new Error("Run not found");
-        assertPurgeAllowed(run);
-        const [documents, embeddings] = await Promise.all([
-          mongo({
-            action: "count",
-            collection: "diarizations",
-            query: { runId: input.runId },
-          }),
-          mongo({
-            action: "count",
-            collection: "diarizations",
-            query: { runId: input.runId, embedding: { $exists: true } },
-          }),
-        ]);
-        return {
-          runId: input.runId,
-          documents,
-          embeddings,
-          confirmation: `PURGE ${input.runId}`,
-        };
+        return await redlock.using(
+          ["mycelia:lock:diarization-activation"],
+          120_000,
+          async (signal) => {
+            assertActivationLock(signal, "diarization purge preview");
+            const preview = await computeRunPurgePreview(mongo, input.runId);
+            assertActivationLock(
+              signal,
+              "diarization purge preview completion",
+            );
+            return {
+              ...preview,
+              preserves: ["raw audio", "transcripts", "manual annotations"],
+            };
+          },
+        );
       }
       case "purge-superseded": {
-        const run = await mongo({
-          action: "findOne",
-          collection: "diarization_runs",
-          query: { runId: input.runId },
-        }) as any;
-        if (!run) throw new Error("Run not found");
-        assertPurgeAllowed(run);
-        if (input.confirmation !== `PURGE ${input.runId}`) {
-          throw new Error("Confirmation does not match purge preview");
-        }
-        const deleted = await mongo({
-          action: "deleteMany",
-          collection: "diarizations",
-          query: { runId: input.runId, lifecycleStatus: { $ne: "active" } },
-        });
-        await mongo({
-          action: "updateOne",
-          collection: "diarization_runs",
-          query: { runId: input.runId },
-          update: {
-            $set: {
-              purgedAt: new Date(),
-              purgedDocuments: (deleted as any).deletedCount ?? 0,
-            },
+        return await redlock.using(
+          ["mycelia:lock:diarization-activation"],
+          120_000,
+          async (signal) => {
+            assertActivationLock(signal, "diarization purge validation");
+            const current = await computeRunPurgePreview(mongo, input.runId);
+            assertRunPurgeSnapshotCurrent(
+              {
+                ...current,
+                snapshotFingerprint: input.snapshotFingerprint,
+                confirmation: input.confirmation,
+              },
+              current,
+              input.confirmation,
+            );
+
+            const queries = buildRunPurgeQueries(input.runId);
+            assertActivationLock(signal, "diarization purge write");
+            const deleted = await mongo({
+              action: "deleteMany",
+              collection: "diarizations",
+              query: queries.deletable,
+            }) as any;
+            const deletedCount = Number(deleted?.deletedCount ?? 0);
+            if (deletedCount !== current.documents) {
+              throw new Error(
+                `Diarization purge removed ${deletedCount} of ${current.documents} previewed documents; preview the remaining data again`,
+              );
+            }
+            // The identity source index contains active diarizations only.
+            // Purge deletes only non-active documents, so it must not advance
+            // membershipRevision or make the active source index dirty.
+            assertActivationLock(signal, "diarization purge metadata");
+            const marked = await mongo({
+              action: "updateOne",
+              collection: "diarization_runs",
+              query: {
+                runId: input.runId,
+                status: current.status,
+                purgedAt: { $in: [null] },
+              },
+              update: {
+                $set: {
+                  purgedAt: new Date(),
+                  purgedDocuments: deletedCount,
+                  purgedEmbeddings: current.embeddings,
+                  purgeSnapshotFingerprint: current.snapshotFingerprint,
+                  purgePreserved: [
+                    "raw audio",
+                    "transcripts",
+                    "manual annotations",
+                  ],
+                },
+              },
+            }) as any;
+            if (Number(marked?.matchedCount ?? 0) !== 1) {
+              throw new Error(
+                "Diarization run changed while purge completed; inspect the run before retrying",
+              );
+            }
+            assertActivationLock(signal, "diarization purge completion");
+            return {
+              runId: input.runId,
+              deletedCount,
+              embeddings: current.embeddings,
+              preserved: [
+                "raw audio",
+                "transcripts",
+                "manual annotations",
+              ],
+            };
           },
-        });
-        return deleted;
+        );
       }
     }
   }
