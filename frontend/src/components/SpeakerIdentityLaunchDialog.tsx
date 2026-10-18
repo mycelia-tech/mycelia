@@ -13,6 +13,7 @@ import {
   shortTechnicalId,
   type SpeakerIdentityCampaignStart,
   type SpeakerIdentityPreflight,
+  speakerIdentityPreflightState,
   type SpeakerIdentityScope,
 } from "@/lib/speakerIdentityLaunch";
 import {
@@ -136,8 +137,15 @@ function SpeakerIdentityLauncher({
     enabled: enabled && Boolean(primaryId),
     staleTime: 15_000,
     retry: 1,
+    refetchInterval: (query) =>
+      (query.state.data as SpeakerIdentityPreflight | undefined)?.status ===
+          "counting"
+        ? 3_000
+        : false,
   });
   const preflight = preflightQuery.data;
+  const { sourcePreparing, noCompatibleSegments } =
+    speakerIdentityPreflightState(preflight);
   const resolved = preflight?.resolved;
   const effectivePolicy = resolved?.classificationPolicy ??
     calibrationPolicy;
@@ -154,7 +162,6 @@ function SpeakerIdentityLauncher({
     scope.end.getTime() - scope.start.getTime() >
       maxRangeHours * 3_600_000;
   const eligibleSegments = preflight?.totals.eligibleSegments ?? null;
-  const noCompatibleSegments = eligibleSegments === 0;
 
   const blockers = useMemo(() => {
     const values: string[] = [];
@@ -216,7 +223,10 @@ function SpeakerIdentityLauncher({
 
   const launch = useMutation({
     mutationFn: async () => {
-      if (!primaryId || !preflight?.canStart || noCompatibleSegments) {
+      if (
+        !primaryId || !preflight?.canStart || !preflight.preflightToken ||
+        sourcePreparing || noCompatibleSegments
+      ) {
         throw new Error(blockers[0] ?? "No compatible segments to classify");
       }
       return await api.callResource(
@@ -255,7 +265,8 @@ function SpeakerIdentityLauncher({
     ? new Date(preflight.snapshotCutoff)
     : null;
   const canStart = Boolean(
-    !loading && preflight?.canStart && !noCompatibleSegments &&
+    !loading && !sourcePreparing && preflight?.canStart &&
+      preflight.preflightToken && !noCompatibleSegments &&
       blockers.length === 0,
   );
 
@@ -283,20 +294,24 @@ function SpeakerIdentityLauncher({
           </div>
           <div className="text-right">
             <p className="text-2xl font-semibold tabular-nums">
-              {preflightQuery.isLoading
+              {sourcePreparing
+                ? preflight?.sourceIndex.scannedSegments.toLocaleString() ?? "…"
+                : preflightQuery.isLoading
                 ? "…"
                 : eligibleSegments == null
                 ? "—"
                 : eligibleSegments.toLocaleString()}
             </p>
             <p className="text-xs text-muted-foreground">
-              {noCompatibleSegments
+              {sourcePreparing
+                ? "segments scanned"
+                : noCompatibleSegments
                 ? "No compatible segments"
                 : "segments ready"}
             </p>
           </div>
         </div>
-        {preflight && (
+        {preflight && !sourcePreparing && (
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
               {preflight.partitions.length} compatible generation
@@ -310,6 +325,30 @@ function SpeakerIdentityLauncher({
           </div>
         )}
       </div>
+
+      {sourcePreparing && preflight?.sourceIndex && (
+        <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
+          <p className="font-medium">Preparing classification source</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {preflight.sourceIndex.scannedSegments.toLocaleString()}{" "}
+            segments scanned · batch{" "}
+            {preflight.sourceIndex.batchCount.toLocaleString()}. This one-time
+            index continues in the background and this page updates
+            automatically.
+          </p>
+          {preflight.sourceIndex.currentJobId && (
+            <Link
+              className="mt-2 inline-block text-xs font-medium text-primary hover:underline"
+              to={withVoiceProfile(
+                `/jobs/${preflight.sourceIndex.currentJobId}`,
+                primaryId,
+              )}
+            >
+              Open source preparation job →
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="rounded-md border bg-muted/20 p-3">
@@ -574,6 +613,8 @@ function SpeakerIdentityLauncher({
           <Play className="mr-2 h-4 w-4" />
           {launch.isPending
             ? "Starting…"
+            : sourcePreparing
+            ? "Preparing source…"
             : effectivePilot
             ? "Start provisional pilot"
             : scope.mode === "all_compatible"

@@ -3,6 +3,8 @@ import {
   buildSpeakerIdentityCampaignRequest,
   buildSpeakerIdentityPreflightRequest,
   shortTechnicalId,
+  type SpeakerIdentityPreflight,
+  speakerIdentityPreflightState,
 } from "./speakerIdentityLaunch";
 
 describe("speaker identity campaign contract", () => {
@@ -42,5 +44,48 @@ describe("speaker identity campaign contract", () => {
       "diarizat…7890",
     );
     expect(shortTechnicalId("legacy-v0")).toBe("legacy-v0");
+  });
+
+  it("keeps a counting source distinct from an empty ready source", () => {
+    const preflight = {
+      canStart: false,
+      status: "counting",
+      blockers: [],
+      snapshotCutoff: "2026-08-24T12:00:00.000Z",
+      preflightToken: null,
+      totals: {
+        eligibleSegments: 0,
+        alreadyCurrent: 0,
+        incompatibleSegments: 0,
+        estimatedBatches: 0,
+      },
+      partitions: [],
+      sourceIndex: {
+        status: "counting",
+        buildId: null,
+        revision: 0,
+        membershipRevision: 1,
+        dirtyEpoch: 1,
+        builtAt: null,
+        sourceSegments: 0,
+        scannedSegments: 40_000,
+        batchCount: 4,
+        currentJobId: "source-index-job",
+        error: null,
+      },
+    } satisfies SpeakerIdentityPreflight;
+
+    expect(speakerIdentityPreflightState(preflight)).toEqual({
+      sourcePreparing: true,
+      noCompatibleSegments: false,
+    });
+    expect(speakerIdentityPreflightState({
+      ...preflight,
+      status: "ready",
+      sourceIndex: { ...preflight.sourceIndex, status: "ready" },
+    })).toEqual({
+      sourcePreparing: false,
+      noCompatibleSegments: true,
+    });
   });
 });
