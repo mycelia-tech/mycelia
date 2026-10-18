@@ -332,9 +332,10 @@ function SpeakerIdentityLauncher({
           <p className="mt-1 text-xs text-muted-foreground">
             {preflight.sourceIndex.scannedSegments.toLocaleString()}{" "}
             segments scanned · batch{" "}
-            {preflight.sourceIndex.batchCount.toLocaleString()}. This one-time
-            index continues in the background and this page updates
-            automatically.
+            {preflight.sourceIndex.batchCount.toLocaleString()}.{" "}
+            {preflight.sourceIndex.recoveryWaiting
+              ? "Waiting for the worker to recover after a restart. The queue releases its previous lock automatically within 10 minutes; no action is needed."
+              : "This one-time index continues in the background and this page updates automatically."}
           </p>
           {preflight.sourceIndex.currentJobId && (
             <Link

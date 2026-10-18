@@ -64,7 +64,10 @@ import {
 import {
   buildDiarizationCoveragePipeline,
   buildIdentityClassificationSummaryPipeline,
+  buildManualOnlyIdentitySummary,
   buildSpeakerTimelinePipeline,
+  buildTimelineAnnotationOverlapProjectionPipeline,
+  mergeSpeakerTimelineRows,
   TIMELINE_SPEAKER_SEGMENT_PROJECTION,
 } from "./timeline-queries.ts";
 import {
@@ -82,6 +85,7 @@ import {
   identitySourcePartitionMatches,
   identitySourceSnapshotMatches,
   markIdentitySourceIndexCounting,
+  reconcileIdentitySourceIndexReservations,
   SPEAKER_IDENTITY_SOURCE_INDEX,
   SPEAKER_IDENTITY_SOURCE_INDEX_ID,
   SPEAKER_IDENTITY_SOURCE_PARTITIONS,
@@ -2676,6 +2680,7 @@ async function ensureIdentitySourceIndexQueued(
     });
   }
   if (state?.status === "ready" || state?.status === "blocked") return state;
+  state = await reconcileIdentitySourceIndexReservations(mongo, state);
   if (state?.currentJobId) return state;
   const staleQueuedAt = new Date(Date.now() - 2 * 60_000);
   if (
@@ -6431,13 +6436,31 @@ export class SpeakerSegmentsResource
           };
         }
         const profileId = String(profile._id);
-        const head = profile.embeddingSpaceId
-          ? await mongo({
-            action: "findOne",
-            collection: "identity_model_set_heads",
-            query: { embeddingSpaceId: profile.embeddingSpaceId },
-          }) as any
-          : null;
+        const [head, annotationOverlapRows] = await Promise.all([
+          profile.embeddingSpaceId
+            ? mongo({
+              action: "findOne",
+              collection: "identity_model_set_heads",
+              query: { embeddingSpaceId: profile.embeddingSpaceId },
+            })
+            : Promise.resolve(null),
+          mongo({
+            action: "aggregate",
+            collection: "speaker_annotations",
+            pipeline: buildTimelineAnnotationOverlapProjectionPipeline({
+              start: input.start,
+              end: input.end,
+              targetProfileId: new ObjectId(profileId),
+            }),
+            options: { maxTimeMS: 5_000 },
+          }),
+        ]) as [any, any[]];
+        const annotationOverlapSelectedSegmentIds = annotationOverlapRows
+          .filter((row) => String(row.profileId ?? "") === profileId)
+          .map((row) => row._id);
+        const annotationOverlapOtherSegmentIds = annotationOverlapRows
+          .filter((row) => String(row.profileId ?? "") !== profileId)
+          .map((row) => row._id);
         const activeModelSet = head?.activeModelSetId
           ? await mongo({
             action: "findOne",
@@ -6462,26 +6485,53 @@ export class SpeakerSegmentsResource
           : selectedProfileStale
           ? "The selected voice changed after this identity model set was built; automatic results are hidden until a replacement activates"
           : null;
-        const rows = await mongo({
-          action: "aggregate",
-          collection: "diarizations",
-          pipeline: buildSpeakerTimelinePipeline({
-            start: input.start,
-            end: input.end,
-            detail: input.detail,
-            bucketMs: input.bucketMs,
-            targetProfileId: profileId,
-            modelSetId: activeModelSet?.modelSetId ?? null,
-            targetProfileIncluded: Boolean(
-              selectedProfileSnapshot && !selectedProfileStale,
-            ),
-            states: input.filters.states,
-            validities: input.filters.validities,
-            inclusion: input.filters.inclusion,
-            sources: input.filters.sources,
+        const timelinePipelineInput = {
+          start: input.start,
+          end: input.end,
+          detail: input.detail,
+          bucketMs: input.bucketMs,
+          targetProfileId: profileId,
+          modelSetId: activeModelSet?.modelSetId ?? null,
+          targetProfileIncluded: Boolean(
+            selectedProfileSnapshot && !selectedProfileStale,
+          ),
+          annotationOverlapSelectedSegmentIds,
+          annotationOverlapOtherSegmentIds,
+          states: input.filters.states,
+          validities: input.filters.validities,
+          inclusion: input.filters.inclusion,
+          sources: input.filters.sources,
+        } as const;
+        const [startsInRange, overlapsStart] = await Promise.all([
+          mongo({
+            action: "aggregate",
+            collection: "diarizations",
+            pipeline: buildSpeakerTimelinePipeline({
+              ...timelinePipelineInput,
+              rangeBranch: "starts_in_range",
+            }),
+            options: {
+              hint: "speaker_timeline_active_range",
+              maxTimeMS: 10_000,
+            },
           }),
-          options: { maxTimeMS: 10_000 },
-        }) as any[];
+          mongo({
+            action: "aggregate",
+            collection: "diarizations",
+            pipeline: buildSpeakerTimelinePipeline({
+              ...timelinePipelineInput,
+              rangeBranch: "overlaps_start",
+            }),
+            options: {
+              hint: "speaker_timeline_active_end",
+              maxTimeMS: 10_000,
+            },
+          }),
+        ]) as [any[], any[]];
+        const rows = mergeSpeakerTimelineRows(input.detail, [
+          startsInRange,
+          overlapsStart,
+        ]);
         if (input.detail === "intervals") {
           const truncated = rows.length > 10_000;
           const intervals = rows.slice(0, 10_000).map((row) => ({
@@ -6669,18 +6719,62 @@ export class SpeakerSegmentsResource
             ),
         );
         const asOf = new Date();
-        const [summaryRows, provisionalCounts] = await Promise.all([
-          mongo({
+        const annotationOverlapRows = await mongo({
+          action: "aggregate",
+          collection: "speaker_annotations",
+          pipeline: buildTimelineAnnotationOverlapProjectionPipeline({
+            start: new Date(0),
+            end: asOf,
+            targetProfileId: profileObjectId,
+          }),
+          options: { maxTimeMS: 5_000 },
+        }) as any[];
+        const annotationOverlapSelectedSegmentIds = annotationOverlapRows
+          .filter((row) => String(row.profileId ?? "") === input.profileId)
+          .map((row) => row._id);
+        const annotationOverlapOtherSegmentIds = annotationOverlapRows
+          .filter((row) => String(row.profileId ?? "") !== input.profileId)
+          .map((row) => row._id);
+        const summaryPromise = activeModelSet && targetProfileIncluded
+          ? mongo({
             action: "aggregate",
             collection: "diarizations",
             pipeline: buildIdentityClassificationSummaryPipeline({
               asOf,
               targetProfileId: input.profileId,
-              modelSetId: activeModelSet?.modelSetId ?? null,
-              targetProfileIncluded,
+              modelSetId: activeModelSet.modelSetId,
+              targetProfileIncluded: true,
+              annotationOverlapSelectedSegmentIds,
+              annotationOverlapOtherSegmentIds,
             }),
-            options: { maxTimeMS: 20_000 },
-          }) as Promise<any[]>,
+            options: {
+              maxTimeMS: 20_000,
+              hint: "speaker_timeline_active_range",
+            },
+          }) as Promise<any[]>
+          : (async () => {
+            const totalSegments = Number(
+              await mongo({
+                action: "count",
+                collection: "diarizations",
+                query: {
+                  lifecycleStatus: "active",
+                  start: { $gte: new Date(0), $lt: asOf },
+                },
+                options: {
+                  maxTimeMS: 10_000,
+                  hint: "speaker_timeline_active_range",
+                },
+              }),
+            );
+            return [buildManualOnlyIdentitySummary(
+              totalSegments,
+              annotationOverlapSelectedSegmentIds,
+              annotationOverlapOtherSegmentIds,
+            )];
+          })();
+        const [summaryRows, provisionalCounts] = await Promise.all([
+          summaryPromise,
           usablePilotCalibration && !activeModelSet
             ? await mongo({
               action: "aggregate",

@@ -72,6 +72,65 @@ export function buildDiarizationCoveragePipeline(
   ];
 }
 
+/** Resolve relevant annotations onto current active segment boundaries.
+ * Starting from annotations keeps the original/time comparison proportional
+ * to manual labels, not the millions of diarization segments rendered by
+ * Timeline. The latest annotation wins for every projected active segment.
+ */
+export function buildTimelineAnnotationOverlapProjectionPipeline(input: {
+  start: Date;
+  end: Date;
+  targetProfileId: unknown;
+}): Record<string, unknown>[] {
+  return [
+    {
+      $match: {
+        start: { $lt: input.end },
+        end: { $gt: input.start },
+        $or: [
+          { profileId: { $ne: null } },
+          { excludedProfileIds: input.targetProfileId },
+        ],
+      },
+    },
+    {
+      $lookup: {
+        from: "diarizations",
+        let: {
+          originalId: "$originalId",
+          annotationStart: "$start",
+          annotationEnd: "$end",
+        },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$lifecycleStatus", "active"] },
+                  { $eq: ["$original_id", "$$originalId"] },
+                  { $lt: ["$start", "$$annotationEnd"] },
+                  { $gt: ["$end", "$$annotationStart"] },
+                ],
+              },
+            },
+          },
+          { $project: { _id: 1 } },
+        ],
+        as: "_projectedSegments",
+      },
+    },
+    { $unwind: "$_projectedSegments" },
+    { $sort: { updatedAt: -1, createdAt: -1 } },
+    {
+      $group: {
+        _id: "$_projectedSegments._id",
+        profileId: { $first: "$profileId" },
+        excludedProfileIds: { $first: "$excludedProfileIds" },
+      },
+    },
+  ];
+}
+
 export function buildSpeakerTimelinePipeline(input: {
   start: Date;
   end: Date;
@@ -92,6 +151,9 @@ export function buildSpeakerTimelinePipeline(input: {
   validities?: Array<"verified" | "provisional" | "manual">;
   inclusion?: "selected_only" | "includes_candidate";
   sources?: Array<"manual" | "automatic">;
+  annotationOverlapSelectedSegmentIds?: unknown[];
+  annotationOverlapOtherSegmentIds?: unknown[];
+  rangeBranch?: "starts_in_range" | "overlaps_start";
 }): Record<string, unknown>[] {
   if (input.detail === "buckets" && !input.bucketMs) {
     throw new Error("Far Timeline summary requires bucketMs");
@@ -100,6 +162,19 @@ export function buildSpeakerTimelinePipeline(input: {
   const automaticEnabled = Boolean(
     input.modelSetId && input.targetProfileIncluded,
   );
+  const overlapSelectedSegmentIds = input.annotationOverlapSelectedSegmentIds ??
+    [];
+  const overlapOtherSegmentIds = input.annotationOverlapOtherSegmentIds ?? [];
+  const rangeMatch = input.rangeBranch === "overlaps_start"
+    ? {
+      lifecycleStatus: "active",
+      start: { $lt: input.start },
+      end: { $gt: input.start },
+    }
+    : {
+      lifecycleStatus: "active",
+      start: { $gte: input.start, $lt: input.end },
+    };
   const targetIdList = (field: string) => ({
     $map: {
       input: { $ifNull: [field, []] },
@@ -116,113 +191,67 @@ export function buildSpeakerTimelinePipeline(input: {
   };
   const pipeline: Record<string, unknown>[] = [
     {
-      $match: {
-        lifecycleStatus: "active",
-        $or: [
-          {
-            start: { $gte: input.start, $lt: input.end },
-          },
-          {
-            start: { $lt: input.start },
-            end: { $gt: input.start },
-          },
-        ],
-      },
+      $match: rangeMatch,
     },
     { $project: TIMELINE_SPEAKER_SEGMENT_PROJECTION },
-    {
-      $lookup: {
-        from: "speaker_annotations",
-        let: {
-          segmentId: "$_id",
-          originalId: { $ifNull: ["$original_id", "$original"] },
-          segmentStart: "$start",
-          segmentEnd: "$end",
-        },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $or: [
-                  { $eq: ["$segmentId", "$$segmentId"] },
-                  {
-                    $and: [
-                      { $eq: ["$originalId", "$$originalId"] },
-                      { $lt: ["$start", "$$segmentEnd"] },
-                      { $gt: ["$end", "$$segmentStart"] },
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-          {
-            // A negative label for an unrelated profile must not hide an
-            // older label for the selected profile. Any positive assignment
-            // remains relevant because assigning the segment to another
-            // speaker is an explicit negative result for this profile.
-            $match: {
-              $expr: {
-                $or: [
-                  {
-                    $ne: [{ $ifNull: ["$profileId", null] }, null],
-                  },
-                  {
-                    $in: [target, {
-                      $map: {
-                        input: { $ifNull: ["$excludedProfileIds", []] },
-                        as: "profileId",
-                        in: { $toString: "$$profileId" },
-                      },
-                    }],
-                  },
-                ],
-              },
-            },
-          },
-          { $sort: { updatedAt: -1, createdAt: -1 } },
-          { $limit: 1 },
-          { $project: { profileId: 1, excludedProfileIds: 1 } },
-        ],
-        as: "_manualAnnotations",
-      },
-    },
-    {
-      $lookup: {
-        from: "speaker_identity_projections",
-        let: { segmentId: "$_id" },
-        pipeline: [
-          {
-            $match: {
-              $expr: input.modelSetId
-                ? {
+    ...(automaticEnabled
+      ? [{
+        $lookup: {
+          from: "speaker_identity_projections",
+          let: { segmentId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
                   $and: [
                     { $eq: ["$segmentId", "$$segmentId"] },
                     { $eq: ["$modelSetId", input.modelSetId] },
                   ],
-                }
-                : { $eq: [1, 0] },
+                },
+              },
             },
-          },
-          { $limit: 1 },
-          {
-            $project: {
-              resolution: 1,
-              profileId: 1,
-              candidates: 1,
-              complete: 1,
-              source: 1,
-              topTwoMargin: 1,
+            { $limit: 1 },
+            {
+              $project: {
+                resolution: 1,
+                profileId: 1,
+                candidates: 1,
+                complete: 1,
+                source: 1,
+                topTwoMargin: 1,
+              },
             },
-          },
-        ],
-        as: "_identityProjections",
-      },
-    },
+          ],
+          as: "_identityProjections",
+        },
+      }]
+      : []),
     {
       $set: {
-        _manual: { $first: "$_manualAnnotations" },
-        _projection: { $first: "$_identityProjections" },
+        _manual: {
+          $switch: {
+            branches: [
+              {
+                case: { $in: ["$_id", overlapSelectedSegmentIds] },
+                then: {
+                  profileId: input.targetProfileId,
+                  excludedProfileIds: [],
+                },
+              },
+              {
+                case: { $in: ["$_id", overlapOtherSegmentIds] },
+                then: {
+                  profileId: null,
+                  excludedProfileIds: [input.targetProfileId],
+                },
+              },
+            ],
+            default: null,
+          },
+        },
+        _projection: automaticEnabled
+          ? { $first: "$_identityProjections" }
+          : null,
       },
     },
     {
@@ -564,11 +593,57 @@ export function buildSpeakerTimelinePipeline(input: {
   return pipeline;
 }
 
+export function mergeSpeakerTimelineRows(
+  detail: "intervals" | "buckets",
+  rowGroups: any[][],
+): any[] {
+  if (detail === "intervals") {
+    return rowGroups.flat().sort((left, right) => {
+      const startDelta = new Date(left.start).getTime() -
+        new Date(right.start).getTime();
+      return startDelta || String(left._id).localeCompare(String(right._id));
+    });
+  }
+
+  const byBucket = new Map<string, any>();
+  for (const row of rowGroups.flat()) {
+    const key = String(row._id);
+    const current = byBucket.get(key) ?? { _id: row._id };
+    for (const [field, value] of Object.entries(row)) {
+      if (field === "_id" || typeof value !== "number") continue;
+      current[field] = Number(current[field] ?? 0) + value;
+    }
+    byBucket.set(key, current);
+  }
+  return [...byBucket.values()].sort((left, right) =>
+    Number(left._id) - Number(right._id)
+  );
+}
+
+export function buildManualOnlyIdentitySummary(
+  totalSegments: number,
+  selectedSegmentIds: unknown[],
+  otherSegmentIds: unknown[],
+) {
+  const identified = new Set(selectedSegmentIds.map(String)).size;
+  const unknown = new Set(otherSegmentIds.map(String)).size;
+  return {
+    identified,
+    unknown,
+    uncertain: 0,
+    unclassified: Math.max(0, totalSegments - identified - unknown),
+    verified: 0,
+    manual: identified + unknown,
+  };
+}
+
 export function buildIdentityClassificationSummaryPipeline(input: {
   asOf: Date;
   targetProfileId: unknown;
   modelSetId?: string | null;
   targetProfileIncluded?: boolean;
+  annotationOverlapSelectedSegmentIds?: unknown[];
+  annotationOverlapOtherSegmentIds?: unknown[];
 }): Record<string, unknown>[] {
   const pipeline = buildSpeakerTimelinePipeline({
     start: new Date(0),
@@ -577,6 +652,9 @@ export function buildIdentityClassificationSummaryPipeline(input: {
     targetProfileId: input.targetProfileId,
     modelSetId: input.modelSetId,
     targetProfileIncluded: input.targetProfileIncluded,
+    annotationOverlapSelectedSegmentIds:
+      input.annotationOverlapSelectedSegmentIds,
+    annotationOverlapOtherSegmentIds: input.annotationOverlapOtherSegmentIds,
   });
   // The shared projection stages already enforce active-segment membership,
   // selected-profile semantics, and manual precedence. Replace the UI page

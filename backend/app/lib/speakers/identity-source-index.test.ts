@@ -4,8 +4,10 @@ import {
   identityPublishedSourceSnapshotMatches,
   identitySourceBuildOwnsEpoch,
   identitySourceIndexSnapshot,
+  identitySourceIndexView,
   identitySourcePartitionMatches,
   identitySourceSnapshotMatches,
+  planIdentitySourceIndexReservationRecovery,
   summarizeIdentitySourceBatch,
 } from "./identity-source-index.ts";
 
@@ -117,4 +119,96 @@ Deno.test("scoped preflight validates the immutable indexed partition", () => {
     sourceRevision: 3,
     maxSegmentId: new ObjectId("6a8d00000000000000000010"),
   })).toBe(true);
+});
+
+Deno.test("completed source-index batch with more work no longer fences restart recovery", () => {
+  const jobId = "6ad4f25cbe01f4d421bf1fbb";
+  const plan = planIdentitySourceIndexReservationRecovery(
+    {
+      status: "counting",
+      currentJobId: jobId,
+    },
+    new Map([[jobId, {
+      _id: new ObjectId(jobId),
+      state: "completed",
+      result: { hasMore: true, processed: 10_000 },
+    }]]),
+  );
+
+  expect(plan).toEqual({
+    clearCurrentJobId: true,
+    clearQueuedJobId: false,
+    adoptJobId: null,
+    adoptAs: null,
+    hasLiveReservation: false,
+  });
+});
+
+Deno.test("active source-index job keeps its reservation and prevents duplicates", () => {
+  const jobId = "6ad4f25cbe01f4d421bf1fbc";
+  const plan = planIdentitySourceIndexReservationRecovery(
+    {
+      status: "counting",
+      currentJobId: jobId,
+    },
+    new Map([[jobId, {
+      _id: new ObjectId(jobId),
+      state: "active",
+    }]]),
+  );
+
+  expect(plan).toEqual({
+    clearCurrentJobId: false,
+    clearQueuedJobId: false,
+    adoptJobId: null,
+    adoptAs: null,
+    hasLiveReservation: true,
+  });
+});
+
+Deno.test("unlinked waiting continuation is adopted instead of duplicated", () => {
+  const completedJobId = "6ad4f25cbe01f4d421bf1fbd";
+  const continuationJobId = "6ad4f25cbe01f4d421bf1fbe";
+  const plan = planIdentitySourceIndexReservationRecovery(
+    {
+      status: "counting",
+      currentJobId: completedJobId,
+    },
+    new Map([
+      [completedJobId, {
+        _id: new ObjectId(completedJobId),
+        type: "speakerIdentitySourceIndex",
+        state: "completed",
+        result: { hasMore: true, processed: 10_000 },
+      }],
+      [continuationJobId, {
+        _id: new ObjectId(continuationJobId),
+        type: "speakerIdentitySourceIndex",
+        state: "waiting",
+      }],
+    ]),
+  );
+
+  expect(plan).toEqual({
+    clearCurrentJobId: true,
+    clearQueuedJobId: false,
+    adoptJobId: continuationJobId,
+    adoptAs: "queued",
+    hasLiveReservation: true,
+  });
+});
+
+Deno.test("source index view exposes the bounded worker recovery wait", () => {
+  const view = identitySourceIndexView({
+    status: "counting",
+    currentJobId: "6ad4f25cbe01f4d421bf1fbb",
+    activeBuild: {
+      scannedSegments: 560_000,
+      batchCount: 56,
+      lastBatchAt: new Date("2026-10-18T16:35:42Z"),
+    },
+  }, new Date("2026-10-18T16:38:00Z"));
+
+  expect(view.recoveryWaiting).toBe(true);
+  expect(view.lastProgressAt).toEqual(new Date("2026-10-18T16:35:42Z"));
 });

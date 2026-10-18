@@ -10,6 +10,7 @@ import {
   identitySourceBatchKey,
   identitySourceBuildOwnsEpoch,
   markIdentitySourceIndexCounting,
+  reconcileIdentitySourceIndexReservations,
   SPEAKER_IDENTITY_SOURCE_BATCHES,
   SPEAKER_IDENTITY_SOURCE_INDEX,
   SPEAKER_IDENTITY_SOURCE_INDEX_ID,
@@ -520,6 +521,7 @@ const capability: JobCapability = {
   })),
   policies: [
     { resource: "db/diarizations", action: "read", effect: "allow" },
+    { resource: "db/jobs", action: "read", effect: "allow" },
     {
       resource: "db/speaker_identity_source_index",
       action: "*",
@@ -549,6 +551,7 @@ const capability: JobCapability = {
           status: 1,
           currentJobId: 1,
           queuedJobId: 1,
+          queuedAt: 1,
           publishedMaxSegmentId: 1,
         },
       },
@@ -556,7 +559,11 @@ const capability: JobCapability = {
     if (!state) return 1;
     if (state.status === "blocked") return false;
     if (state.status === "counting") {
-      return state.currentJobId || state.queuedJobId ? false : 1;
+      const reconciled = await reconcileIdentitySourceIndexReservations(
+        mongo,
+        state,
+      );
+      return reconciled?.currentJobId || reconciled?.queuedJobId ? false : 1;
     }
     const rows = await mongo({
       action: "find",

@@ -71,6 +71,8 @@ describe("speaker identity campaign contract", () => {
         scannedSegments: 40_000,
         batchCount: 4,
         currentJobId: "source-index-job",
+        recoveryWaiting: false,
+        lastProgressAt: "2026-08-24T11:59:00.000Z",
         error: null,
       },
     } satisfies SpeakerIdentityPreflight;

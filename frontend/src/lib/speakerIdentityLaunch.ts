@@ -24,6 +24,8 @@ export type SpeakerIdentitySourceIndex = {
   scannedSegments: number;
   batchCount: number;
   currentJobId: string | null;
+  recoveryWaiting: boolean;
+  lastProgressAt: Date | string | null;
   error: string | null;
 };
 
