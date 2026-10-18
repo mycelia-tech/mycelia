@@ -217,10 +217,11 @@ your own words.
   counts available through explicit calculate buttons instead of dashboard
   polling.
 - Pipeline ordering and progress tracking.
-- Sky-first Voice Identity workflow with rolling review, independent calibration
-  checks, resumable all-history classification campaigns, safe empty-generation
-  repair preview, and current/manual speaker projection on Timeline. See the
-  [Voice Identity runbook](docs/VOICE_IDENTITY_RUNBOOK.md).
+- Sky-first Voice Identity workflow with a shared selected-voice context,
+  rolling review, independent per-profile calibration, resumable all-history
+  model-set campaigns, ambiguity-safe multi-profile evaluations, safe
+  empty-generation repair preview, and selected-voice highlighting on Timeline
+  and Transcript. See the [Voice Identity runbook](docs/VOICE_IDENTITY_RUNBOOK.md).
 - Configurable worker defaults and prompt templates.
 - Failed-job bulk retry, obsolete-failure dismissal, VAD queue recovery, and
   historical conversation repair:

@@ -1140,9 +1140,11 @@ For diarization, voice enrollment, speaker recognition, and historical backfill:
 2. Run diarization locally on CPU or remotely on an NVIDIA GPU.
 3. Configure and verify the route in Settings → Diarization.
 4. Complete missing diarization coverage.
-5. In Settings → Voice Identity, build Sky from clean, single-speaker profile
-   samples. Use ordinary review labels for Timeline/calibration; add a clip to
-   the profile only when it represents a missing recording condition.
+5. In Settings → Voice Identity, choose **Working with voice** (the selection is
+   preserved as `profileId` across Review, Jobs, Operations, Timeline, and
+   Transcript), then build Sky from clean, single-speaker profile samples. Use
+   ordinary review labels for Timeline/calibration; add a clip to the profile
+   only when it represents a missing recording condition.
 6. Press **Start recommended review** and label enough independent recordings
    for Learn and Check. Timeline-derived profile samples are excluded from both
    sets; legacy Timeline samples without recording provenance must be re-added.
@@ -1156,8 +1158,10 @@ For diarization, voice enrollment, speaker recognition, and historical backfill:
 9. If Voice Identity reports empty active coverage, open **Operations &
    generations**, inspect the non-destructive repair preview, and confirm repair
    separately before classification. Never purge as part of repair.
-10. Open Timeline and use the Speaker identity track/filter after the campaign
-    reports zero real remaining segments.
+10. After the campaign reports zero real remaining segments, activate the
+    **Ready** identity model set with **Show results on Timeline**. Open Timeline
+    with **Selected voice only**. Multiple matching profiles remain
+    `ambiguous`; the UI never chooses a winner automatically.
 
 See [the architecture guide](docs/SPEAKER_IDENTIFICATION.md) and
 [operator runbook](docs/VOICE_IDENTITY_RUNBOOK.md) for exact commands, UI
