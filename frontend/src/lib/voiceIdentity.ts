@@ -4,9 +4,15 @@ export type VoiceProfile = {
   _id: unknown;
   name: string;
   is_primary?: boolean;
+  color?: string;
   revision?: number;
   embeddingSpaceId?: string;
   sample_count?: number;
+  total_duration?: number;
+  enrollmentStatus?: string;
+  lifecycleStatus?: string;
+  status?: string;
+  archivedAt?: Date | string;
 };
 
 export type UsableVoiceCalibration = {
@@ -75,6 +81,9 @@ export type VoiceIdentityStatus = {
     pendingSegments?: number | null;
     matched?: number;
     rejected?: number;
+    identified?: number;
+    ambiguous?: number;
+    unknown?: number;
     uncertain?: number;
     incompatibleSkipped?: number;
     etaSeconds?: number | null;

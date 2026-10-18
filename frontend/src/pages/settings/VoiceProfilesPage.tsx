@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiClient, callResource } from "@/lib/api";
 import { convertBlobToWav } from "@/lib/audioUtils";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,11 @@ import {
 } from "@/lib/voiceProfiles";
 import { ServiceHealthBanner } from "@/components/ServiceHealthBanner";
 import { voiceIdentityKeys } from "@/lib/voiceIdentity";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
+import { ArchiveVoiceProfileDialog } from "@/components/voice/ArchiveVoiceProfileDialog";
+import { buildPendingVoiceProfileRebuildUpdate } from "@/lib/voiceProfileRebuild";
 
 const VOICE_SAMPLES_BUCKET = "voice_samples";
 
@@ -110,6 +115,8 @@ interface SpeakerProfile {
   updated_at: string;
   enrollmentStatus?: string;
   seed_segment_count?: number;
+  lifecycleStatus?: "active" | "archived";
+  archivedAt?: string;
 }
 
 interface VoiceSample {
@@ -138,6 +145,9 @@ interface EnrollmentJobData {
 
 const VoiceProfilesPage = () => {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const createRequested = searchParams.get("create") === "1";
+  const voiceSelection = useSelectedVoiceProfile();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [sampleTargetProfile, setSampleTargetProfile] = useState<
     SpeakerProfile | null
@@ -174,7 +184,7 @@ const VoiceProfilesPage = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useJobsListener({
@@ -277,10 +287,11 @@ const VoiceProfilesPage = () => {
         action: "create-profile",
         name,
       }),
-    onSuccess: () => {
+    onSuccess: (profile: SpeakerProfile) => {
+      const createdProfileId = getProfileId(profile);
       toast.success("Speaker profile created", {
         description:
-          "It can receive manual labels now. Add a clean voice sample before automatic matching.",
+          "This voice is selected now. Add a clean sample before automatic matching.",
       });
       void queryClient.invalidateQueries({
         queryKey: voiceIdentityKeys.profiles,
@@ -288,8 +299,16 @@ const VoiceProfilesPage = () => {
       void queryClient.invalidateQueries({
         queryKey: ["speaker_profiles", "timeline-sample"],
       });
-      setIsDialogOpen(false);
       resetForm();
+      voiceSelection.selectProfile(createdProfileId);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("create");
+      nextParams.set("profileId", createdProfileId);
+      setSearchParams(nextParams, { replace: true });
+      setSampleTargetProfile(profile);
+      setNewProfileName(profile.name);
+      setIsPrimary(Boolean(profile.is_primary));
+      setIsDialogOpen(true);
     },
     onError: (error: Error) => {
       toast.error("Could not create speaker profile", {
@@ -371,26 +390,11 @@ const VoiceProfilesPage = () => {
     profileId: string,
     sampleCount: number,
   ) => {
-    const profile = await callResource("mongo", {
-      action: "findOne",
-      collection: "speaker_profiles",
-      query: { _id: { $oid: profileId } },
-      options: { projection: { revision: 1 } },
-    }) as { revision?: number } | null;
-    if (!profile) throw new Error("Voice profile no longer exists");
     await callResource("mongo", {
       action: "updateOne",
       collection: "speaker_profiles",
       query: { _id: { $oid: profileId } },
-      update: {
-        $set: {
-          revision: (profile.revision ?? 1) + 1,
-          sample_count: sampleCount,
-          enrollmentStatus: "pending_rebuild",
-          updated_at: new Date().toISOString(),
-        },
-        $unset: { embedding: "" },
-      },
+      update: buildPendingVoiceProfileRebuildUpdate(sampleCount),
     });
     return await callResource("jobs", {
       action: "enqueue",
@@ -482,39 +486,24 @@ const VoiceProfilesPage = () => {
     },
   });
 
-  // Delete profile mutation
-  const deleteMutation = useMutation({
-    mutationFn: async (profileId: string) => {
-      await callResource("mongo", {
-        action: "updateMany",
-        collection: "diarizations",
-        query: { "matched_speaker.profile_id": { $oid: profileId } },
-        update: { $unset: { matched_speaker: "" } },
-      });
-      await callResource("mongo", {
-        action: "updateMany",
-        collection: `${VOICE_SAMPLES_BUCKET}.files`,
-        query: { "metadata.profile_id": profileId },
-        update: { $unset: { "metadata.profile_id": "" } },
-      });
-      await callResource("mongo", {
-        action: "deleteOne",
-        collection: "speaker_profiles",
-        query: { _id: { $oid: profileId } },
-      });
-    },
+  const restoreProfileMutation = useMutation({
+    mutationFn: async (profileId: string) =>
+      await callResource("speaker-segments", {
+        action: "restore-profile",
+        profileId,
+      }),
     onSuccess: () => {
-      toast.success("Profile deleted", {
-        description:
-          "Existing segment assignments were cleared and voice samples were detached.",
+      toast.success("Voice profile restored", {
+        description: "It is available for review and classification again.",
       });
-      queryClient.invalidateQueries({
+      void queryClient.invalidateQueries({
         queryKey: voiceIdentityKeys.profiles,
       });
-      queryClient.invalidateQueries({ queryKey: ["voice_samples"] });
     },
     onError: (error: Error) => {
-      toast.error("Delete failed", { description: error.message });
+      toast.error("Could not restore voice profile", {
+        description: error.message,
+      });
     },
   });
 
@@ -801,6 +790,13 @@ const VoiceProfilesPage = () => {
     setIsDialogOpen(true);
   };
 
+  useEffect(() => {
+    if (createRequested) {
+      resetForm();
+      setIsDialogOpen(true);
+    }
+  }, [createRequested]);
+
   const openEditDialog = (profile: SpeakerProfile) => {
     setEditingProfile(profile);
     setEditName(profile.name);
@@ -837,6 +833,7 @@ const VoiceProfilesPage = () => {
 
   return (
     <div className="space-y-6">
+      <VoiceProfileContextBar selection={voiceSelection} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-semibold">Voice Profiles</h2>
@@ -1089,10 +1086,24 @@ const VoiceProfilesPage = () => {
           </div>
           <div className="flex gap-2">
             <Button asChild size="sm" variant="outline">
-              <Link to="/settings/voice-identity">Review segments</Link>
+              <Link
+                to={withVoiceProfile(
+                  "/settings/voice-identity",
+                  voiceSelection.selectedProfileId,
+                )}
+              >
+                Review segments
+              </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
-              <Link to="/timeline">Choose Timeline audio</Link>
+              <Link
+                to={withVoiceProfile(
+                  "/timeline",
+                  voiceSelection.selectedProfileId,
+                )}
+              >
+                Choose Timeline audio
+              </Link>
             </Button>
           </div>
         </CardContent>
@@ -1125,6 +1136,8 @@ const VoiceProfilesPage = () => {
           <div className="grid gap-4">
             {profiles?.map((profile) => {
               const profileId = getProfileId(profile);
+              const isArchived = profile.lifecycleStatus === "archived" ||
+                Boolean(profile.archivedAt);
               const profileSamples = getProfileSamples(profileId);
               const isExpanded = expandedProfiles.has(profileId);
               const sampleSummary = summarizeVoiceSamples(
@@ -1136,7 +1149,12 @@ const VoiceProfilesPage = () => {
               );
 
               return (
-                <Card key={profileId}>
+                <Card
+                  key={profileId}
+                  className={voiceSelection.selectedProfileId === profileId
+                    ? "border-primary/60 ring-1 ring-primary/20"
+                    : undefined}
+                >
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -1152,6 +1170,9 @@ const VoiceProfilesPage = () => {
                             {profile.name}
                             {profile.is_primary && (
                               <Badge variant="secondary">My Voice</Badge>
+                            )}
+                            {isArchived && (
+                              <Badge variant="outline">Archived</Badge>
                             )}
                             {profile.enrollmentStatus === "needs_samples" && (
                               <Badge variant="outline">
@@ -1173,15 +1194,49 @@ const VoiceProfilesPage = () => {
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openAddSampleDialog(profile)}
-                        >
-                          <Plus className="mr-1 h-4 w-4" />
-                          Add sample
-                        </Button>
-                        {profileSamples.length > 0 && (
+                        {isArchived
+                          ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={restoreProfileMutation.isPending}
+                              onClick={() =>
+                                restoreProfileMutation.mutate(profileId)}
+                            >
+                              {restoreProfileMutation.isPending &&
+                                  restoreProfileMutation.variables === profileId
+                                ? (
+                                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                                )
+                                : <RotateCcw className="mr-1 h-4 w-4" />}
+                              Restore
+                            </Button>
+                          )
+                          : (
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                to={withVoiceProfile(
+                                  "/settings/voice-identity",
+                                  profileId,
+                                )}
+                                onClick={() =>
+                                  voiceSelection.selectProfile(profileId)}
+                              >
+                                Work with this voice
+                              </Link>
+                            </Button>
+                          )}
+                        {!isArchived && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openAddSampleDialog(profile)}
+                          >
+                            <Plus className="mr-1 h-4 w-4" />
+                            Add sample
+                          </Button>
+                        )}
+                        {!isArchived && profileSamples.length > 0 && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -1199,44 +1254,35 @@ const VoiceProfilesPage = () => {
                             Rebuild
                           </Button>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openEditDialog(profile)}
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <Trash2 className="w-4 h-4" />
+                        {!isArchived && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditDialog(profile)}
+                            >
+                              <Pencil className="w-4 h-4" />
                             </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Delete Profile</DialogTitle>
-                              <DialogDescription>
-                                Delete "{profile.name}"? Existing segment
-                                assignments will be cleared and its saved voice
-                                samples will become unattached.
-                              </DialogDescription>
-                            </DialogHeader>
-                            <DialogFooter>
-                              <DialogClose asChild>
-                                <Button variant="outline">Cancel</Button>
-                              </DialogClose>
-                              <DialogClose asChild>
-                                <Button
-                                  variant="destructive"
-                                  onClick={() =>
-                                    deleteMutation.mutate(profileId)}
-                                >
-                                  Delete
-                                </Button>
-                              </DialogClose>
-                            </DialogFooter>
-                          </DialogContent>
-                        </Dialog>
+                            <ArchiveVoiceProfileDialog
+                              profile={{
+                                id: profileId,
+                                name: profile.name,
+                                isPrimary: profile.is_primary,
+                              }}
+                              replacementProfiles={(profiles ?? [])
+                                .filter((candidate) => {
+                                  const candidateId = getProfileId(candidate);
+                                  return candidateId !== profileId &&
+                                    candidate.lifecycleStatus !== "archived" &&
+                                    !candidate.archivedAt;
+                                })
+                                .map((candidate) => ({
+                                  id: getProfileId(candidate),
+                                  name: candidate.name,
+                                }))}
+                            />
+                          </>
+                        )}
                       </div>
                     </div>
                   </CardHeader>
@@ -1477,7 +1523,8 @@ const VoiceProfilesPage = () => {
             <DialogDescription>
               This sample is attached to a voice profile. Deleting it will
               update the profile's sample count. If this is the only sample, the
-              profile will be deleted.
+              profile and all of its labels/history are preserved, but it will
+              require a new clean sample before it can be rebuilt.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1521,7 +1568,10 @@ const VoiceProfilesPage = () => {
                 <SelectValue placeholder="Select a profile" />
               </SelectTrigger>
               <SelectContent>
-                {profiles?.map((profile) => (
+                {profiles?.filter((profile) =>
+                  profile.lifecycleStatus !== "archived" &&
+                  !profile.archivedAt
+                ).map((profile) => (
                   <SelectItem
                     key={getProfileId(profile)}
                     value={getProfileId(profile)}

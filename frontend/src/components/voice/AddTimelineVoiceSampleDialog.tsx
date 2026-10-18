@@ -54,6 +54,8 @@ interface AddTimelineVoiceSampleDialogProps {
   endDate: Date;
   originalId?: string;
   source?: "timeline_selection" | "review_selection";
+  initialProfileId?: string | null;
+  onProfileSelected?: (profileId: string) => void;
 }
 
 async function blobToBase64(blob: Blob) {
@@ -75,6 +77,8 @@ export function AddTimelineVoiceSampleDialog({
   endDate,
   originalId,
   source = "timeline_selection",
+  initialProfileId,
+  onProfileSelected,
 }: AddTimelineVoiceSampleDialogProps) {
   const queryClient = useQueryClient();
   const [profileId, setProfileId] = useState("");
@@ -130,10 +134,14 @@ export function AddTimelineVoiceSampleDialog({
 
   useEffect(() => {
     if (!open || profileId || profiles.length === 0) return;
-    const preferred = orderedProfiles[0] ??
-      profiles.find((profile) => profile.is_primary) ?? profiles[0];
+    const preferred = profiles.find((profile) =>
+      getProfileDocumentId(profile) === initialProfileId
+    ) ?? orderedProfiles[0] ??
+      profiles.find((profile) =>
+        profile.is_primary
+      ) ?? profiles[0];
     setProfileId(getProfileDocumentId(preferred));
-  }, [open, orderedProfiles, profileId, profiles]);
+  }, [initialProfileId, open, orderedProfiles, profileId, profiles]);
 
   useEffect(() => {
     if (open && !isLoading && profiles.length === 0) setProfileMode("new");
@@ -199,6 +207,7 @@ export function AddTimelineVoiceSampleDialog({
           if (!upload.file_id) throw new Error("Audio sample was not saved.");
           uploaded = { fileId: upload.file_id, target };
           setSavedSample(uploaded);
+          onProfileSelected?.(target.id);
           setRecentProfileIds(rememberVoiceProfile(target.id));
           void queryClient.invalidateQueries({ queryKey: ["voice_samples"] });
           void queryClient.invalidateQueries({

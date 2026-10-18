@@ -14,14 +14,16 @@ describe("speaker timeline summary", () => {
       end,
       detail: "buckets",
       bucketMs: 60_000,
-      filters: { states: ["matched"], validities: ["verified"] },
+      filters: { states: ["identified"], validities: ["verified"] },
+      profileId: "belka",
     })).toEqual({
       action: "speaker-timeline-summary",
       start,
       end,
       detail: "buckets",
       bucketMs: 60_000,
-      filters: { states: ["matched"], validities: ["verified"] },
+      filters: { states: ["identified"], validities: ["verified"] },
+      profileId: "belka",
     });
   });
 

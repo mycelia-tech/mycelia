@@ -15,6 +15,8 @@ import {
 } from "@/modules/speakers";
 import { normalizeObjectId } from "@/lib/diarization";
 import { useAudioPlaybackStore } from "@/stores/audioPlaybackStore";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
 
 interface DiarizationDoc {
   _id: unknown;
@@ -30,9 +32,17 @@ interface DiarizationDoc {
   matched_speaker?: MatchedSpeakerValue;
   runId?: string;
   speakerIdentity?: {
-    state: "matched" | "rejected" | "uncertain";
+    state:
+      | "identified"
+      | "ambiguous"
+      | "unknown"
+      | "matched"
+      | "rejected"
+      | "uncertain"
+      | "unclassified";
     source?: string;
     annotationId?: unknown;
+    profileId?: unknown;
   };
   embeddingSpaceId?: string;
 }
@@ -179,6 +189,10 @@ const EmbeddingHeatmap = ({ embedding, color }: EmbeddingHeatmapProps) => {
 
 const DiarizationDetailPage = () => {
   const { id } = useParams<{ id: string }>();
+  const voiceSelection = useSelectedVoiceProfile();
+  const selectedProfileId = voiceSelection.selectedProfileId;
+  const selectedProfileName = voiceSelection.selectedProfile?.name ??
+    "selected voice";
   const { timeFormat } = useSettingsStore();
   const [diarization, setDiarization] = useState<DiarizationDoc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -205,7 +219,9 @@ const DiarizationDetailPage = () => {
             action: "list",
             start: result.start,
             end: result.end,
-            limit: 100,
+            ...(selectedProfileId ? { selectedProfileId } : {}),
+            segmentId: id,
+            limit: 1,
           }) as { segments: DiarizationDoc[] };
           const projected = active.segments.find((segment) =>
             normalizeObjectId(segment._id) === id
@@ -224,7 +240,7 @@ const DiarizationDetailPage = () => {
     };
 
     fetchData();
-  }, [id]);
+  }, [id, selectedProfileId]);
 
   const annotateIdentity = async (state: "me" | "not-me" | "clear") => {
     if (!diarization) return;
@@ -234,7 +250,9 @@ const DiarizationDetailPage = () => {
         const annotationId = normalizeObjectId(
           diarization.speakerIdentity?.annotationId,
         );
-        if (!annotationId) throw new Error("This segment has no manual annotation");
+        if (!annotationId) {
+          throw new Error("This segment has no manual annotation");
+        }
         await callResource("speaker-segments", {
           action: "delete-annotation",
           id: annotationId,
@@ -242,19 +260,12 @@ const DiarizationDetailPage = () => {
         setDiarization({ ...diarization, speakerIdentity: undefined });
         return;
       }
-      const profiles = await callResource("mongo", {
-        action: "find",
-        collection: "speaker_profiles",
-        query: { is_primary: true },
-        options: { limit: 1 },
-      }) as Array<{ _id: unknown }>;
-      const profileId = normalizeObjectId(profiles[0]?._id);
       const originalId = normalizeObjectId(
         diarization.original_id ?? diarization.original,
       );
       const segmentId = normalizeObjectId(diarization._id);
-      if (!profileId || !originalId) {
-        throw new Error("Primary profile or original audio is missing");
+      if (!selectedProfileId || !originalId) {
+        throw new Error("Select a voice profile and try again");
       }
       await callResource("speaker-segments", {
         action: "annotate",
@@ -264,18 +275,21 @@ const DiarizationDetailPage = () => {
         start: diarization.start,
         end: diarization.end,
         ...(state === "me"
-          ? { profileId, excludedProfileIds: [] }
-          : { excludedProfileIds: [profileId] }),
+          ? { profileId: selectedProfileId, excludedProfileIds: [] }
+          : { excludedProfileIds: [selectedProfileId] }),
       });
       setDiarization({
         ...diarization,
         speakerIdentity: {
-          state: state === "me" ? "matched" : "rejected",
+          state: state === "me" ? "identified" : "rejected",
           source: "manual_projection",
+          ...(state === "me" ? { profileId: selectedProfileId } : {}),
         },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update identity");
+      setError(
+        err instanceof Error ? err.message : "Failed to update identity",
+      );
     } finally {
       setAnnotating(false);
     }
@@ -416,6 +430,7 @@ const DiarizationDetailPage = () => {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      <VoiceProfileContextBar selection={voiceSelection} compact />
       <div className="flex items-center gap-4">
         <SmartBackButton defaultPath="/transcript" />
         <h1 className="text-3xl font-bold">Diarization</h1>
@@ -444,17 +459,17 @@ const DiarizationDetailPage = () => {
               <Button
                 size="sm"
                 onClick={() => void annotateIdentity("me")}
-                disabled={annotating}
+                disabled={annotating || !selectedProfileId}
               >
-                This is me
+                This is {selectedProfileName}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => void annotateIdentity("not-me")}
-                disabled={annotating}
+                disabled={annotating || !selectedProfileId}
               >
-                Not me
+                Not {selectedProfileName}
               </Button>
               <Button
                 size="sm"
@@ -467,7 +482,8 @@ const DiarizationDetailPage = () => {
               </Button>
               {diarization.speakerIdentity && (
                 <span className="self-center text-xs text-muted-foreground">
-                  {diarization.speakerIdentity.state} · {diarization.speakerIdentity.source}
+                  {diarization.speakerIdentity.state} ·{" "}
+                  {diarization.speakerIdentity.source}
                 </span>
               )}
             </div>

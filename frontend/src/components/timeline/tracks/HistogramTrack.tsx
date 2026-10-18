@@ -24,6 +24,8 @@ import {
   type SpeakerTimelineFilters,
   type SpeakerTimelineSummary,
 } from "@/lib/speakerTimeline";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 
 const SPEAKER_QUERY_DELAY_MS = 650;
 
@@ -53,7 +55,7 @@ export const AUDIO_CHUNKS_CONFIG: TrackConfig = {
 export const DIARIZATIONS_CONFIG: TrackConfig = {
   id: "diarizations",
   label: "Speaker identity",
-  description: "Sky / other / uncertain voice intervals",
+  description: "Selected / candidate / other / uncertain voice intervals",
   defaultVisible: true,
   defaultHeight: 40,
   color: "hsl(25, 95%, 53%)", // Orange
@@ -164,6 +166,8 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
 ) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const voiceSelection = useSelectedVoiceProfile();
+  const selectedProfileId = voiceSelection.selectedProfileId;
   const rescaledScale = useMemo(() => props.transform.rescaleX(props.scale), [
     props.transform,
     props.scale,
@@ -181,10 +185,15 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
   const queryRangeReady = queryRange.alignmentMs === queryAlignmentMs &&
     queryRange.start.getTime() <= start.getTime() &&
     queryRange.end.getTime() >= end.getTime();
-  const speakerFilter = searchParams.get("speakerIdentity") === "sky"
-    ? "sky"
-    : searchParams.get("speakerIdentity") === "uncertain"
-    ? "uncertain"
+  const requestedSpeakerFilter = searchParams.get("speakerIdentity");
+  const speakerFilter = requestedSpeakerFilter === "sky" ? "selected" : [
+      "selected",
+      "candidate",
+      "ambiguous",
+      "uncertain",
+      "unclassified",
+    ].includes(requestedSpeakerFilter ?? "")
+    ? requestedSpeakerFilter!
     : "all";
   const statusFilter = searchParams.get("speakerIdentityStatus") ===
       "verified"
@@ -193,10 +202,19 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
     ? "provisional"
     : "all";
   const filters = useMemo<SpeakerTimelineFilters>(() => ({
-    ...(speakerFilter === "sky"
-      ? { states: ["matched" as const] }
+    ...(speakerFilter === "selected"
+      ? {
+        states: ["identified" as const, "matched" as const],
+        inclusion: "selected_only" as const,
+      }
+      : speakerFilter === "candidate"
+      ? { inclusion: "includes_candidate" as const }
+      : speakerFilter === "ambiguous"
+      ? { states: ["ambiguous" as const] }
       : speakerFilter === "uncertain"
       ? { states: ["uncertain" as const] }
+      : speakerFilter === "unclassified"
+      ? { states: ["unclassified" as const] }
       : {}),
     ...(statusFilter === "verified"
       ? { validities: ["verified" as const, "manual" as const] }
@@ -211,6 +229,7 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
       queryRange.end.getTime(),
       queryAlignmentMs,
       farZoom ? "buckets" : "intervals",
+      selectedProfileId,
       speakerFilter,
       statusFilter,
     ],
@@ -223,12 +242,12 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
           detail: farZoom ? "buckets" : "intervals",
           bucketMs: queryAlignmentMs,
           filters,
+          profileId: selectedProfileId,
         }),
       ) as Promise<SpeakerTimelineSummary>,
     staleTime: 60_000,
-    placeholderData: (previousData) => previousData,
     retry: 1,
-    enabled: queryRangeReady,
+    enabled: queryRangeReady && Boolean(selectedProfileId),
   });
   const marks = useMemo(() => {
     if (data?.mode === "intervals") {
@@ -273,6 +292,30 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
   return (
     <BaseTrack {...props} config={DIARIZATIONS_CONFIG}>
       <g>
+        <defs>
+          <pattern
+            id="speaker-identity-ambiguous-pattern"
+            width="6"
+            height="6"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(135)"
+          >
+            <rect
+              width="6"
+              height="6"
+              fill={voiceSelection.selectedProfile?.color ?? "#22c55e"}
+              opacity="0.35"
+            />
+            <line
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="6"
+              stroke={voiceSelection.selectedProfile?.color ?? "#22c55e"}
+              strokeWidth="2"
+            />
+          </pattern>
+        </defs>
         {isLoading && !data && (
           <text
             x={8}
@@ -304,15 +347,23 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
             fill="currentColor"
             opacity={0.55}
           >
-            {data?.reason ?? (speakerFilter === "all" && statusFilter === "all"
-              ? "No speaker identity in this range"
-              : "No speaker identity matches these filters")}
+            {!selectedProfileId
+              ? "Select a voice profile to show speaker identity"
+              : data?.reason ??
+                (speakerFilter === "all" && statusFilter === "all"
+                  ? "No speaker identity in this range"
+                  : "No speaker identity matches these filters")}
           </text>
         )}
         {marks.map((mark) => {
           const appearance = speakerIdentityAppearance(
             mark.state,
             mark.validity,
+            {
+              name: data?.profile?.name ?? voiceSelection.selectedProfile?.name,
+              color: data?.profile?.color ??
+                voiceSelection.selectedProfile?.color,
+            },
           );
           return (
             <rect
@@ -321,7 +372,9 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
               y={4}
               width={mark.width}
               height={Math.max(4, props.height - 8)}
-              fill={appearance.color}
+              fill={appearance.pattern === "diagonal"
+                ? "url(#speaker-identity-ambiguous-pattern)"
+                : appearance.color}
               opacity={appearance.opacity}
               stroke={appearance.stroke}
               strokeDasharray={appearance.strokeDasharray}
@@ -329,7 +382,10 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
               className="cursor-pointer"
               onClick={() => {
                 if (mark.segmentId) {
-                  navigate(`/diarizations/${mark.segmentId}`);
+                  navigate(withVoiceProfile(
+                    `/diarizations/${mark.segmentId}`,
+                    selectedProfileId,
+                  ));
                   return;
                 }
                 const next = new URLSearchParams(searchParams);
@@ -353,6 +409,7 @@ export const DiarizationsTrack = memo(function DiarizationsTrack(
 export const DiarizationCoverageTrack = memo(
   function DiarizationCoverageTrack(props: TrackRenderProps) {
     const navigate = useNavigate();
+    const selectedProfileId = useSelectedVoiceProfile().selectedProfileId;
     const rescaledScale = useMemo(
       () => props.transform.rescaleX(props.scale),
       [props.transform, props.scale],
@@ -456,7 +513,11 @@ export const DiarizationCoverageTrack = memo(
                 fill={coverageColor(state)}
                 opacity={coverageOpacity(state)}
                 className="cursor-pointer"
-                onClick={() => navigate("/jobs?type=diarization")}
+                onClick={() =>
+                  navigate(withVoiceProfile(
+                    "/jobs?type=diarization",
+                    selectedProfileId,
+                  ))}
               >
                 <title>
                   {state.replace("_", " ")} ·{" "}

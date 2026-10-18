@@ -235,7 +235,9 @@ export function useJobsListener(options: UseJobsListenerOptions = {}) {
 
       if (event.event === "job.completed" && event.data) {
         if (jobData.jobType === "speakerIdentity") {
-          void queryClient.invalidateQueries({ queryKey: ["speaker-track"] });
+          void queryClient.invalidateQueries({
+            queryKey: ["speaker-timeline-summary"],
+          });
           void queryClient.invalidateQueries({
             queryKey: ["speaker-identity-status"],
           });

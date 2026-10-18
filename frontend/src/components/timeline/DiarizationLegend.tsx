@@ -2,10 +2,12 @@ import React, { memo } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   DIARIZATION_COVERAGE_LEGEND,
-  SPEAKER_IDENTITY_LEGEND,
   SPEAKER_IDENTITY_VALIDITY_LEGEND,
+  speakerIdentityLegend,
   type TimelineLegendItem,
 } from "@/lib/timelineDiarization";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileSelect } from "@/components/voice/VoiceProfileContextBar";
 
 interface LegendGroupProps {
   label: string;
@@ -30,6 +32,11 @@ const LegendGroup = memo(function LegendGroup({
             className="h-2.5 w-2.5 rounded-sm border"
             style={{
               backgroundColor: item.color,
+              backgroundImage: item.pattern === "diagonal"
+                ? `repeating-linear-gradient(135deg, transparent 0 3px, ${
+                  item.stroke ?? item.color
+                } 3px 4px)`
+                : undefined,
               opacity: item.opacity,
               borderColor: item.stroke ?? "rgb(0 0 0 / 0.1)",
               borderStyle: item.strokeDasharray ? "dashed" : "solid",
@@ -53,6 +60,7 @@ export const DiarizationLegend = memo(function DiarizationLegend({
   showIdentity,
 }: DiarizationLegendProps) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const voiceSelection = useSelectedVoiceProfile();
   if (!showCoverage && !showIdentity) return null;
 
   const speakerFilter = searchParams.get("speakerIdentity") ?? "all";
@@ -86,14 +94,35 @@ export const DiarizationLegend = memo(function DiarizationLegend({
       )}
       {showIdentity && (
         <>
-          <LegendGroup label="Speaker" items={SPEAKER_IDENTITY_LEGEND} />
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-foreground/75">Voice:</span>
+            <VoiceProfileSelect
+              selection={voiceSelection}
+              ariaLabel="Timeline voice profile"
+              className="h-7 max-w-48 rounded border bg-background px-1.5 text-[11px]"
+            />
+          </div>
+          <LegendGroup
+            label="Speaker"
+            items={speakerIdentityLegend({
+              name: voiceSelection.selectedProfile?.name,
+              color: voiceSelection.selectedProfile?.color,
+            })}
+          />
           <LegendGroup
             label="Result"
             items={SPEAKER_IDENTITY_VALIDITY_LEGEND}
           />
           <div className="flex flex-wrap items-center gap-1">
             <span className="font-medium text-foreground/75">Filter:</span>
-            {(["all", "sky", "uncertain"] as const).map((value) => (
+            {([
+              "all",
+              "selected",
+              "candidate",
+              "ambiguous",
+              "uncertain",
+              "unclassified",
+            ] as const).map((value) => (
               <button
                 key={value}
                 type="button"
@@ -103,9 +132,11 @@ export const DiarizationLegend = memo(function DiarizationLegend({
               >
                 {value === "all"
                   ? "All voices"
-                  : value === "sky"
-                  ? "Sky"
-                  : "Uncertain"}
+                  : value === "selected"
+                  ? voiceSelection.selectedProfile?.name ?? "Selected"
+                  : value === "candidate"
+                  ? "Includes candidate"
+                  : value[0].toUpperCase() + value.slice(1)}
               </button>
             ))}
             {(["all", "verified", "provisional"] as const).map((value) => (

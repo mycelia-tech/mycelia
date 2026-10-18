@@ -12,7 +12,22 @@ describe("Timeline diarization colors", () => {
     for (const item of SPEAKER_IDENTITY_LEGEND) {
       expect(speakerIdentityAppearance(item.id)).toEqual(item);
     }
-    expect(speakerIdentityAppearance("unknown").label).toBe("Unclassified");
+    expect(speakerIdentityAppearance("unknown").label).toBe(
+      "Other / unknown",
+    );
+  });
+
+  it("uses the selected profile color and hatching for ambiguous candidates", () => {
+    expect(speakerIdentityAppearance("ambiguous", "verified", {
+      name: "Belka",
+      color: "#123456",
+    })).toMatchObject({
+      id: "ambiguous",
+      label: "Belka is a candidate",
+      color: "#123456",
+      pattern: "diagonal",
+      strokeDasharray: "3 2",
+    });
   });
 
   it("visibly distinguishes provisional pilot decisions", () => {

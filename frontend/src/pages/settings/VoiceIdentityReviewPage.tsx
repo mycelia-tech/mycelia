@@ -14,9 +14,11 @@ import {
 } from "@/lib/voiceProfiles";
 import {
   loadVoiceIdentityStatus,
-  loadVoiceProfiles,
   voiceIdentityKeys,
 } from "@/lib/voiceIdentity";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
 import { useAudioPlaybackStore } from "@/stores/audioPlaybackStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
@@ -24,6 +26,7 @@ import {
   WaveformPlayer,
 } from "@/components/audio/WaveformPlayer";
 import { SpeakerIdentityLaunchPanel } from "@/components/SpeakerIdentityLaunchDialog";
+import { VoiceIdentityModelSetStatus } from "@/components/voice/VoiceIdentityModelSetStatus";
 import { Button } from "@/components/ui/button";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -346,6 +349,9 @@ type IdentityStatus = {
     pendingSegments?: number | null;
     matched?: number;
     rejected?: number;
+    identified?: number;
+    ambiguous?: number;
+    unknown?: number;
     uncertain?: number;
     incompatibleSkipped?: number;
     etaSeconds?: number | null;
@@ -431,6 +437,7 @@ export default function VoiceIdentityReviewPage() {
   const pickerTimeZone = resolveDefaultTimeZone(defaultTimeZone);
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
+  const voiceSelection = useSelectedVoiceProfile();
   const timelineSourceStart = Number(searchParams.get("start"));
   const timelineSourceEnd = Number(searchParams.get("end"));
   const timelineSourceAvailable =
@@ -470,7 +477,6 @@ export default function VoiceIdentityReviewPage() {
       }
     },
   );
-  const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
   const [showNewSession, setShowNewSession] = useState(false);
   const [newRange, setNewRange] = useState<"14d" | "30d" | "custom" | "all">(
     "14d",
@@ -582,24 +588,26 @@ export default function VoiceIdentityReviewPage() {
     timelineSourceStart,
   ]);
 
-  const { data: profiles = [] } = useQuery<any[]>({
-    queryKey: voiceIdentityKeys.profiles,
-    queryFn: loadVoiceProfiles,
-  });
-  const primary = profiles.find((profile) => profile.is_primary);
-  const profileId = normalizeObjectId(primary?._id);
-  useEffect(() => {
-    if (!reviewProfileId && profileId) setReviewProfileId(profileId);
-  }, [profileId, reviewProfileId]);
+  const profiles = voiceSelection.profiles;
+  const reviewProfileId = voiceSelection.selectedProfileId;
   const reviewProfile = profiles.find((profile) =>
     normalizeObjectId(profile._id) === reviewProfileId
   );
+  // The selected profile is the single target for review, enrollment,
+  // calibration and classification. `primary` is kept as a local alias while
+  // the page's legacy copy is migrated away from Sky-specific wording.
+  const primary = reviewProfile;
+  const profileId = reviewProfileId;
   useEffect(() => {
     setSourcePreview(null);
     setPreviewedSourcePayload(null);
     setSourcePreviewDirty(true);
     setSelectedRecordingIds([]);
     sourcePreviewRevisionRef.current += 1;
+    useAudioPlaybackStore.getState().stopActive();
+    setSelectedSessionId(null);
+    setHistory([]);
+    setPlayOnMount(false);
   }, [reviewProfileId]);
   const allProfileOptions = profiles.map((profile) => ({
     id: normalizeObjectId(profile._id) ?? "",
@@ -659,7 +667,7 @@ export default function VoiceIdentityReviewPage() {
     isFetching: isCalculatingClassification,
     refetch: calculateClassification,
   } = useQuery<IdentityClassificationSnapshot>({
-    queryKey: ["speaker-identity-classification"],
+    queryKey: ["speaker-identity-classification", profileId],
     queryFn: () =>
       callResource("speaker-segments", {
         action: "identity-classification",
@@ -1510,10 +1518,14 @@ export default function VoiceIdentityReviewPage() {
     calibrationLabelCounts.notSky >= 40 && calibrationLabelCounts.total >= 100;
   const missingLabelRequirements = [
     calibrationLabelCounts.sky < 40
-      ? `${40 - calibrationLabelCounts.sky} more compatible Sky`
+      ? `${40 - calibrationLabelCounts.sky} more compatible ${
+        primary?.name ?? "target-voice"
+      }`
       : null,
     calibrationLabelCounts.notSky < 40
-      ? `${40 - calibrationLabelCounts.notSky} more compatible not-Sky`
+      ? `${40 - calibrationLabelCounts.notSky} more compatible not ${
+        primary?.name ?? "target-voice"
+      }`
       : null,
     calibrationLabelCounts.total < 100
       ? `${100 - calibrationLabelCounts.total} more compatible total`
@@ -1914,12 +1926,14 @@ export default function VoiceIdentityReviewPage() {
         data: { type: "profileReenrollment", profileId },
         trigger: {
           type: "manual",
-          reason: "Rebuild primary voice profile from saved samples",
+          reason: `Rebuild ${
+            primary?.name ?? "selected"
+          } voice profile from saved samples`,
         },
       });
     },
     onSuccess: () =>
-      toast.success("Sky re-enrollment queued from all saved samples", {
+      toast.success(`${primary?.name ?? "Voice"} rebuild queued`, {
         description:
           "It starts automatically at the next safe diarization batch boundary.",
       }),
@@ -1933,6 +1947,7 @@ export default function VoiceIdentityReviewPage() {
 
   return (
     <div className="space-y-6">
+      <VoiceProfileContextBar selection={voiceSelection} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold">Voice Identity review</h2>
@@ -1949,7 +1964,7 @@ export default function VoiceIdentityReviewPage() {
           >
             {reenroll.isPending
               ? "Queueing re-enrollment…"
-              : "Re-enroll Sky from saved samples"}
+              : `Rebuild ${primary?.name ?? "selected voice"} from samples`}
           </Button>
           {reenrollUnavailableReason && (
             <p className="text-xs text-destructive">
@@ -1965,9 +1980,11 @@ export default function VoiceIdentityReviewPage() {
             : "border-amber-500/40"}
         >
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">1. Build Sky profile</CardTitle>
+            <CardTitle className="text-base">
+              1. Build {primary?.name ?? "voice"} profile
+            </CardTitle>
             <CardDescription>
-              Combine saved clean samples into Sky's reusable voiceprint.
+              Combine saved clean samples into this reusable voiceprint.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
@@ -1993,7 +2010,7 @@ export default function VoiceIdentityReviewPage() {
             </p>
             <Link
               className="inline-block text-xs font-medium text-primary hover:underline"
-              to="/settings/voice-profiles"
+              to={withVoiceProfile("/settings/voice-profiles", profileId)}
             >
               Manage clean profile samples →
             </Link>
@@ -2007,14 +2024,15 @@ export default function VoiceIdentityReviewPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base">2. Label examples</CardTitle>
             <CardDescription>
-              Clear Sky and clear not-Sky labels train the accuracy check.
-              Counts update automatically.
+              Clear {primary?.name ?? "target"} and clear not-{primary?.name ??
+                "target"}{" "}
+              labels train the accuracy check. Counts update automatically.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div>
               <div className="flex justify-between">
-                <span>Sky</span>
+                <span>{primary?.name ?? "Target voice"}</span>
                 <strong>{calibrationLabelCounts.sky} / 40</strong>
               </div>
               <Progress
@@ -2024,7 +2042,7 @@ export default function VoiceIdentityReviewPage() {
             </div>
             <div>
               <div className="flex justify-between">
-                <span>not-Sky</span>
+                <span>not {primary?.name ?? "target"}</span>
                 <strong>{calibrationLabelCounts.notSky} / 40</strong>
               </div>
               <Progress
@@ -2100,8 +2118,9 @@ export default function VoiceIdentityReviewPage() {
                 {latestCalibration.negativeDecisionMode ===
                     "uncertain_only" && (
                   <p className="text-xs text-muted-foreground">
-                    Safe Sky-first mode: auto not-Sky is off; everything below
-                    the Sky threshold remains uncertain for review.
+                    Safe precision-first mode: automatic negative decisions are
+                    off; everything below the {primary?.name ?? "voice"}
+                    threshold remains uncertain for review.
                   </p>
                 )}
               </>
@@ -2131,12 +2150,13 @@ export default function VoiceIdentityReviewPage() {
               <div className="space-y-2">
                 {calibrationPreview?.validationMetrics && (
                   <p className="text-xs text-amber-600">
-                    Sky match accuracy on Check{" "}
+                    {primary?.name ?? "Voice"} match accuracy on Check{" "}
                     {(calibrationPreview.validationMetrics.positivePrecision *
                       100).toFixed(1)}% · target{" "}
                     {Math.round(calibrationTargetPrecision * 100)}% ·{" "}
-                    {calibrationPreview.validationMetrics.falsePositive}{" "}
-                    wrong Sky results
+                    {calibrationPreview.validationMetrics.falsePositive} wrong
+                    {" "}
+                    {primary?.name ?? "voice"} results
                   </p>
                 )}
                 {canValidate && (
@@ -2167,7 +2187,7 @@ export default function VoiceIdentityReviewPage() {
           </CardContent>
         </Card>
       </div>
-      <Card id="classification">
+      <Card id="review">
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2191,32 +2211,7 @@ export default function VoiceIdentityReviewPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="sticky top-2 z-10 grid gap-2 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:grid-cols-[11rem_minmax(12rem,1fr)_minmax(15rem,1fr)_auto_auto]">
-            <label className="text-xs text-muted-foreground">
-              Profile being reviewed
-              <select
-                className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm text-foreground"
-                value={reviewProfileId ?? ""}
-                onChange={(event) => {
-                  useAudioPlaybackStore.getState().stopActive();
-                  setReviewProfileId(event.target.value || null);
-                  setSelectedSessionId(null);
-                  setHistory([]);
-                  setPlayOnMount(false);
-                }}
-                aria-label="Review target profile"
-              >
-                {profiles.map((profile) => {
-                  const id = normalizeObjectId(profile._id) ?? "";
-                  return (
-                    <option key={id} value={id}>
-                      {profile.name ?? id}
-                      {profile.is_primary ? " · primary" : ""}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
+          <div className="sticky top-20 z-10 grid gap-2 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:grid-cols-[minmax(12rem,1fr)_minmax(15rem,1fr)_auto_auto]">
             <label className="text-xs text-muted-foreground">
               Saved session
               <select
@@ -3581,7 +3576,7 @@ export default function VoiceIdentityReviewPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <strong>
-                  Calibration target: {primary?.name ?? "Sky"} · primary · rev.
+                  Calibration target: {primary?.name ?? "selected voice"} · rev.
                   {" "}
                   {primary?.revision ?? 1}
                 </strong>
@@ -3601,14 +3596,6 @@ export default function VoiceIdentityReviewPage() {
                   </span>
                 )}
             </div>
-            {reviewProfileId && reviewProfileId !== profileId && (
-              <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
-                You are reviewing{" "}
-                {reviewProfile?.name ?? "another profile"}, but this calibration
-                remains Sky-first. Assign or exclude Sky explicitly for those
-                labels to affect this calibration.
-              </div>
-            )}
           </div>
 
           {calibrationPreview && (
@@ -3811,7 +3798,7 @@ export default function VoiceIdentityReviewPage() {
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <div className="rounded-md border bg-muted/20 p-3 text-sm">
                   <span className="text-xs text-muted-foreground">
-                    Sky precision on independent Check
+                    {primary?.name ?? "Voice"} precision on independent Check
                   </span>
                   <p
                     className={`text-xl font-semibold tabular-nums ${
@@ -3831,13 +3818,17 @@ export default function VoiceIdentityReviewPage() {
                   </p>
                   <p className="text-[11px] text-muted-foreground">
                     {calibrationPreview.validationMetrics
-                      ? `${calibrationPreview.validationMetrics.positives} Sky · ${calibrationPreview.validationMetrics.negatives} not-Sky in Check`
+                      ? `${calibrationPreview.validationMetrics.positives} ${
+                        primary?.name ?? "target"
+                      } · ${calibrationPreview.validationMetrics.negatives} not ${
+                        primary?.name ?? "target"
+                      } in Check`
                       : "Needs a separate Check source"}
                   </p>
                 </div>
                 <div className="rounded-md border bg-muted/20 p-3 text-sm">
                   <span className="text-xs text-muted-foreground">
-                    Classified automatically as Sky
+                    Classified automatically as {primary?.name ?? "target"}
                   </span>
                   <p className="text-xl font-semibold tabular-nums">
                     {calibrationPreview.validationMetrics
@@ -3850,7 +3841,7 @@ export default function VoiceIdentityReviewPage() {
                 </div>
                 <div className="rounded-md border bg-muted/20 p-3 text-sm">
                   <span className="text-xs text-muted-foreground">
-                    Wrong {primary?.name ?? "Sky"} matches
+                    Wrong {primary?.name ?? "selected voice"} matches
                   </span>
                   <p
                     className={`text-xl font-semibold tabular-nums ${
@@ -3880,7 +3871,7 @@ export default function VoiceIdentityReviewPage() {
                 </div>
                 <div className="rounded-md border bg-muted/20 p-3 text-sm">
                   <span className="text-xs text-muted-foreground">
-                    Sky recall on Check
+                    {primary?.name ?? "Voice"} recall on Check
                   </span>
                   <p className="text-xl font-semibold tabular-nums">
                     {calibrationPreview.validationMetrics
@@ -3943,16 +3934,21 @@ export default function VoiceIdentityReviewPage() {
                           labels are enough to diagnose this result.
                         </strong>{" "}
                         If the problem labels are correct, audit the{" "}
-                        {primary?.sample_count ?? 0}{" "}
-                        saved Sky samples for a second speaker, overlap, noise,
-                        or long silence. Sky is currently one averaged profile
-                        embedding, so one outlier can move every score. Replace
-                        only bad samples, rebuild Sky, then refresh this check;
-                        your labels stay saved.
+                        {primary?.sample_count ?? 0} saved{" "}
+                        {primary?.name ?? "voice"}{" "}
+                        samples for a second speaker, overlap, noise, or long
+                        silence. An outlier can move every score. Replace only
+                        bad samples, rebuild this profile, then refresh the
+                        check; labels stay saved.
                       </p>
                       <Button asChild type="button" size="sm" variant="outline">
-                        <Link to="/settings/voice-profiles">
-                          Audit Sky samples
+                        <Link
+                          to={withVoiceProfile(
+                            "/settings/voice-profiles",
+                            profileId,
+                          )}
+                        >
+                          Audit {primary?.name ?? "voice"} samples
                         </Link>
                       </Button>
                     </div>
@@ -4209,9 +4205,12 @@ export default function VoiceIdentityReviewPage() {
                               </span>
                               <Link
                                 className="text-primary hover:underline"
-                                to={`/timeline?start=${startMs - 5_000}&end=${
-                                  endMs + 5_000
-                                }`}
+                                to={withVoiceProfile(
+                                  `/timeline?start=${startMs - 5_000}&end=${
+                                    endMs + 5_000
+                                  }`,
+                                  profileId,
+                                )}
                               >
                                 Timeline
                               </Link>
@@ -4245,14 +4244,14 @@ export default function VoiceIdentityReviewPage() {
                 </summary>
                 <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
                   <span>
-                    Learned Sky threshold{" "}
+                    Learned {primary?.name ?? "voice"} threshold{" "}
                     <strong>
                       {calibrationPreview.thresholds?.positiveThreshold
                         .toFixed(3) ?? "—"}
                     </strong>
                   </span>
                   <span>
-                    Not-Sky mode{" "}
+                    Not-{primary?.name ?? "voice"} mode{" "}
                     <strong>
                       {previewNegativeDecisionMode === "uncertain_only"
                         ? "off · remains uncertain"
@@ -4263,8 +4262,11 @@ export default function VoiceIdentityReviewPage() {
                   <span>
                     Compatible labels{" "}
                     <strong>
-                      {calibrationPreview.counts.positive} Sky ·{" "}
-                      {calibrationPreview.counts.negative} not-Sky
+                      {calibrationPreview.counts.positive} {primary?.name ??
+                        "target"} · {calibrationPreview.counts.negative} not
+                      {" "}
+                      {primary?.name ??
+                        "target"}
                     </strong>
                   </span>
                   <span>
@@ -4281,13 +4283,14 @@ export default function VoiceIdentityReviewPage() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <strong className="mt-3 block">
-                      Stricter automatic Sky matching
+                      Stricter automatic {primary?.name ?? "voice"} matching
                     </strong>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Raising the positive cosine threshold produces fewer
-                      automatic Sky matches. Coverage and recall usually fall;
-                      precision may improve. The control can never go below the
-                      server recommendation.
+                      automatic {primary?.name ?? "voice"}{" "}
+                      matches. Coverage and recall usually fall; precision may
+                      improve. The control can never go below the server
+                      recommendation.
                     </p>
                   </div>
                   {calibrationPreview.positiveThresholdSource ===
@@ -4354,7 +4357,9 @@ export default function VoiceIdentityReviewPage() {
                         }}
                         onValueCommit={([value]) =>
                           commitPositiveThresholdOverride(value)}
-                        aria-label="Stricter positive Sky cosine threshold"
+                        aria-label={`Stricter positive ${
+                          primary?.name ?? "voice"
+                        } cosine threshold`}
                       />
                       <div className="flex flex-wrap items-end gap-2">
                         <label className="min-w-36 flex-1">
@@ -4434,8 +4439,9 @@ export default function VoiceIdentityReviewPage() {
                 <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
                   <strong>Safe mode:</strong>{" "}
                   <span className="text-muted-foreground">
-                    automatic Sky matches are allowed; everything else remains
-                    uncertain instead of being marked not-Sky.
+                    automatic {primary?.name ?? "voice"}{" "}
+                    matches are allowed; everything else remains uncertain
+                    instead of being marked as another voice.
                   </span>
                 </div>
               )}
@@ -4472,8 +4478,10 @@ export default function VoiceIdentityReviewPage() {
                     <strong>Learn</strong>
                     <p className="mt-1 text-muted-foreground">
                       {fitRecordingSummary.recordings} source groups ·{" "}
-                      {fitRecordingSummary.sky} Sky ·{" "}
-                      {fitRecordingSummary.notSky} not-Sky
+                      {fitRecordingSummary.sky} {primary?.name ?? "target"} ·
+                      {" "}
+                      {fitRecordingSummary.notSky} not{" "}
+                      {primary?.name ?? "target"}
                     </p>
                     <p className="mt-1">Chooses the similarity boundary.</p>
                   </div>
@@ -4482,8 +4490,10 @@ export default function VoiceIdentityReviewPage() {
                     <p className="mt-1 text-muted-foreground">
                       {validationRecordingSummary.recordings} source groups ·
                       {" "}
-                      {validationRecordingSummary.sky} Sky ·{" "}
-                      {validationRecordingSummary.notSky} not-Sky
+                      {validationRecordingSummary.sky}{" "}
+                      {primary?.name ?? "target"} ·{" "}
+                      {validationRecordingSummary.notSky} not{" "}
+                      {primary?.name ?? "target"}
                     </p>
                     <p className="mt-1">
                       Measures accuracy on audio Learn never saw.
@@ -4527,9 +4537,12 @@ export default function VoiceIdentityReviewPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <Link
                               className="font-medium text-primary hover:underline"
-                              to={`/timeline?start=${
-                                new Date(recording.start).getTime()
-                              }&end=${new Date(recording.end).getTime()}`}
+                              to={withVoiceProfile(
+                                `/timeline?start=${
+                                  new Date(recording.start).getTime()
+                                }&end=${new Date(recording.end).getTime()}`,
+                                profileId,
+                              )}
                             >
                               {new Date(recording.start).toLocaleString()} —
                               {" "}
@@ -4572,8 +4585,11 @@ export default function VoiceIdentityReviewPage() {
                           </div>
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {recording.positive} Sky · {recording.negative}{" "}
-                          not-Sky · {recording.total} total
+                          {recording.positive} {primary?.name ?? "target"} ·
+                          {" "}
+                          {recording.negative} not {primary?.name ?? "target"} ·
+                          {" "}
+                          {recording.total} total
                         </span>
                         <label className="text-xs text-muted-foreground">
                           Role in this calibration
@@ -4626,24 +4642,38 @@ export default function VoiceIdentityReviewPage() {
                             )
                           ? blocker.replace(
                             /target labels/i,
-                            "Sky labels in independent Check audio",
+                            `${
+                              primary?.name ?? "Selected voice"
+                            } labels in independent Check audio`,
                           )
                           : /Check needs (\d+) more not-target labels/i.test(
                               blocker,
                             )
                           ? blocker.replace(
                             /not-target labels/i,
-                            "not-Sky labels in independent Check audio",
+                            `not-${
+                              primary?.name ?? "selected voice"
+                            } labels in independent Check audio`,
                           )
                           : /Check needs at least .*automatic target matches/i
                               .test(
                                 blocker,
                               )
-                          ? "Check needs at least 20 automatic Sky matches before its precision is trusted. Add diverse Check recordings or use a safer threshold with enough coverage."
+                          ? `Check needs at least 20 automatic ${
+                            primary?.name ?? "selected voice"
+                          } matches before its precision is trusted. Add diverse Check recordings or use a safer threshold with enough coverage.`
                           : /Calibration set needs both/i.test(blocker)
-                          ? "Learn needs both Sky and not-Sky examples. Move a mixed source group to Learn."
+                          ? `Learn needs both ${
+                            primary?.name ?? "selected voice"
+                          } and not-${
+                            primary?.name ?? "selected voice"
+                          } examples. Move a mixed source group to Learn.`
                           : /Validation set needs both/i.test(blocker)
-                          ? "Check needs both Sky and not-Sky examples. Move a different mixed source group to Check."
+                          ? `Check needs both ${
+                            primary?.name ?? "selected voice"
+                          } and not-${
+                            primary?.name ?? "selected voice"
+                          } examples. Move a different mixed source group to Check.`
                           : /at least two different source recordings/i.test(
                               blocker,
                             )
@@ -4691,7 +4721,7 @@ export default function VoiceIdentityReviewPage() {
           )}
         </CardContent>
       </Card>
-      <Card>
+      <Card id="classification">
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>Classify existing — current results</CardTitle>
@@ -4716,17 +4746,21 @@ export default function VoiceIdentityReviewPage() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          <SpeakerIdentityLaunchPanel />
+          <SpeakerIdentityLaunchPanel profileId={profileId ?? undefined} />
+          <VoiceIdentityModelSetStatus profileId={profileId} />
           <div className="flex flex-wrap gap-3 text-xs">
             <Link
               className="font-medium text-primary hover:underline"
-              to="/jobs?type=speakerIdentity"
+              to={withVoiceProfile("/jobs?type=speakerIdentity", profileId)}
             >
               Campaign jobs
             </Link>
             <Link
               className="font-medium text-primary hover:underline"
-              to="/settings/voice-identity/operations"
+              to={withVoiceProfile(
+                "/settings/voice-identity/operations",
+                profileId,
+              )}
             >
               Advanced: coverage and generations
             </Link>
@@ -4811,7 +4845,10 @@ export default function VoiceIdentityReviewPage() {
                   {identityStatus.latestCampaign.currentJobId && (
                     <Button asChild size="sm" variant="outline">
                       <Link
-                        to={`/jobs/${identityStatus.latestCampaign.currentJobId}`}
+                        to={withVoiceProfile(
+                          `/jobs/${identityStatus.latestCampaign.currentJobId}`,
+                          profileId,
+                        )}
                       >
                         Job details
                       </Link>
@@ -4820,17 +4857,20 @@ export default function VoiceIdentityReviewPage() {
                   {identityStatus.latestCampaign.range?.start && (
                     <Button asChild size="sm" variant="outline">
                       <Link
-                        to={`/timeline?start=${
-                          new Date(
-                            identityStatus.latestCampaign.range.start,
-                          ).getTime()
-                        }&end=${
-                          identityStatus.latestCampaign.range.end
-                            ? new Date(
-                              identityStatus.latestCampaign.range.end,
+                        to={withVoiceProfile(
+                          `/timeline?start=${
+                            new Date(
+                              identityStatus.latestCampaign.range.start,
                             ).getTime()
-                            : Date.now()
-                        }`}
+                          }&end=${
+                            identityStatus.latestCampaign.range.end
+                              ? new Date(
+                                identityStatus.latestCampaign.range.end,
+                              ).getTime()
+                              : Date.now()
+                          }`,
+                          profileId,
+                        )}
                       >
                         See speakers on Timeline
                       </Link>
@@ -4850,11 +4890,20 @@ export default function VoiceIdentityReviewPage() {
               </div>
               <div className="flex flex-wrap gap-3 text-xs">
                 <span className="text-green-600">
-                  {identityStatus.latestCampaign.matched ?? 0} Sky
+                  {identityStatus.latestCampaign.identified ??
+                    identityStatus.latestCampaign.matched ?? 0}{" "}
+                  {primary?.name ?? "identified"}
                 </span>
                 <span>
-                  {identityStatus.latestCampaign.rejected ?? 0} not Sky
+                  {identityStatus.latestCampaign.unknown ??
+                    identityStatus.latestCampaign.rejected ?? 0} not{" "}
+                  {primary?.name ?? "target"}
                 </span>
+                {(identityStatus.latestCampaign.ambiguous ?? 0) > 0 && (
+                  <span className="text-violet-600">
+                    {identityStatus.latestCampaign.ambiguous} ambiguous
+                  </span>
+                )}
                 <span className="text-amber-600">
                   {identityStatus.latestCampaign.uncertain ?? 0} uncertain
                 </span>
@@ -4888,17 +4937,18 @@ export default function VoiceIdentityReviewPage() {
               </li>
               <li>
                 <strong className="text-foreground">3.</strong>{" "}
-                Classify all compatible history, then open Sky on Timeline
+                Classify all compatible history, then open {primary?.name ??
+                  "the selected voice"} on Timeline
               </li>
             </ol>
             <p className="mt-3 text-xs text-muted-foreground">
               100 total with at least 40 target and 40 not-target labels is only
               the overall volume gate. The independent Check set must also have
-              at least 20 Sky labels, 20 not-Sky labels, and 20 automatic Sky
-              matches. A 98% result unlocks full history; 95% or 90% saves only
-              a risk-acknowledged 24-hour pilot. Manual labels stay saved when
-              you rebuild or recalibrate. Review uncertain results only when
-              they are useful; it is not a backlog you must finish.
+              at least 20 target labels, 20 not-target labels, and 20 automatic
+              target matches. A 98% result unlocks full history; 95% or 90%
+              saves only a risk-acknowledged 24-hour pilot. Manual labels stay
+              saved when you rebuild or recalibrate. Review uncertain results
+              only when they are useful; it is not a backlog you must finish.
             </p>
           </details>
         </CardContent>
