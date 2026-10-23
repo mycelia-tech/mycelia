@@ -1,7 +1,9 @@
 """Small policy helpers for the pinned WhisperLiveKit remote-ASR overlay."""
 
 import asyncio
+import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -51,14 +53,49 @@ class SessionGate:
         self.active = False
 
 
-class TrackedRemoteCalls:
-    """Keep cancelled coroutine callers from orphaning synchronous HTTP work."""
+class ProcessingFailure(RuntimeError):
+    """Keep the cause for inspection while logging no remote body or audio text."""
+
+    def __init__(self, stage, error):
+        self.original_error = error
+        details = []
+        current, seen = error, set()
+        while current is not None and id(current) not in seen and len(details) < 4:
+            seen.add(id(current))
+            kind = f"{type(current).__module__}.{type(current).__name__}"
+            status = getattr(current, "status_code", None)
+            if type(status) is int and 100 <= status <= 599:
+                kind += f" HTTP {status}"
+            # format_exception/format_tb include message or source text. Only
+            # locations are safe when SDK errors can embed request/response data.
+            frames = traceback.extract_tb(current.__traceback__)[-12:]
+            locations = ", ".join(
+                f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                for frame in frames
+            )
+            details.append(kind + (f" at {locations}" if locations else ""))
+            current = current.__cause__ or current.__context__
+        super().__init__(f"{stage} failed: " + " <- ".join(details))
+
+
+def processing_failure(stage, error):
+    return error if isinstance(error, ProcessingFailure) else ProcessingFailure(stage, error)
+
+
+class TrackedWorkerCalls:
+    """Serialize native work and join it even when its async caller is cancelled."""
 
     def __init__(self):
         self.pending = set()
+        self.lock = asyncio.Lock()
 
     async def run(self, method, *args):
-        task = asyncio.create_task(asyncio.to_thread(method, *args))
+        async def invoke():
+            # The shielded task owns this lock, not the cancellable caller.
+            async with self.lock:
+                return await asyncio.to_thread(method, *args)
+
+        task = asyncio.create_task(invoke())
         self.pending.add(task)
 
         def complete(done):
@@ -70,7 +107,7 @@ class TrackedRemoteCalls:
         return await asyncio.shield(task)
 
     async def drain(self):
-        # A cancelled WebSocket must not release its slot while HTTP is active.
+        # A cancelled WebSocket cannot release its slot while native work lives.
         while self.pending:
             try:
                 await asyncio.shield(asyncio.gather(*tuple(self.pending), return_exceptions=True))
@@ -78,7 +115,10 @@ class TrackedRemoteCalls:
                 continue
 
 
-async def flush_sortformer_tail(online, pad_audio):
+TrackedRemoteCalls = TrackedWorkerCalls
+
+
+def flush_sortformer_tail(online, pad_audio):
     """Infer a short speech tail and remove padded time from the stream clock."""
     remaining = len(online.buffer_audio)
     if not remaining:
@@ -91,7 +131,7 @@ async def flush_sortformer_tail(online, pad_audio):
                 + online.global_time_offset + remaining / online.sample_rate)
     online.buffer_audio = pad_audio(online.buffer_audio, (0, pad_samples))
     try:
-        segments = await online.diarize()
+        segments = online._diarize_sync()
     finally:
         online.global_time_offset -= pad_samples / online.sample_rate
     clipped = []

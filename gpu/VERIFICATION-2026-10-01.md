@@ -1,5 +1,9 @@
 # Shared audio deployment verification
 
+Historical snapshot. The [October 23 follow-up](VERIFICATION-2026-10-23.md)
+records restored SSH access, reliability fixes and a completed 30-minute replay.
+The earlier failure and deployment details below are retained as evidence.
+
 Deployment host: `faeon` (`100.119.163.116`). Release directory:
 `/home/Skywinder/shared-audio/releases/20260930-shared-live-v1`.
 

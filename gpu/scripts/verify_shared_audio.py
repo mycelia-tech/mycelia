@@ -19,6 +19,41 @@ from urllib.parse import urlencode, urlsplit
 
 RATE = 16000
 FRAME_BYTES = 3200  # 100 ms PCM16 mono
+LAG_INTERVAL_S = 300
+MAX_LAG_INTERVALS = 48  # The CLI permits up to four hours.
+
+
+def pcm_chunks(pcm, sample_count):
+    """Repeat PCM continuously, including across fixture and final-frame boundaries."""
+    if not pcm or len(pcm) % 2:
+        raise ValueError('PCM must contain whole 16-bit samples')
+    if type(sample_count) is not int or sample_count < 0:
+        raise ValueError('sample count must be a non-negative integer')
+    position = 0
+    remaining = sample_count * 2
+    while remaining:
+        wanted = min(FRAME_BYTES, remaining)
+        pieces = []
+        available = wanted
+        while available:
+            piece = pcm[position:position + available]
+            pieces.append(piece)
+            available -= len(piece)
+            position = (position + len(piece)) % len(pcm)
+        yield b''.join(pieces)
+        remaining -= wanted
+
+
+def close_category(error):
+    """Return only fixed categories: arbitrary peer close reasons may contain text."""
+    received, sent = getattr(error, 'rcvd', None), getattr(error, 'sent', None)
+    if sent is not None and sent.reason == 'keepalive ping timeout':
+        return 'keepalive_timeout'
+    code = getattr(received, 'code', None) or getattr(sent, 'code', None)
+    return {1000: 'normal_close', 1001: 'going_away', 1002: 'protocol_error',
+            1003: 'unsupported_data', 1006: 'abnormal_close', 1007: 'invalid_payload',
+            1008: 'policy_violation', 1009: 'message_too_big', 1011: 'internal_error',
+            1012: 'service_restart', 1013: 'try_again_later'}.get(code, 'unclassified')
 
 
 class Metric:
@@ -104,9 +139,21 @@ class StreamStats:
         self.sent_s = 0.0
         self.diarization = False
         self.audio_lag = Metric()
+        self.lag_intervals = deque(maxlen=MAX_LAG_INTERVALS)
+        self.snapshot_bytes_max = 0
+        self.snapshot_bytes_last = None
+        self.last_snapshot = None
+        self.last_progress = None
+        self.last_message = None
+        self.target_samples = None
+        self.sent_samples = 0
+        self.padding_samples = 0
+        self.audio_pacing_elapsed = None
+        self.pacing_lag = Metric()
 
-    def on_message(self, msg):
+    def on_message(self, msg, wire_bytes=None):
         elapsed = time.monotonic() - self.start
+        self.last_message = elapsed
         kind = msg.get('type')
         if self.ready is None and (kind == 'config' or self.omi and kind == 'service_status' and msg.get('status') == 'ready'):
             self.ready = elapsed
@@ -120,6 +167,10 @@ class StreamStats:
         if not isinstance(lines, list):
             return
         self.snapshots += 1
+        self.last_snapshot = elapsed
+        if wire_bytes is not None:
+            self.snapshot_bytes_last = wire_bytes
+            self.snapshot_bytes_max = max(self.snapshot_bytes_max, wire_bytes)
         committed = [row for row in lines if isinstance(row, dict) and isinstance(row.get('text'), str)
                      and row['text'].strip() and (not self.omi or not row.get('is_draft'))]
         self.lines_max = max(self.lines_max, len(committed))
@@ -140,12 +191,20 @@ class StreamStats:
                 newest_end = end if newest_end is None else max(newest_end, end)
         if newest_end is not None and (self.last_end is None or newest_end > self.last_end):
             self.last_end = newest_end
+            self.last_progress = elapsed
             self.last_lag = max(0.0, elapsed - newest_end)
             self.lag.add(self.last_lag)
             if self.audio_start is not None:
-                self.audio_lag.add(max(0.0, elapsed - self.audio_start - newest_end))
+                audio_elapsed = max(0.0, elapsed - self.audio_start)
+                lag = max(0.0, audio_elapsed - newest_end)
+                self.audio_lag.add(lag)
+                interval = int(audio_elapsed // LAG_INTERVAL_S)
+                if not self.lag_intervals or self.lag_intervals[-1][0] != interval:
+                    self.lag_intervals.append((interval, Metric()))
+                self.lag_intervals[-1][1].add(lag)
 
     def report(self):
+        elapsed = time.monotonic() - self.start
         return {'ready_s': self.ready, 'audio_start_s': self.audio_start,
                 'first_text_after_audio_start_s': (self.first_text - self.audio_start
                     if self.first_text is not None and self.audio_start is not None else None),
@@ -154,30 +213,53 @@ class StreamStats:
                 'snapshots': self.snapshots, 'committed_lines_max': self.lines_max,
                 'last_committed_audio_end_s': self.last_end, 'last_line_lag_s': self.last_lag,
                 'line_lag': self.lag.report(), 'audio_relative_line_lag': self.audio_lag.report(),
+                'audio_relative_lag_intervals': [
+                    {'start_s': number * LAG_INTERVAL_S, 'end_s': (number + 1) * LAG_INTERVAL_S,
+                     **metric.report()} for number, metric in self.lag_intervals],
+                'snapshot_bytes_max': self.snapshot_bytes_max,
+                'snapshot_bytes_last': self.snapshot_bytes_last,
+                'last_snapshot_age_s': round(elapsed - self.last_snapshot, 3) if self.last_snapshot is not None else None,
+                'last_progress_age_s': round(elapsed - self.last_progress, 3) if self.last_progress is not None else None,
+                'last_message_age_s': round(elapsed - self.last_message, 3) if self.last_message is not None else None,
                 'protocol_errors': self.errors, 'heartbeats': self.heartbeats,
-                'eof_ack': self.eof_ack, 'audio_sent_s': round(self.sent_s, 3)}
+                'eof_ack': self.eof_ack, 'audio_sent_s': round(self.sent_s, 6),
+                'target_audio_samples': self.target_samples, 'audio_samples_sent': self.sent_samples,
+                'acceptance_audio_duration_s': self.target_samples / RATE if self.target_samples is not None else None,
+                'opus_padding_s': self.padding_samples / RATE,
+                'pacing_lag': self.pacing_lag.report(),
+                'audio_pacing_elapsed_s': self.audio_pacing_elapsed}
 
 
 async def receive(socket, stats):
-    async for raw in socket:
-        if stats.omi and raw == 'ping':
-            stats.heartbeats += 1  # Omi's application-level keepalive is not JSON.
-            continue
-        if not isinstance(raw, str) or len(raw) > 16 * 1024 * 1024:
-            continue
-        try:
-            msg = json.loads(raw)
-        except ValueError:
-            stats.errors += 1
-            continue
-        if isinstance(msg, dict):
-            stats.on_message(msg)
-            if stats.eof_ack:
-                return
+    iterator = socket.__aiter__()
+    try:
+        async for raw in iterator:
+            if stats.omi and raw == 'ping':
+                stats.heartbeats += 1  # Omi's application-level keepalive is not JSON.
+                stats.last_message = time.monotonic() - stats.start
+                continue
+            if not isinstance(raw, str) or len(raw) > 16 * 1024 * 1024:
+                continue
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                stats.errors += 1
+                continue
+            if isinstance(msg, dict):
+                stats.on_message(msg, wire_bytes=len(raw.encode('utf-8')))
+                if stats.eof_ack:
+                    return
+    finally:
+        close = getattr(iterator, 'aclose', None)
+        if close is not None:
+            await close()
 
 
 async def stream(url, token, pcm, duration, omi, language, stats=None):
     import websockets
+    target_samples = round(duration * RATE)
+    if target_samples < 1:
+        raise ValueError('duration must include at least one audio sample')
     if omi:
         base = url.replace('https://', 'wss://', 1).replace('http://', 'ws://', 1)
         base = base.removesuffix('/v4/listen')
@@ -197,6 +279,7 @@ async def stream(url, token, pcm, duration, omi, language, stats=None):
     if omi:
         headers['X-App-Platform'] = 'ios'
     stats = stats or StreamStats(omi)
+    stats.target_samples = target_samples
     async with websockets.connect(url, extra_headers=headers, open_timeout=15, close_timeout=5,
                                   max_size=16 * 1024 * 1024, max_queue=8) as socket:
         reader = asyncio.create_task(receive(socket, stats))
@@ -206,20 +289,31 @@ async def stream(url, token, pcm, duration, omi, language, stats=None):
                     await asyncio.sleep(.02)
             if stats.ready is None:
                 raise RuntimeError('stream did not become ready')
-            chunks = [pcm[pos:pos + FRAME_BYTES] for pos in range(0, len(pcm), FRAME_BYTES)]
             started = time.monotonic()
             stats.audio_start = started - stats.start
-            for index in range(math.ceil(duration * 10)):
-                await asyncio.sleep(max(0, started + index * .1 - time.monotonic()))
+            next_progress_s = 60
+            for chunk in pcm_chunks(pcm, target_samples):
+                await asyncio.sleep(max(0, started + stats.sent_samples / RATE - time.monotonic()))
+                stats.pacing_lag.add(max(0, time.monotonic() - started - stats.sent_samples / RATE))
                 if reader.done():
                     await reader
                     raise RuntimeError('stream reader stopped before audio completed')
-                chunk = chunks[index % len(chunks)]
                 for packet in packets(chunk):
                     await socket.send(packet)
-                stats.sent_s += len(chunk) / 32000
-                if index and index % 600 == 0:
+                stats.sent_samples += len(chunk) // 2
+                stats.sent_s = stats.sent_samples / RATE
+                if omi:
+                    stats.padding_samples += (-len(chunk) // 2) % 320
+                if stats.sent_s >= next_progress_s:
                     print(json.dumps({'progress': stats.report()}), flush=True)
+                    next_progress_s += 60
+            # Complete the final frame's playback time before EOF; fractional final
+            # frames otherwise make wall duration shorter than the requested audio.
+            await asyncio.sleep(max(0, started + target_samples / RATE - time.monotonic()))
+            stats.audio_pacing_elapsed = time.monotonic() - started
+            if reader.done():
+                await reader
+                raise RuntimeError('stream reader stopped before EOF')
             if omi:
                 await socket.send(json.dumps({'type': 'finalization_reason', 'reason': 'user_stop'}))
                 await socket.close()  # Omi closes /v4/listen; EOF ACK is internal to its relay.
@@ -299,7 +393,7 @@ async def run(args):
         completed = True
     except Exception as error:  # noqa: BLE001 - retain partial metrics without sensitive exception text
         result['stream'] = stats.report()
-        result['failure'] = {'type': type(error).__name__}
+        result['failure'] = {'type': type(error).__name__, 'close_category': close_category(error)}
         received = getattr(error, 'rcvd', None)
         if received is not None and isinstance(received.code, int):
             result['failure']['websocket_close_code'] = received.code
@@ -314,6 +408,9 @@ async def run(args):
     result['elapsed_s'] = round(time.time() - result['started_epoch_s'], 3)
     result['checks'] = {
         'stream_completed': completed,
+        'requested_audio_sent': result['stream'].get('audio_samples_sent') == round(args.duration * RATE),
+        'pacing_duration_observed': (result['stream'].get('audio_pacing_elapsed_s') is not None
+            and result['stream']['audio_pacing_elapsed_s'] >= round(args.duration * RATE) / RATE),
         'committed_text_observed': result['stream']['first_committed_text_s'] is not None,
         'no_protocol_errors': all(result[name]['protocol_errors'] == 0
                                   for name in ('stream', 'reconnect') if name in result),

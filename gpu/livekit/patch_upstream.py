@@ -122,7 +122,7 @@ def patch_processor(source):
         source,
         "from whisperlivekit.metrics_collector import SessionMetrics\n",
         "from whisperlivekit.metrics_collector import SessionMetrics\n"
-        "from whisperlivekit.shared_livekit import TrackedRemoteCalls\n",
+        "from whisperlivekit.shared_livekit import TrackedRemoteCalls, processing_failure\n",
     )
     source = replace_once(
         source,
@@ -150,6 +150,8 @@ def patch_processor(source):
         "            except asyncio.CancelledError:\n"
         "                pass  # remote calls still must drain before admission is freed\n"
         "        await self._remote_calls.drain()\n"
+        "        if self.diarization and self.args.diarization_backend == \"sortformer\":\n"
+        "            await self.diarization.drain()\n"
         "        logger.info(\"All processing tasks cancelled or finished.\")\n",
     )
     source = replace_once(
@@ -157,8 +159,9 @@ def patch_processor(source):
         '        except Exception as e:\n            logger.warning(f"Error finishing transcription: {e}")\n            logger.debug(f"Traceback: {traceback.format_exc()}")\n',
         '        except Exception as e:\n'
         '            if self.args.backend == "openai-api":\n'
-        '                self._fatal_asr_error = True\n'
-        '                raise\n'
+        '                self._fatal_asr_error = processing_failure("remote ASR", e)\n'
+        '                logger.error("%s", self._fatal_asr_error)\n'
+        '                raise self._fatal_asr_error from None\n'
         '            logger.warning(f"Error finishing transcription: {e}")\n'
         '            logger.debug(f"Traceback: {traceback.format_exc()}")\n',
     )
@@ -167,8 +170,9 @@ def patch_processor(source):
         '            except Exception as e:\n                logger.warning(f"Exception in transcription_processor: {e}")\n',
         '            except Exception as e:\n'
         '                if self.args.backend == "openai-api":\n'
-        '                    self._fatal_asr_error = True\n'
-        '                    raise\n'
+        '                    self._fatal_asr_error = processing_failure("remote ASR", e)\n'
+        '                    logger.error("%s", self._fatal_asr_error)\n'
+        '                    raise self._fatal_asr_error from None\n'
         '                logger.warning(f"Exception in transcription_processor: {e}")\n',
     )
     source = replace_once(
@@ -190,9 +194,9 @@ def patch_processor(source):
         '                logger.warning(f"Exception in diarization_processor: {e}")\n'
         '                logger.warning(f"Traceback: {traceback.format_exc()}")\n',
         '            except Exception as e:\n'
-        '                logger.error(f"Exception in diarization_processor: {e}")\n'
-        '                self._fatal_diarization_error = True\n'
-        '                raise\n',
+        '                self._fatal_diarization_error = processing_failure("Sortformer diarization", e)\n'
+        '                logger.error("%s", self._fatal_diarization_error)\n'
+        '                raise self._fatal_diarization_error from None\n',
     )
     source = replace_once(
         source,
@@ -207,9 +211,10 @@ def patch_processor(source):
         "            try:\n"
         "                await self._drain_diarization_buffer()\n"
         "                await self._update_diarization_state(await self.diarization.flush())\n"
-        "            except Exception:\n"
-        "                self._fatal_diarization_error = True\n"
-        "                raise\n",
+        "            except Exception as e:\n"
+        "                self._fatal_diarization_error = processing_failure(\"Sortformer diarization\", e)\n"
+        "                logger.error(\"%s\", self._fatal_diarization_error)\n"
+        "                raise self._fatal_diarization_error from None\n",
     )
     source = replace_once(
         source,
@@ -218,9 +223,9 @@ def patch_processor(source):
         '        """Format processing results for output."""\n'
         '        while True:\n'
         '            if self._fatal_asr_error:\n'
-        '                raise RuntimeError("remote ASR failed")\n'
+        '                raise self._fatal_asr_error from None\n'
         '            if self._fatal_diarization_error:\n'
-        '                raise RuntimeError("Sortformer diarization failed")\n'
+        '                raise self._fatal_diarization_error from None\n'
         '            processing_done = self.is_stopping and self._processing_tasks_done()\n'
         '            try:\n',
     )
@@ -253,13 +258,28 @@ def patch_sortformer(source):
         source,
         "from whisperlivekit.timed_objects import SpeakerSegment\n",
         "from whisperlivekit.timed_objects import SpeakerSegment\n"
-        "from whisperlivekit.shared_livekit import flush_sortformer_tail\n",
+        "from whisperlivekit.shared_livekit import TrackedWorkerCalls, flush_sortformer_tail\n",
+    )
+    source = replace_once(
+        source,
+        "        self.debug = False\n",
+        "        self.debug = False\n"
+        "        self._worker_calls = TrackedWorkerCalls()\n",
+    )
+    source = replace_once(
+        source,
+        "    async def diarize(self):\n",
+        "    async def diarize(self):\n"
+        "        return await self._worker_calls.run(self._diarize_sync)\n\n"
+        "    def _diarize_sync(self):\n",
     )
     source = replace_once(
         source,
         "    def get_segments(self) -> List[SpeakerSegment]:\n",
         "    async def flush(self):\n"
-        "        return await flush_sortformer_tail(self, np.pad)\n\n"
+        "        return await self._worker_calls.run(flush_sortformer_tail, self, np.pad)\n\n"
+        "    async def drain(self):\n"
+        "        await self._worker_calls.drain()\n\n"
         "    def get_segments(self) -> List[SpeakerSegment]:\n",
     )
     return source

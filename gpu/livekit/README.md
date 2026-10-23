@@ -8,6 +8,18 @@ The remote backend coalesces speech into 0.8-second blocks before inference
 (`WLK_ASR_COALESCE_MIN_S`). This avoids re-transcribing the growing buffer for
 every tiny VAC frame. Silence and EOF flush any remaining shorter block.
 
+Sortformer GPU work runs in a serialized worker rather than the WebSocket event
+loop. Cancellation and shutdown join in-flight ASR and Sortformer work before
+closing the diarizer and admitting another session. Tail padding, inference and
+clock correction form one worker operation, so cancellation cannot shift speaker
+timestamps while inference is still using them.
+
+Processing failures retain their original exception for inspection. Logs expose
+exception types, HTTP status and traceback locations without remote response
+bodies, credentials or transcript text; a failed processor closes the stream
+with 1011 and never acknowledges successful EOF. The private ASR timeout/retry
+policy is unchanged by this responsiveness update.
+
 ```sh
 docker compose -f compose.yml build wlk
 docker compose -f compose.yml up -d wlk

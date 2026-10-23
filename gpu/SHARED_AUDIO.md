@@ -125,6 +125,12 @@ readiness. Recreate only `app` after capture and import work stop.
 
 ## Verification
 
+The [2026-10-23 stability follow-up](VERIFICATION-2026-10-23.md) records the
+completed 30-minute direct replay, concurrent file requests, cancellation and
+idle-resume checks, the deployed image and remaining continuous-session limits.
+The [October 1 report](VERIFICATION-2026-10-01.md) retains the earlier failed
+soak and initial Omi integration evidence.
+
 Run focused offline tests from the repository root with an isolated environment:
 
 ```bash

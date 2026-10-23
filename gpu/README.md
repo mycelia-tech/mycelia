@@ -17,6 +17,8 @@ audio, see [SHARED_AUDIO.md](SHARED_AUDIO.md). The opt-in
 `docker-compose.shared-live.yml` overlay adds scheduling and an internal live
 adapter; WhisperLiveKit remains a separate Compose project. The existing
 Portainer compose by itself retains the batch-only deployment.
+See the [October 23 stability verification](VERIFICATION-2026-10-23.md) for
+the deployed WLK follow-up, measured results and long-session limitations.
 
 ### Whisper ASR
 - **Image**: `onerahmet/openai-whisper-asr-webservice:v1.9.1-gpu`
