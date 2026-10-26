@@ -18,6 +18,9 @@ your own words.
   Summarization.
 - Smart chunking, waveform normalization, and diarization-friendly segments.
 - Whisper transcription via local GPU or any remote OpenAI-compatible server.
+- Optional [shared live audio service](gpu/SHARED_AUDIO.md) for Omi Local and
+  other clients: one Whisper model serves file transcription and WhisperLiveKit
+  streaming, with separate anonymous speaker diarization.
 - Audio recording, playback (0.5x–3x speed, volume up to 300%), and WAV export.
 - Pipeline monitoring UI with real-time session tracking and error handling.
 

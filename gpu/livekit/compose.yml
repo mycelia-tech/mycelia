@@ -1,0 +1,29 @@
+services:
+  wlk:
+    build: .
+    image: ${WLK_IMAGE:-sky-whisperlivekit:shared-0.2.26-aceed595}
+    restart: unless-stopped
+    gpus: all
+    ports:
+      - "${WLK_BIND_ADDRESS:?set WLK_BIND_ADDRESS}:${WLK_PORT:-8010}:8000"
+    environment:
+      OPENAI_BASE_URL: http://live-asr:8002/v1
+      OPENAI_API_KEY: ${LIVE_ASR_TOKEN:?set LIVE_ASR_TOKEN}
+      WLK_ASR_MODEL: ${WLK_ASR_MODEL:-large-v3-turbo}
+      WLK_API_TOKEN: ${WLK_API_TOKEN:?set WLK_API_TOKEN}
+      HF_HOME: /root/.cache/huggingface
+    command: ["--backend-policy", "localagreement", "--backend", "openai-api", "--language", "${WLK_LANGUAGE:-auto}", "--pcm-input", "--asr-coalesce-min-s", "${WLK_ASR_COALESCE_MIN_S:-0.8}", "--diarization", "--diarization-backend", "sortformer", "--sortformer-max-speakers", "4", "--warmup-file", ""]
+    volumes:
+      - wlk-cache:/root/.cache
+    networks:
+      - sky-audio
+
+volumes:
+  wlk-cache:
+    external: true
+    name: sky-livekit_wlk-cache
+
+networks:
+  sky-audio:
+    external: true
+    name: sky-audio

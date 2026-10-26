@@ -12,6 +12,20 @@ file or `gpu/docker-compose.portainer.yml` to create a remote diarization stack.
 
 ## Services
 
+For one Whisper model shared between existing file transcription and Omi live
+audio, see [SHARED_AUDIO.md](SHARED_AUDIO.md). The opt-in
+`docker-compose.shared-live.yml` overlay adds scheduling and an internal live
+adapter; WhisperLiveKit remains a separate Compose project. The existing
+Portainer compose by itself retains the batch-only deployment.
+See the [October 23 stability verification](VERIFICATION-2026-10-23.md) for
+the deployed WLK follow-up, measured results and long-session limitations.
+For installation, upgrades and rollback of the shared deployment, follow
+[the shared-audio procedure](SHARED_AUDIO.md#deployment), then the
+[Omi image procedure](omi/README.md). The generic combined-stack setup below
+is a different deployment. The [Omi rotation follow-up](VERIFICATION-2026-10-23-ROTATION.md)
+records one successful rollover and an unresolved later provider failure;
+it is not evidence of a completed hour-long session.
+
 ### Whisper ASR
 - **Image**: `onerahmet/openai-whisper-asr-webservice:v1.9.1-gpu`
 - **Purpose**: Audio transcription using OpenAI Whisper
