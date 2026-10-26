@@ -89,7 +89,64 @@ briefly stop new proxy admissions before replacement. Retain previous images,
 Compose files, environment and volumes for rollback. Recreate only affected
 services; no database or Redis restart is required.
 
+## Updating an existing deployment
+
+Keep the existing Compose project names (`mycelia-stt` and `sky-livekit` on
+faeon), private environment files, Tailscale bindings and external volumes.
+If Portainer owns the stack, update its canonical definition rather than
+creating a second stack from a new directory. Use a clean reviewed checkout
+of the release commit and new immutable image tags for each changed image.
+
+1. Record the current image IDs and save the effective Compose configuration
+   and protected environment locally with mode 0600. Do not print, commit or
+   upload rendered secrets. Keep the old images and a backup of persistent
+   Omi state; model caches are not a substitute for the recording data volume.
+2. Build and validate the new images before replacing a service. Run the
+   focused offline tests for the changed components. A source edit does not
+   update an image-based container.
+3. Stop new client admissions and wait for the current live session and final
+   jobs to finish. For Whisper replacement, drain its internal scheduler and
+   require no accepted/running work as described above. Do not interrupt a
+   native GPU operation or unload a model still held by a request.
+4. Recreate only the changed services, using the same Compose files and env:
+
+   ```bash
+   # Only when these STT services changed and are drained:
+   docker compose --env-file /path/to/protected-stt.env -p mycelia-stt \
+     -f gpu/docker-compose.portainer.yml -f gpu/docker-compose.shared-live.yml \
+     up -d --no-deps --no-build whisper proxy live-proxy
+   # Only when WLK changed and its session has finished:
+   docker compose --env-file /path/to/protected-wlk.env -p sky-livekit \
+     -f gpu/livekit/compose.yml up -d --no-deps --no-build wlk
+   ```
+
+   Omit unchanged services. For an Omi-only release, use the three-file
+   [Omi app update](omi/README.md); there is no reason to restart either GPU
+   stack, MongoDB, Redis or ingress for that image change.
+5. Verify exact image IDs, readiness and preserved mounts, then a short
+   authenticated file request and live recording with EOF. Check the final
+   Omi job and saved transcript; health alone is insufficient. Longer tests
+   are a separate acceptance step and must not be started implicitly by an
+   install/update command.
+6. To roll back, wait for current work to finish and recreate only affected
+   services with the saved configuration and retained images. Keep the
+   existing volumes and credentials; never use `down -v` for an update.
+
+On the existing faeon installation, `qwen-switch` provides operator controls:
+`diarization status`, `diarization live start`, `diarization file start`,
+`memory`, and `processes`. Run it on faeon; these are not local Docker commands
+or a dependency installed by the Compose files in this directory. The two
+diarization engines are independent. Its memory view separates measured GPU
+and container RAM use; the combined peak with file diarization enabled remains
+unmeasured and must not be presented as a fixed capacity requirement.
+
 ## Omi Local in Docker
+
+For the deployed compatibility image, follow [omi/README.md](omi/README.md)
+for the retained-base build chain and three-file Compose installation/update.
+The standard Omi wrapper commands below apply only when intentionally using
+the standard image; running them after an overlay deployment replaces that
+choice with the wrapper's standard build.
 
 In the local library settings, use the existing provider workflow:
 
@@ -130,6 +187,12 @@ completed 30-minute direct replay, concurrent file requests, cancellation and
 idle-resume checks, the deployed image and remaining continuous-session limits.
 The [October 1 report](VERIFICATION-2026-10-01.md) retains the earlier failed
 soak and initial Omi integration evidence.
+The [Omi rotation follow-up](VERIFICATION-2026-10-23-ROTATION.md) records the
+successful 15-minute diagnostic, one successful 30-minute rollover, and the
+later provider failure at 2481.9 seconds. The full final job also failed; the
+exact WAV was retained. Further hour-long tests are deferred by the operator.
+Do not interpret installation or the committed implementation as full
+long-session acceptance.
 
 Run focused offline tests from the repository root with an isolated environment:
 

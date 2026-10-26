@@ -1,0 +1,10 @@
+# Before building, verify this local base has image ID
+# sha256:e44327794d5a92f9feed491f09b10e714a713f2d0e49baae3deb8ae5d719d6a9.
+ARG OMI_ROTATION_BASE_IMAGE=mycelia/omiloc-app-audio-compat-r5:2026-10-23
+FROM ${OMI_ROTATION_BASE_IMAGE}
+USER root
+COPY local_live_rotation.py /opt/omiloc/backend/utils/local_live_rotation.py
+COPY patch_live_rotation.py /tmp/patch_live_rotation.py
+RUN python /tmp/patch_live_rotation.py /opt/omiloc/backend/utils/local_live_preview.py \
+    && rm /tmp/patch_live_rotation.py
+USER omi
