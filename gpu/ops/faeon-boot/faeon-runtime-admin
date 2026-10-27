@@ -1,0 +1,135 @@
+#!/usr/bin/python3 -I
+"""Fixed-purpose mount guard. No container control, shell, or caller paths."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import time
+
+UUID = '816b292e-4e7e-4965-85b8-24abbb3e000d'
+TARGET = Path('/mnt/datadrive')
+DEVICE = Path('/dev/disk/by-uuid') / UUID
+ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C', 'HOME': '/root'}
+
+
+def run(args, timeout=10):
+    return subprocess.run(args, env=ENV, cwd='/', capture_output=True,
+                          text=True, timeout=timeout, check=False)
+
+
+def root_path(path, directory=False):
+    """Privileged code/state paths must not be redirected or user-writable."""
+    path = Path(path)
+    for node in [*reversed(path.parents), path]:
+        info = node.lstat()
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError('Unsafe privileged path: ' + str(node))
+    info = path.lstat()
+    if directory and not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError('Not a directory: ' + str(path))
+
+
+def mount_record():
+    result = run(['/usr/bin/findmnt', '--json', '--mountpoint', str(TARGET),
+                  '--output', 'TARGET,SOURCE,UUID,FSTYPE,FSROOT,OPTIONS'])
+    if result.returncode == 1 and not result.stdout.strip():
+        return None
+    if result.returncode:
+        raise RuntimeError('findmnt failed; mount state is unknown')
+    records = json.loads(result.stdout).get('filesystems', [])
+    if not records:
+        return None
+    if len(records) != 1:
+        raise RuntimeError('Ambiguous mount state')
+    return records[0]
+
+
+def correct_mount(record):
+    return bool(record and record.get('target') == str(TARGET)
+                and record.get('uuid') == UUID
+                and record.get('fstype') == 'ext4'
+                and record.get('fsroot') == '/'
+                and 'rw' in record.get('options', '').split(','))
+
+
+def mount_disk():
+    root_path(TARGET.parent, directory=True)
+    current = mount_record()
+    if current:
+        if not correct_mount(current):
+            raise RuntimeError('Refusing wrong, partial, or read-only mount at target')
+        return {'mounted': True, 'changed': False, 'mount': current}
+
+    root_path(TARGET, directory=True)
+    if any(TARGET.iterdir()):
+        raise RuntimeError('Refusing to hide existing files/directories under mountpoint')
+    deadline = time.monotonic() + 45
+    while not DEVICE.exists() and time.monotonic() < deadline:
+        time.sleep(1)
+    if not DEVICE.exists() or not stat.S_ISBLK(DEVICE.stat().st_mode):
+        raise RuntimeError('Expected block device is not available')
+    identity = run(['/usr/bin/blkid', '-p', '-o', 'export', str(DEVICE)])
+    fields = dict(line.split('=', 1) for line in identity.stdout.splitlines() if '=' in line)
+    if identity.returncode or fields.get('UUID') != UUID or fields.get('TYPE') != 'ext4':
+        raise RuntimeError('Block device UUID/filesystem does not match')
+    elsewhere = run(['/usr/bin/findmnt', '--json', '--source', 'UUID=' + UUID])
+    if elsewhere.returncode == 0:
+        raise RuntimeError('Expected filesystem is already mounted elsewhere')
+    if elsewhere.returncode != 1:
+        raise RuntimeError('Could not exclude another mount of the device')
+    # Device discovery may wait: Docker can create placeholder directories as
+    # root meanwhile. Recheck immediately before mounting instead of hiding them.
+    current = mount_record()
+    if current:
+        if correct_mount(current):
+            return {'mounted': True, 'changed': False, 'mount': current}
+        raise RuntimeError('Mountpoint changed during device discovery')
+    root_path(TARGET, directory=True)
+    if any(TARGET.iterdir()):
+        raise RuntimeError('Mountpoint became nonempty during device discovery')
+    # Never run fsck, format, mount -a, unmount, or accept caller mount options.
+    result = run(['/usr/bin/mount', '-t', 'ext4', '-o', 'defaults',
+                  '--', str(DEVICE), str(TARGET)], timeout=60)
+    observed = mount_record()
+    if result.returncode or not correct_mount(observed):
+        raise RuntimeError('Mount did not complete with the required identity; inspect status')
+    return {'mounted': True, 'changed': True, 'mount': observed}
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ('status', 'mount'):
+        raise RuntimeError('Usage: faeon-runtime-admin status|mount')
+    if os.geteuid() != 0:
+        raise RuntimeError('Run the exact command through sudo')
+    os.umask(0o077)
+    os.chdir('/')
+    root_path('/usr/local/sbin/faeon-runtime-admin')
+    lockdir = Path('/run/faeon-runtime-admin')
+    root_path(lockdir.parent, directory=True)
+    if not lockdir.exists():
+        lockdir.mkdir(mode=0o700)
+    root_path(lockdir, directory=True)
+    fd = os.open(lockdir / 'mount.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as lock:
+        info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise RuntimeError('Unsafe lock file')
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if sys.argv[1] == 'status':
+            record = mount_record()
+            result = {'expected_uuid': UUID, 'target': str(TARGET),
+                      'mounted_correctly': correct_mount(record), 'mount': record}
+        else:
+            result = mount_disk()
+        print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({'ok': False, 'error': str(error)}), file=sys.stderr)
+        sys.exit(1)

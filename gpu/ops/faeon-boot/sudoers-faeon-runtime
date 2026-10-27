@@ -1,0 +1,2 @@
+# Exactly two fixed commands. No shell, Docker, arbitrary arguments or SETENV.
+Skywinder ALL=(root) NOPASSWD:NOSETENV: /usr/local/sbin/faeon-runtime-admin status, /usr/local/sbin/faeon-runtime-admin mount

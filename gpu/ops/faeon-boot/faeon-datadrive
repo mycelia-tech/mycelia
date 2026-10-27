@@ -1,0 +1,6 @@
+type = scripted
+command = /usr/local/sbin/faeon-runtime-admin mount
+restart = false
+start-timeout = 180
+depends-on = early-root-rw.target
+depends-on = early-devices.target

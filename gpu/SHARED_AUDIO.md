@@ -140,6 +140,16 @@ diarization engines are independent. Its memory view separates measured GPU
 and container RAM use; the combined peak with file diarization enabled remains
 unmeasured and must not be presented as a fixed capacity requirement.
 
+## Model disk and boot recovery on faeon
+
+The model and cache directories live on `/mnt/datadrive`. If the disk is absent,
+container state and proxy model listings do not prove inference. Follow the
+[reviewed dinit mount guard and limited sudo procedure](ops/faeon-boot/README.md)
+to restore the existing filesystem and make Docker wait for its verified UUID
+on subsequent boots. It preserves intentionally stopped containers and does
+not restart Docker during installation. Verify the mount, selected containers
+and short inference requests separately; a reboot is a separate test.
+
 ## Omi Local in Docker
 
 For the deployed compatibility image, follow [omi/README.md](omi/README.md)
