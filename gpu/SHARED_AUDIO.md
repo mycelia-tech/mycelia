@@ -132,13 +132,13 @@ of the release commit and new immutable image tags for each changed image.
    services with the saved configuration and retained images. Keep the
    existing volumes and credentials; never use `down -v` for an update.
 
-On the existing faeon installation, `qwen-switch` provides operator controls:
-`diarization status`, `diarization live start`, `diarization file start`,
-`memory`, and `processes`. Run it on faeon; these are not local Docker commands
-or a dependency installed by the Compose files in this directory. The two
-diarization engines are independent. Its memory view separates measured GPU
-and container RAM use; the combined peak with file diarization enabled remains
-unmeasured and must not be presented as a fixed capacity requirement.
+`qwen-switch` is a separate host utility, not installed by these Compose files.
+The September 30 version found on faeon on October 27 does not provide the
+previously documented `diarization`, `memory`, or `processes` commands. Those
+controls require a separate tool installation and were not deployed or verified
+by this recovery. Inspect the actual containers and GPU usage for operational
+checks; live and file diarization are independent services. Short GPU samples
+do not establish the combined peak with every feature enabled.
 
 ## Model disk and boot recovery on faeon
 
@@ -149,6 +149,9 @@ to restore the existing filesystem and make Docker wait for its verified UUID
 on subsequent boots. It preserves intentionally stopped containers and does
 not restart Docker during installation. Verify the mount, selected containers
 and short inference requests separately; a reboot is a separate test.
+The [October 27 recovery verification](VERIFICATION-2026-10-27-RECOVERY.md)
+records the installed guard, successful imports, transcription, summaries and
+bounded file diarization, with the remaining verification limits.
 
 ## Omi Local in Docker
 
