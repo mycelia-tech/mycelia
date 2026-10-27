@@ -32,5 +32,21 @@ fi
 export NGINX_RESOLVER
 echo "Using DNS resolver(s): $NGINX_RESOLVER"
 
+NGINX_HTTPS_PORT="${NGINX_HTTPS_PORT:-4433}"
+case "$NGINX_HTTPS_PORT" in
+    ''|*[!0-9]*) echo "NGINX_HTTPS_PORT must be a port number" >&2; exit 1 ;;
+esac
+if [ "$NGINX_HTTPS_PORT" -lt 1 ] || [ "$NGINX_HTTPS_PORT" -gt 65535 ]; then
+    echo "NGINX_HTTPS_PORT must be between 1 and 65535" >&2
+    exit 1
+fi
+NGINX_HTTP_REDIRECT=''
+if [ "${APP_MODE:-prod}" != "dev" ]; then
+    NGINX_HTTP_REDIRECT="if (\$scheme = http) { return 308 https://\$host:${NGINX_HTTPS_PORT}\$request_uri; }"
+fi
+export NGINX_HTTP_REDIRECT
+# Do not log query strings: device WebSocket URLs may contain short-lived JWTs.
+export NGINX_ENVSUBST_FILTER='^(NGINX_RESOLVER|NGINX_HTTP_REDIRECT)$'
+
 # Execute the original nginx entrypoint
 exec /docker-entrypoint.sh "$@"

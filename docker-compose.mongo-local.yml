@@ -1,0 +1,7 @@
+# Explicit host-only database access for maintenance/local development.
+# docker compose -f docker-compose.yml -f docker-compose.mongo-local.yml up -d
+# This does not enable MongoDB authorization; see docs/MONGO_AUTH.md.
+services:
+  mongo:
+    ports:
+      - "127.0.0.1:${MONGO_LOCAL_PORT:-27017}:27017"

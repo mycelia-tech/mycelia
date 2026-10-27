@@ -36,8 +36,11 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME
       - MONGO_INITDB_ROOT_PASSWORD
-    ports:
-      - "27017:27017"
+    # Database access stays inside Docker. Host maintenance is an explicit,
+    # loopback-only opt-in via docker-compose.mongo-local.yml.
+    networks:
+      - default
+      - mongo_clients
     deploy:
       resources:
         limits:
@@ -101,6 +104,7 @@ services:
       # Keep readiness diagnostics aligned with the single mode that selects
       # both the frontend image and the backend command.
       APP_MODE: ${APP_MODE:-prod}
+      MYCELIA_TRUST_PROXY: uniquelocal
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PYTHON_WORKER_URL: http://python-worker:8000
@@ -223,6 +227,9 @@ services:
     image: nginx:1.27-alpine
     entrypoint: ["/nginx-entrypoint.sh"]
     command: ["nginx", "-g", "daemon off;"]
+    environment:
+      APP_MODE: ${APP_MODE:-prod}
+      NGINX_HTTPS_PORT: ${NGINX_PORT:-4433}
     ports:
       - "${NGINX_PORT:-4433}:4433"
       - "${NGINX_HTTP_PORT:-3210}:80"
@@ -236,6 +243,10 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+networks:
+  mongo_clients:
+    name: ${MYCELIA_MONGO_NETWORK:-${COMPOSE_PROJECT_NAME:-mycelia}-mongo-clients}
 
 volumes:
   redis_data:

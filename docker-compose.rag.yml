@@ -16,6 +16,9 @@ services:
           memory: 3G
 
   rag:
+    networks:
+      - default
+      - mongo_clients
     build:
       context: ./rag
       dockerfile: Dockerfile
@@ -30,7 +33,7 @@ services:
     ports:
       - "${RAG_API_BIND:-127.0.0.1}:${RAG_API_PORT:-48091}:8091"
     environment:
-      RAG_MONGO_URL: ${RAG_MONGO_URL:-mongodb://host.docker.internal:27017/?directConnection=true}
+      RAG_MONGO_URL: ${RAG_MONGO_URL:-mongodb://mongo:27017/?directConnection=true}
       RAG_MONGO_DATABASE: ${RAG_MONGO_DATABASE:-mycelia}
       RAG_QDRANT_URL: http://qdrant:6333
       RAG_STATE_PATH: /data/rag-state.sqlite3
@@ -88,6 +91,11 @@ services:
         reservations:
           cpus: "0.5"
           memory: 1G
+
+networks:
+  mongo_clients:
+    external: true
+    name: ${MYCELIA_MONGO_NETWORK:-mycelia-mongo-clients}
 
 volumes:
   rag_qdrant_data:

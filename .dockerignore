@@ -1,4 +1,16 @@
 .env
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+misc/secrets
+misc/letsencrypt
+misc/certbot
+.htpasswd
+misc/.htpasswd
 .git
 node_modules
 

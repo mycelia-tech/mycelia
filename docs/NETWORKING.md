@@ -21,7 +21,7 @@ network.
 |----------|----------------------|--------------|-------------|
 | **Nginx HTTPS** | `NGINX_PORT` | `4433` | Primary application entry point |
 | **Nginx HTTP** | `NGINX_HTTP_PORT` | `3210` | Plain-HTTP local entry point |
-| **MongoDB** | fixed mapping | `27017` | Local development database access |
+| **MongoDB** | internal only | `27017` | Optional `docker-compose.mongo-local.yml` publishes loopback only |
 
 ### SSL / Certificates
 
