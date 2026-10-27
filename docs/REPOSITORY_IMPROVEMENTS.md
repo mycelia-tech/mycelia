@@ -123,6 +123,21 @@ inference, ingestion completion or the deployment of this branch. Doctor still
 exits nonzero for the intentional source mismatch and the existing public Mongo
 port; these deployment findings were not silently suppressed.
 
+After readiness, six active jobs were observed: timeline recalculation,
+summarization, merged conversation extraction, diarization, conversation chunk
+creation and speaker-source indexing. A later sample showed Mongo at about 11%
+CPU, backend at 146% and Python at 186% (100% is one logical CPU). Mongo had no
+queued requests. Redis added seven access-log entries in six seconds; its sampled
+command timings did not indicate a runaway event loop. This does not establish
+sustained performance or successful completion of those jobs.
+
+The host remained under substantial aggregate load: one process snapshot had
+87 runnable processes on ten logical CPUs, with Docker virtualization, desktop
+services, other agent/browser processes and Flutter/Dart work active. Used swap
+was roughly 13–14.5 GiB across the final samples. Unrelated processes were not
+terminated. The stack is ready, but these observations do not justify declaring
+the whole machine's resource pressure resolved.
+
 ### Source changes and focused validation
 
 - Access-log persistence uses stable stream IDs, retries pending batches, and
