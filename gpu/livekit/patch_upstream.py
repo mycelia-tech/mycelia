@@ -26,18 +26,20 @@ def patch_backend(source):
         source,
         "from whisperlivekit.model_paths import detect_model_format, resolve_model_path\n",
         "from whisperlivekit.model_paths import detect_model_format, resolve_model_path\n"
-        "from whisperlivekit.shared_livekit import remote_settings\n",
+        "from whisperlivekit.shared_livekit import remote_settings, correlate_http_request\n",
     )
     source = replace_once(source, '        self.modelname = "whisper-1"\n', '        self.modelname = None  # set from the explicitly configured private ASR endpoint\n')
     source = replace_once(
         source,
         "        from openai import OpenAI\n        self.client = OpenAI()\n        self.transcribed_seconds = 0\n",
         "        from openai import OpenAI\n"
+        "        import httpx\n"
         "        settings = remote_settings(os.environ)\n"
         "        self.modelname = settings.model\n"
         "        self.client = OpenAI(\n"
         "            base_url=settings.base_url, api_key=settings.api_key,\n"
         "            timeout=settings.timeout, max_retries=settings.max_retries,\n"
+        "            http_client=httpx.Client(timeout=settings.timeout, event_hooks={\"request\": [correlate_http_request]}),\n"
         "        )\n"
         "        self.transcribed_seconds = 0\n",
     )
@@ -49,7 +51,7 @@ def patch_server(source):
         source,
         "from whisperlivekit.config import parse_cors_origins\n",
         "from whisperlivekit.config import parse_cors_origins\n"
-        "from whisperlivekit.shared_livekit import SessionGate, config_message, remote_settings\n",
+        "from whisperlivekit.shared_livekit import SessionGate, config_message, remote_settings, live_context, error_frame, log_failure\n",
     )
     source = replace_once(
         source,
@@ -63,10 +65,10 @@ def patch_server(source):
     source = replace_once(
         source,
         "    except Exception as e:\n        logger.exception(f\"Error in WebSocket results handler: {e}\")\n\n\n@app.websocket(\"/asr\")\nasync def websocket_endpoint(websocket: WebSocket):\n",
-        "    except Exception:\n"
-        "        logger.exception(\"Live ASR results failed\")\n"
+        "    except Exception as error:\n"
+        "        log_failure(logger, error)\n"
         "        try:\n"
-        "            await websocket.send_json({\"type\": \"error\", \"error\": \"live ASR processing failed\"})\n"
+        "            await websocket.send_json(error_frame(error))\n"
         "            await websocket.close(code=1011, reason=\"live ASR processing failed\")\n"
         "        except (RuntimeError, WebSocketDisconnect):\n"
         "            pass\n\n\n"
@@ -81,7 +83,8 @@ def patch_server(source):
         "        await websocket.close(code=4409, reason=\"live session busy\")\n"
         "        return\n"
         "    try:\n"
-        "        await _serve_asr(websocket)\n"
+        "        with live_context(websocket.query_params):\n"
+        "            await _serve_asr(websocket)\n"
         "    finally:\n"
         "        _asr_gate.release()\n\n\n"
         "async def _serve_asr(websocket: WebSocket):\n",
@@ -93,6 +96,26 @@ def patch_server(source):
         '            config.pcm_input, mode, config.diarization, config.diarization_backend,\n'
         '            config.backend, getattr(transcription_engine, "diarization_model", None) is not None,\n'
         '        ))\n',
+    )
+    # Session errors may wrap SDK bodies or user-controlled query strings.
+    for old, new in (
+        ('await websocket.send_json({"type": "error", "error": str(e)})',
+         'await websocket.send_json(error_frame(e))'),
+        ('logger.warning("WebSocket rejected: %s", e)', 'log_failure(logger, e)'),
+        ('logger.warning(f"Failed to send config to client: {e}")', 'log_failure(logger, e)'),
+        ('logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)', 'log_failure(logger, e)'),
+        ('logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)', 'log_failure(logger, e)'),
+        ('logger.warning(f"Exception while awaiting websocket_task completion: {e}")', 'log_failure(logger, e)'),
+    ):
+        source = replace_once(source, old, new)
+    source = replace_once(
+        source,
+        '    logger.info(\n'
+        '        "WebSocket connection opened.%s%s",\n'
+        '        f" language={session_language}" if session_language else "",\n'
+        '        f" target_language={session_target_language}" if session_target_language else "",\n'
+        '    )\n',
+        '    logger.info("WebSocket connection opened")\n',
     )
     source = replace_once(
         source,

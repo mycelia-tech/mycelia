@@ -1,0 +1,4 @@
+# CPU-only API/lifecycle contracts; no model or CUDA dependencies.
+-r ../whisper_shared/tests/requirements.txt
+pytest==8.4.2
+websockets==15.0.1

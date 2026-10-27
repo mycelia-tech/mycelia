@@ -3,8 +3,8 @@ import httpx
 import logging
 import time
 from urllib.parse import urljoin
-from fastapi import FastAPI, Request, HTTPException, Depends, Header, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 

@@ -33,7 +33,13 @@ def source(name):
         spec = importlib.util.spec_from_file_location('reconnect_patch_test', ROOT / 'patch_live_reconnect.py')
         overlay = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(overlay)
-        return overlay.patch_relay(raw) if name == 'relay' else overlay.patch_preview(raw)
+        if name == 'relay':
+            source = overlay.patch_relay(raw)
+            diagnostics_spec = importlib.util.spec_from_file_location('diagnostics_patch_test', ROOT / 'patch_live_diagnostics.py')
+            diagnostics = importlib.util.module_from_spec(diagnostics_spec)
+            diagnostics_spec.loader.exec_module(diagnostics)
+            return diagnostics.patch_relay(source)
+        return overlay.patch_preview(raw)
     paths = {'relay': '/opt/omiloc/scripts/dev-harness/dev_harness/local_provider_relay.py',
              'preview': '/opt/omiloc/backend/utils/local_live_preview.py'}
     return Path(paths[name]).read_text()
@@ -46,7 +52,9 @@ def relay_methods():
     namespace = {'asyncio': asyncio, 'suppress': suppress, 'json': json, 'RelayError': ValueError,
                  'MAX_MESSAGE_BYTES': 16 * 1024 * 1024, 'DRAIN_SECONDS': 1,
                  'upstream': lambda snapshot, cfg, raw=False: ('ws://selected.invalid/asr', True),
-                 'connect': None, 'connect_ready': admission.connect_ready}
+                 'connect': None, 'connect_ready': admission.connect_ready,
+                 'correlated_endpoint': admission.correlated_endpoint,
+                 'ProviderFailure': admission.ProviderFailure}
     exec(compile(ast.Module(body=methods, type_ignores=[]), 'patched_relay', 'exec'), namespace)
     return namespace
 

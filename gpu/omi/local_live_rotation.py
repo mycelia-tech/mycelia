@@ -15,6 +15,8 @@ import logging
 import math
 import os
 import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import uuid4
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -45,6 +47,32 @@ _KNOWN_FAILURES = {
 _FALLBACK_REASONS = {'config_incomplete', 'capacity_full', 'timeout', 'other'}
 _STATUS_REASONS = {'unavailable', 'disabled', 'invalid_configuration', 'buffer_full',
                    'protocol_error', 'busy', 'recovering'}
+_PROVIDER_CODES = {'upstream_busy', 'upstream_failed', 'upstream_timeout', 'upstream_unavailable',
+                   'invalid_timing_response', 'model_mismatch', 'empty_audio', 'audio_too_large',
+                   'client_disconnected', 'processing_failed', 'diarization_failed', 'live_provider_failed'}
+
+
+def _provider_details(message):
+    result = {}
+    for key in ('capture_id', 'session_id', 'request_id'):
+        value = message.get(key)
+        if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value):
+            result[key] = value
+    code = message.get('code')
+    if isinstance(code, str) and code in _PROVIDER_CODES:
+        result['code'] = code
+    status = message.get('upstream_status')
+    if type(status) is int and 100 <= status <= 599:
+        result['upstream_status'] = status
+    return result
+
+
+def _correlated_url(url, capture_id, index):
+    parts = urlsplit(url)
+    fields = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
+              if key not in {'capture_id', 'window_index'}]
+    fields.extend((('capture_id', capture_id), ('window_index', str(index))))
+    return urlunsplit(parts._replace(query=urlencode(fields)))
 
 
 def _failure_details(error):
@@ -316,6 +344,8 @@ def rotating_preview_class(base_cls, projection_cls):
             self.window = None
             self._failure_details = None
             self._projection_details = None
+            self._provider_diagnostics = None
+            self._capture_id = str(uuid4())
             self._phase = 'initializing'
             self._attempt_window_index = 0
             super().__init__(url, send_segments, unavailable_reason=unavailable_reason)
@@ -340,6 +370,7 @@ def rotating_preview_class(base_cls, projection_cls):
                     preview_id = getattr(self.segment, 'id', '')
                     payload = {
                         'event': 'local_preview_failure',
+                        'capture_id': self._capture_id,
                         'timestamp_utc': datetime.now(timezone.utc).isoformat(),
                         'preview_id': preview_id if re.fullmatch(
                             r'local-preview-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', preview_id) else None,
@@ -354,6 +385,8 @@ def rotating_preview_class(base_cls, projection_cls):
                         'status_reason': status_reason if status_reason in _STATUS_REASONS else 'unavailable',
                         **(self._failure_details or {}),
                     }
+                    if self._provider_diagnostics:
+                        payload['provider'] = self._provider_diagnostics
                     logger.warning('Local preview failure %s', json.dumps(payload, allow_nan=False, sort_keys=True))
                 except Exception:
                     pass
@@ -417,6 +450,7 @@ def rotating_preview_class(base_cls, projection_cls):
                     window.eof_ack = self.eof_ack = True
                     return
                 if message.get('type') == 'error' or message.get('status') == 'error':
+                    self._provider_diagnostics = _provider_details(message)
                     raise RuntimeError('local_preview_error')
                 status = (message.get('status') if message.get('type') == 'diarization_status'
                           else message.get('diarization_status'))
@@ -456,6 +490,7 @@ def rotating_preview_class(base_cls, projection_cls):
             if not self.deliver:
                 return
             payload = {'type': 'service_status', 'status': 'ready', 'provider': 'local_live_preview',
+                       'capture_id': self._capture_id,
                        'live_window_index': self.window.index,
                        'live_window_start_s': self.window.offset_bytes / BYTES_PER_SECOND}
             try:
@@ -475,10 +510,13 @@ def rotating_preview_class(base_cls, projection_cls):
                     connection = _Connection()
                     async with asyncio.timeout_at(deadline):
                         socket = connection.socket = await connection.stack.enter_async_context(
-                            self.connector(self.url, open_timeout=3, close_timeout=2,
+                            self.connector(_correlated_url(self.url, self._capture_id, index), open_timeout=3, close_timeout=2,
                                            max_size=self.MAX_SNAPSHOT_BYTES))
                         handshake = 50 if os.getenv('OMI_LOCAL_LIVE_PROVIDER_RELAY') == '1' else 3
                         config = json.loads(await asyncio.wait_for(socket.recv(), handshake))
+                        if isinstance(config, dict) and (config.get('type') == 'error' or config.get('status') == 'error'):
+                            self._provider_diagnostics = _provider_details(config)
+                            raise RuntimeError('local_preview_error')
                         if (not isinstance(config, dict) or config.get('type') != 'config'
                                 or config.get('useAudioWorklet') is not True):
                             raise RuntimeError('local_preview_pcm_contract')

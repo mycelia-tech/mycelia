@@ -175,6 +175,25 @@ class DiagnosticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(diagnostic['projection']['start'])
         self.assertEqual(diagnostic['projection']['invalid_field'], 'start')
 
+    async def test_provider_failure_keeps_only_opaque_ids_and_known_code(self):
+        request_id = 'a4c789df-a629-481c-b59a-39b210424fe4'
+        session_id = '82a690e7-9301-4ac1-a737-6d02c5e720c7'
+        frame = {'type': 'error', 'code': 'upstream_timeout', 'request_id': request_id,
+                 'session_id': session_id, 'upstream_status': 504,
+                 'error': PRIVATE, 'url': URL, 'capture_id': PRIVATE}
+        public, diagnostic = await self.failure(SnapshotProvider(frame))
+        self.assertEqual(public['reason'], 'protocol_error')
+        self.assertEqual(diagnostic['reason'], 'provider_error')
+        self.assertEqual(diagnostic['provider'], {'request_id': request_id, 'session_id': session_id,
+                                                 'code': 'upstream_timeout', 'upstream_status': 504})
+        self.assertRegex(diagnostic['capture_id'], r'^[0-9a-f-]{36}$')
+
+    def test_provider_diagnostic_fields_reject_objects_and_unbounded_values(self):
+        self.assertEqual(contract.rotation._provider_details({
+            'code': {'secret': PRIVATE}, 'upstream_status': True,
+            'request_id': PRIVATE * 1000, 'session_id': 123,
+        }), {})
+
     async def test_logging_failure_cannot_prevent_existing_offline_fallback(self):
         with patch.object(contract.rotation.logger, 'warning', side_effect=RuntimeError(PRIVATE)):
             public, _ = await self.failure(contract.Provider(0, config=ValueError(PRIVATE)), capture_logs=False)

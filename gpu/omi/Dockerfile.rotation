@@ -4,7 +4,10 @@ ARG OMI_ROTATION_BASE_IMAGE=mycelia/omiloc-app-audio-compat-r5:2026-10-23
 FROM ${OMI_ROTATION_BASE_IMAGE}
 USER root
 COPY local_live_rotation.py /opt/omiloc/backend/utils/local_live_rotation.py
+COPY live_reconnect.py /opt/omiloc/scripts/dev-harness/dev_harness/live_reconnect.py
 COPY patch_live_rotation.py /tmp/patch_live_rotation.py
+COPY patch_live_diagnostics.py /tmp/patch_live_diagnostics.py
 RUN python /tmp/patch_live_rotation.py /opt/omiloc/backend/utils/local_live_preview.py \
-    && rm /tmp/patch_live_rotation.py
+    && python /tmp/patch_live_diagnostics.py /opt/omiloc/scripts/dev-harness/dev_harness/local_provider_relay.py \
+    && rm /tmp/patch_live_rotation.py /tmp/patch_live_diagnostics.py
 USER omi

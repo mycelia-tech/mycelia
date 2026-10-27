@@ -1,10 +1,64 @@
 """Small policy helpers for the pinned WhisperLiveKit remote-ASR overlay."""
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
+import json
+import re
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
+
+_LIVE_CONTEXT = ContextVar("live_diagnostics", default=None)
+_UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+_ERROR_CODES = {"upstream_busy", "upstream_failed", "upstream_timeout", "upstream_unavailable",
+                "invalid_timing_response", "model_mismatch", "empty_audio", "audio_too_large",
+                "client_disconnected", "processing_failed", "diarization_failed"}
+
+
+def _safe_id(value):
+    return value if isinstance(value, str) and _UUID.fullmatch(value) else None
+
+
+@contextmanager
+def live_context(query):
+    context = {"capture_id": _safe_id(query.get("capture_id")) or str(uuid4()),
+               "session_id": str(uuid4())}
+    window = query.get("window_index", "")
+    if isinstance(window, str) and re.fullmatch(r"[0-9]{1,6}", window):
+        context["window_index"] = int(window)
+    token = _LIVE_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _LIVE_CONTEXT.reset(token)
+
+
+def correlate_http_request(request):
+    """httpx synchronous hook; asyncio.to_thread propagates the session context."""
+    request.headers["X-Request-ID"] = str(uuid4())
+    context = _LIVE_CONTEXT.get() or {}
+    for key, header in (("capture_id", "X-Mycelia-Capture-ID"),
+                        ("session_id", "X-Mycelia-Session-ID"),
+                        ("window_index", "X-Mycelia-Window-Index")):
+        if key in context:
+            request.headers[header] = str(context[key])
+
+
+def error_frame(error):
+    failure = processing_failure("remote ASR", error)
+    return {"type": "error", "error": "live ASR processing failed", **failure.diagnostics}
+
+
+def log_failure(logger, error):
+    # Do not use logger.exception: unwrapped SDK exceptions can include audio
+    # text, authenticated endpoints and entire remote error responses.
+    try:
+        logger.error("%s", json.dumps({"event": "live_processing_failure", **error_frame(error)}, sort_keys=True))
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -34,6 +88,9 @@ def config_message(pcm_input, mode, diarization, backend, asr_backend, model_loa
     message = {"type": "config", "useAudioWorklet": bool(pcm_input), "mode": mode}
     if diarization and backend == "sortformer" and asr_backend == "openai-api" and model_loaded:
         message.update(diarization=True, stt_provider="whisperlivekit-remote")
+    context = _LIVE_CONTEXT.get()
+    if context:
+        message["diagnostics"] = dict(context)
     return message
 
 
@@ -58,6 +115,8 @@ class ProcessingFailure(RuntimeError):
 
     def __init__(self, stage, error):
         self.original_error = error
+        self.diagnostics = {**(_LIVE_CONTEXT.get() or {}),
+                            "code": "diarization_failed" if stage == "Sortformer diarization" else "processing_failed"}
         details = []
         current, seen = error, set()
         while current is not None and id(current) not in seen and len(details) < 4:
@@ -66,6 +125,19 @@ class ProcessingFailure(RuntimeError):
             status = getattr(current, "status_code", None)
             if type(status) is int and 100 <= status <= 599:
                 kind += f" HTTP {status}"
+                self.diagnostics.setdefault("upstream_status", status)
+            response = getattr(current, "response", None)
+            request = getattr(current, "request", None)
+            headers = getattr(response, "headers", {})
+            request_headers = getattr(request, "headers", {})
+            request_id = (_safe_id(headers.get("x-request-id"))
+                          or _safe_id(getattr(current, "request_id", None))
+                          or _safe_id(request_headers.get("x-request-id")))
+            if request_id:
+                self.diagnostics.setdefault("request_id", request_id)
+            code = headers.get("x-live-error-code")
+            if isinstance(code, str) and code in _ERROR_CODES:
+                self.diagnostics["code"] = code
             # format_exception/format_tb include message or source text. Only
             # locations are safe when SDK errors can embed request/response data.
             frames = traceback.extract_tb(current.__traceback__)[-12:]
@@ -75,7 +147,8 @@ class ProcessingFailure(RuntimeError):
             )
             details.append(kind + (f" at {locations}" if locations else ""))
             current = current.__cause__ or current.__context__
-        super().__init__(f"{stage} failed: " + " <- ".join(details))
+        super().__init__(f"{stage} failed: " + " <- ".join(details)
+                         + " " + json.dumps(self.diagnostics, sort_keys=True))
 
 
 def processing_failure(stage, error):

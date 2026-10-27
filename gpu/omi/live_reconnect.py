@@ -4,12 +4,73 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 import json
+import logging
+import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import uuid4
 
 from websockets.exceptions import ConnectionClosed
 
 ADMISSION_TIMEOUT = 45.0
 BUSY_RETRY_INTERVAL = 0.25
 FAILED_CONTEXT_CLOSE_GRACE = 0.1
+logger = logging.getLogger(__name__)
+_UUID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
+_ERROR_CODES = {'upstream_busy', 'upstream_failed', 'upstream_timeout', 'upstream_unavailable',
+                'invalid_timing_response', 'model_mismatch', 'empty_audio', 'audio_too_large',
+                'client_disconnected', 'processing_failed', 'diarization_failed', 'live_provider_failed'}
+
+
+def diagnostic_context(value):
+    result = {}
+    for key in ('capture_id', 'session_id', 'request_id'):
+        item = value.get(key)
+        if isinstance(item, str) and _UUID.fullmatch(item):
+            result[key] = item
+    window = value.get('window_index')
+    if type(window) is int and 0 <= window < 1000000:
+        result['window_index'] = window
+    elif isinstance(window, str) and re.fullmatch(r'[0-9]{1,6}', window):
+        result['window_index'] = int(window)
+    return result
+
+
+def correlated_endpoint(endpoint, query):
+    context = diagnostic_context(query)
+    context.setdefault('capture_id', str(uuid4()))
+    parts = urlsplit(endpoint)
+    fields = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
+              if key not in {'capture_id', 'session_id', 'request_id', 'window_index'}]
+    fields.extend((key, str(value)) for key, value in context.items())
+    return urlunsplit(parts._replace(query=urlencode(fields)))
+
+
+class ProviderFailure(ValueError):
+    """Keep only an allowlisted provider error, never its text or response body."""
+
+    def __init__(self, frame):
+        super().__init__('Live provider stream failed')
+        self.diagnostics = diagnostic_context(frame)
+        code = frame.get('code')
+        self.diagnostics['code'] = code if isinstance(code, str) and code in _ERROR_CODES else 'live_provider_failed'
+        status = frame.get('upstream_status')
+        if type(status) is int and 100 <= status <= 599:
+            self.diagnostics['upstream_status'] = status
+
+
+def relay_error_frame(error, query):
+    context = diagnostic_context(query)
+    context.update(error.diagnostics if isinstance(error, ProviderFailure) else {})
+    context.setdefault('code', 'live_provider_failed')
+    event = {'event': 'live_relay_failure', **context}
+    name = type(error).__name__
+    if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,79}', name):
+        event['exception_class'] = name
+    try:
+        logger.warning('%s', json.dumps(event, sort_keys=True))
+    except Exception:
+        pass
+    return {'type': 'error', **context}
 
 
 class ProviderBusyTimeout(TimeoutError):
@@ -74,6 +135,12 @@ async def _admit(endpoint, key, connector, validate_config, timeout):
                 else:
                     busy = _is_busy_frame(raw)
                 if not busy:
+                    try:
+                        frame = json.loads(raw)
+                    except (ValueError, TypeError):
+                        frame = None  # The existing config validator rejects it.
+                    if isinstance(frame, dict) and (frame.get('type') == 'error' or frame.get('status') == 'error'):
+                        raise ProviderFailure(frame)
                     config = validate_config(raw)
                     accepted = stack
                     stack = None  # connect_ready now owns the accepted context

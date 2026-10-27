@@ -12,6 +12,18 @@ file or `gpu/docker-compose.portainer.yml` to create a remote diarization stack.
 
 ## Services
 
+CPU-only regression checks run with `deno task verify gpu` from the repository
+root. They cover scheduler/API contracts, private live-adapter failures and
+cancellation, opaque correlation metadata, and storage guards without models or
+CUDA. Test dependencies are pinned in `tests/requirements.txt`. Tests requiring
+exact upstream WLK/Omi sources remain separate image acceptance checks.
+
+Live diagnostics carry a capture UUID across rotation windows, a session UUID
+per WLK connection and a request UUID per ASR attempt. Only bounded error codes
+and timing metadata are logged; speech, PCM, credentials and arbitrary provider
+errors are excluded. These changes need image rebuild/rollout before being live.
+Short synthetic checks do not establish sustained physical-device stability.
+
 For one Whisper model shared between existing file transcription and Omi live
 audio, see [SHARED_AUDIO.md](SHARED_AUDIO.md). The opt-in
 `docker-compose.shared-live.yml` overlay adds scheduling and an internal live
