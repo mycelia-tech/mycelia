@@ -1,64 +1,102 @@
+import { useEffect, useRef, useState } from "react";
 import { useWebSocketSubscription } from "./useWebSocket";
-import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import {
+  type HistogramItem,
+  useHistogramCache,
+} from "@/modules/histogram/useHistogramCache";
+import type { Resolution } from "@/lib/resolution";
 
-const RESOLUTION_TO_MS: Record<string, number> = {
-  "1min": 60 * 1000,
-  "5min": 5 * 60 * 1000,
-  "15min": 15 * 60 * 1000,
-  "1hour": 60 * 60 * 1000,
-  "6hour": 6 * 60 * 60 * 1000,
-  "1day": 24 * 60 * 60 * 1000,
-};
-
+interface ActiveRange {
+  resolution: string;
+  start: Date;
+  end: Date;
+  addedAt: number;
+  key: string;
+}
+interface Snapshot {
+  reference: HistogramItem[];
+  items: Map<string, string>;
+  start: number;
+  end: number;
+}
+/** Collection-only events trigger canonical refetches. Highlight only confirmed changed bins. */
 export function useTimelineRecalc() {
-  const [activeRanges, setActiveRanges] = useState<any[]>([]);
-  const queryClient = useQueryClient();
-
-  useWebSocketSubscription(
-    "mongo:histogram",
-    (message) => {
-      const { event, data } = message;
-      if (!data || event !== "mongo.change") return;
-
-      const { collection, document } = data;
-      if (!collection || !document) return;
-
-      if (!collection.startsWith("histogram_")) return;
-
-      const resolution = collection.replace("histogram_", "");
-      const start = document.start ? new Date(document.start) : null;
-
-      if (!start || !RESOLUTION_TO_MS[resolution]) return;
-
-      const end = new Date(start.getTime() + RESOLUTION_TO_MS[resolution]);
-
-      setActiveRanges((prev) => {
-        return [
-          ...prev,
-          {
-            resolution,
-            start,
-            end,
-            addedAt: Date.now(),
-            key: document._id.toString(),
-          },
-        ];
-      });
-    },
-    true,
-  );
-
-  // Cleanup old ranges every second
+  const [activeRanges, setActiveRanges] = useState<ActiveRange[]>([]);
+  const data = useHistogramCache((state) => state.data);
+  const pending = useRef(new Map<Resolution, Snapshot>());
+  const onChange = (
+    message: { event?: string; data?: { collection?: string } },
+  ) => {
+    if (
+      message.event !== "mongo.change" && message.event !== "resync_required"
+    ) return;
+    const cache = useHistogramCache.getState();
+    for (
+      const resolution of ["5min", "1hour", "1day", "1week"] as Resolution[]
+    ) {
+      if (
+        message.event !== "resync_required" &&
+        message.data?.collection !== `histogram_${resolution}`
+      ) continue;
+      const items = cache.data[resolution]?.items;
+      if (items?.length && !pending.current.has(resolution)) {
+        pending.current.set(resolution, {
+          reference: items,
+          items: new Map(
+            items.map((item) => [item.id, JSON.stringify(item.totals)]),
+          ),
+          start: Math.min(
+            ...items.map((item) => new Date(item.start).getTime()),
+          ),
+          end: Math.max(...items.map((item) => new Date(item.end).getTime())),
+        });
+      }
+    }
+    cache.scheduleInvalidation();
+  };
+  useWebSocketSubscription("mongo:histogram_5min", onChange);
+  useWebSocketSubscription("mongo:histogram_1hour", onChange);
+  useWebSocketSubscription("mongo:histogram_1day", onChange);
+  useWebSocketSubscription("mongo:histogram_1week", onChange);
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setActiveRanges((prev) =>
-        prev.filter((range) => now - range.addedAt < 10000)
-      );
-    }, 1000);
-    return () => clearInterval(interval);
+    const ranges: ActiveRange[] = [];
+    for (const [resolution, before] of pending.current) {
+      const items = data[resolution]?.items;
+      if (!items?.length || items === before.reference) continue;
+      for (const item of items) {
+        const start = new Date(item.start), end = new Date(item.end);
+        if (
+          start.getTime() < before.start || start.getTime() >= before.end ||
+          before.items.get(item.id) === JSON.stringify(item.totals)
+        ) continue;
+        ranges.push({
+          resolution,
+          start,
+          end,
+          addedAt: Date.now(),
+          key: `${resolution}:${item.id}`,
+        });
+      }
+      pending.current.delete(resolution);
+    }
+    if (ranges.length) {
+      setActiveRanges((previous) => [
+        ...previous.filter((range) =>
+          !ranges.some((next) => next.key === range.key)
+        ),
+        ...ranges,
+      ]);
+    }
+  }, [data]);
+  useEffect(() => {
+    const timer = setInterval(
+      () =>
+        setActiveRanges((previous) =>
+          previous.filter((range) => Date.now() - range.addedAt < 10_000)
+        ),
+      1000,
+    );
+    return () => clearInterval(timer);
   }, []);
-
   return { activeRanges };
 }

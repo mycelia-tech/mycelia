@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import {
+  probeProviderConnection,
+  type ProviderProbe,
+} from "@/lib/providerProbe";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { callResource } from "@/lib/api";
-import { Loader2, CheckCircle2, XCircle, Cpu, ArrowRight } from "lucide-react";
+import { getCurrentJWT } from "@/lib/auth";
+import { ArrowRight, CheckCircle2, Cpu, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,17 +16,58 @@ type SetupStatus = "checking" | "idle" | "saving" | "success" | "error";
 
 export default function InferenceSetupPage() {
   const navigate = useNavigate();
-  const { clientId, clientSecret } = useSettingsStore();
+  const { sessionStatus } = useSettingsStore();
 
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<SetupStatus>("checking");
+  const [probe, setProbe] = useState<ProviderProbe | null>(null);
+  const [probing, setProbing] = useState(false);
+  const probeVersion = useRef(0);
+  useEffect(() => {
+    probeVersion.current += 1;
+    setProbe(null);
+    setProbing(false);
+    return () => {
+      probeVersion.current += 1;
+    };
+  }, [baseUrl, apiKey]);
+  const checkConnection = async () => {
+    const version = ++probeVersion.current;
+    setProbing(true);
+    try {
+      const result = await probeProviderConnection(baseUrl, apiKey);
+      if (version === probeVersion.current) setProbe(result);
+    } catch (error) {
+      if (version === probeVersion.current) {
+        setProbe({
+          available: false,
+          success: false,
+          message: error instanceof Error
+            ? error.message
+            : "Could not check provider connection.",
+        });
+      }
+    } finally {
+      if (version === probeVersion.current) setProbing(false);
+    }
+  };
+  const connectionText = probe
+    ? `${
+      probe.success
+        ? "Provider connection verified"
+        : "Provider connection could not be verified"
+    }: ${probe.message}`
+    : "Provider connection has not been checked.";
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Check if inference is already configured
   useEffect(() => {
-    // Redirect to main setup if no credentials
-    if (!clientId || !clientSecret) {
+    if (sessionStatus === "unknown") {
+      void getCurrentJWT();
+      return;
+    }
+    if (sessionStatus === "anonymous") {
       navigate("/setup", { replace: true });
       return;
     }
@@ -55,7 +101,7 @@ export default function InferenceSetupPage() {
     };
 
     checkExistingConfig();
-  }, [clientId, clientSecret, navigate]);
+  }, [sessionStatus, navigate]);
 
   const saveInferenceConfig = async () => {
     setStatus("saving");
@@ -72,15 +118,10 @@ export default function InferenceSetupPage() {
 
       setErrorMessage(null);
       setStatus("success");
-
-      // Redirect after a short delay
-      setTimeout(() => {
-        navigate("/", { replace: true });
-      }, 1500);
     } catch (error) {
       setStatus("error");
       setErrorMessage(
-        error instanceof Error ? error.message : "Failed to save configuration"
+        error instanceof Error ? error.message : "Failed to save configuration",
       );
     }
   };
@@ -124,14 +165,23 @@ export default function InferenceSetupPage() {
           )}
 
           {(status === "idle" || status === "saving" || status === "error") && (
-            <form onSubmit={(e) => { e.preventDefault(); saveInferenceConfig(); }}>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveInferenceConfig();
+              }}
+            >
               {status === "error" && (
                 <div className="mb-6 p-4 rounded-lg bg-red-500/20 border border-red-500/30">
                   <div className="flex items-start gap-3">
                     <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-red-300 font-medium">Configuration Failed</p>
-                      <p className="text-red-300/80 text-sm mt-1">{errorMessage}</p>
+                      <p className="text-red-300 font-medium">
+                        Configuration Failed
+                      </p>
+                      <p className="text-red-300/80 text-sm mt-1">
+                        {errorMessage}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -139,7 +189,10 @@ export default function InferenceSetupPage() {
 
               <div className="space-y-4 mb-6">
                 <div>
-                  <Label htmlFor="baseUrl" className="text-slate-200 mb-2 block">
+                  <Label
+                    htmlFor="baseUrl"
+                    className="text-slate-200 mb-2 block"
+                  >
                     Inference API URL
                   </Label>
                   <Input
@@ -174,21 +227,39 @@ export default function InferenceSetupPage() {
 
               <div className="space-y-3">
                 <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={!baseUrl || probing || status === "saving"}
+                  onClick={() => {
+                    void checkConnection();
+                  }}
+                >
+                  {probing
+                    ? "Checking connection…"
+                    : "Check provider connection"}
+                </Button>
+                <p role="status" className="text-sm text-slate-300">
+                  {connectionText}
+                </p>
+                <Button
                   type="submit"
                   disabled={!baseUrl || status === "saving"}
                   className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-medium py-6 text-lg rounded-xl shadow-lg shadow-cyan-500/30 transition-all hover:shadow-cyan-500/50 disabled:opacity-80"
                 >
-                  {status === "saving" ? (
-                    <>
-                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      Save & Continue
-                      <ArrowRight className="w-5 h-5 ml-2" />
-                    </>
-                  )}
+                  {status === "saving"
+                    ? (
+                      <>
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    )
+                    : (
+                      <>
+                        Save configuration
+                        <ArrowRight className="w-5 h-5 ml-2" />
+                      </>
+                    )}
                 </Button>
 
                 <Button
@@ -215,11 +286,16 @@ export default function InferenceSetupPage() {
                 Configuration Saved!
               </p>
               <p className="text-slate-400 text-sm mt-2">
-                Redirecting to your dashboard...
+                {connectionText} Model generation has not been tested.
               </p>
+              <Button
+                className="mt-4"
+                onClick={() => navigate("/", { replace: true })}
+              >
+                Continue to Mycelia
+              </Button>
             </div>
           )}
-
         </div>
 
         {/* Footer */}

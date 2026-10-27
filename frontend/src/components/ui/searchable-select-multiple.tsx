@@ -1061,4 +1061,3 @@ export const SearchableSelectMultiple = React.forwardRef<
 );
 
 SearchableSelectMultiple.displayName = "SearchableSelectMultiple";
-export type { MultiSelectGroup, MultiSelectOption };

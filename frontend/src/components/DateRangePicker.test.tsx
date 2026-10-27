@@ -320,7 +320,7 @@ describe("DateRangePicker", () => {
     await user.click(screen.getByRole("button", { name: "Time range" }));
     await user.click(screen.getByRole("button", { name: "No finish" }));
     await user.click(
-      screen.getByRole("button", { name: "Cancel", exact: true }),
+      screen.getByRole("button", { name: /^Cancel$/ }),
     );
     expect(screen.getByRole("dialog", { name: "Edit Time Range 1" }))
       .toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   AudioLines,
   Cloud,
@@ -20,6 +20,7 @@ import {
 
 const SettingsLayout = () => {
   const location = useLocation();
+  const navigate = useNavigate();
 
   const clientSettings = [
     {
@@ -141,9 +142,40 @@ const SettingsLayout = () => {
         <h1 className="text-3xl font-bold">Settings</h1>
       </div>
 
-      <div className="flex gap-6">
+      <div className="flex flex-col gap-6 md:flex-row">
+        <label className="space-y-2 text-sm font-medium md:hidden">
+          Settings section
+          <select
+            aria-label="Settings section"
+            className="block w-full rounded-md border bg-background p-3"
+            value={[
+              ...clientSettings,
+              ...serverSettings,
+              ...voiceIdentitySettings,
+              ...administrationSettings,
+            ].filter((tab) =>
+              location.pathname === tab.path ||
+              (tab.path !== "/settings" &&
+                location.pathname.startsWith(tab.path + "/"))
+            ).sort((a, b) => b.path.length - a.path.length)[0]?.path ??
+              "/settings"}
+            onChange={(event) => navigate(event.target.value)}
+          >
+            {[
+              ...clientSettings,
+              ...serverSettings,
+              ...voiceIdentitySettings,
+              ...administrationSettings,
+            ].map((tab) => (
+              <option key={tab.path} value={tab.path}>{tab.name}</option>
+            ))}
+          </select>
+        </label>
         {/* Sidebar Navigation */}
-        <div className="w-64 space-y-6">
+        <nav
+          aria-label="Settings navigation"
+          className="hidden w-64 shrink-0 space-y-6 md:block"
+        >
           {/* Client Settings Section */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -160,6 +192,7 @@ const SettingsLayout = () => {
                 return (
                   <Link
                     key={tab.path}
+                    aria-current={isActive ? "page" : undefined}
                     to={tab.path}
                     className={`flex items-start gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors ${
                       isActive
@@ -170,7 +203,7 @@ const SettingsLayout = () => {
                     <Icon className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <div>
                       <div className="font-medium">{tab.name}</div>
-                      <div className="text-xs opacity-70 mt-0.5">
+                      <div className="text-xs mt-0.5">
                         {tab.description}
                       </div>
                     </div>
@@ -195,6 +228,7 @@ const SettingsLayout = () => {
                 return (
                   <Link
                     key={tab.path}
+                    aria-current={isActive ? "page" : undefined}
                     to={tab.path}
                     className={`flex items-start gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors ${
                       isActive
@@ -205,7 +239,7 @@ const SettingsLayout = () => {
                     <Icon className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <div>
                       <div className="font-medium">{tab.name}</div>
-                      <div className="text-xs opacity-70 mt-0.5">
+                      <div className="text-xs mt-0.5">
                         {tab.description}
                       </div>
                     </div>
@@ -228,6 +262,7 @@ const SettingsLayout = () => {
                 return (
                   <Link
                     key={tab.path}
+                    aria-current={isActive ? "page" : undefined}
                     to={tab.path}
                     className={`flex items-start gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors ${
                       isActive
@@ -238,7 +273,7 @@ const SettingsLayout = () => {
                     <Icon className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <div>
                       <div className="font-medium">{tab.name}</div>
-                      <div className="text-xs opacity-70 mt-0.5">
+                      <div className="text-xs mt-0.5">
                         {tab.description}
                       </div>
                     </div>
@@ -263,6 +298,7 @@ const SettingsLayout = () => {
                 return (
                   <Link
                     key={tab.path}
+                    aria-current={isActive ? "page" : undefined}
                     to={tab.path}
                     className={`flex items-start gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors ${
                       isActive
@@ -273,7 +309,7 @@ const SettingsLayout = () => {
                     <Icon className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <div>
                       <div className="font-medium">{tab.name}</div>
-                      <div className="text-xs opacity-70 mt-0.5">
+                      <div className="text-xs mt-0.5">
                         {tab.description}
                       </div>
                     </div>
@@ -282,10 +318,10 @@ const SettingsLayout = () => {
               })}
             </div>
           </div>
-        </div>
+        </nav>
 
         {/* Main Content */}
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <Outlet />
         </div>
       </div>

@@ -34,8 +34,9 @@ const GeneralSettingsPage = () => {
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Theme</Label>
-            <div className="flex gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Button
+                aria-pressed={theme === "light"}
                 variant={theme === "light" ? "default" : "outline"}
                 onClick={() => setTheme("light")}
                 className="flex-1"
@@ -44,6 +45,7 @@ const GeneralSettingsPage = () => {
                 Light
               </Button>
               <Button
+                aria-pressed={theme === "dark"}
                 variant={theme === "dark" ? "default" : "outline"}
                 onClick={() => setTheme("dark")}
                 className="flex-1"
@@ -52,6 +54,7 @@ const GeneralSettingsPage = () => {
                 Dark
               </Button>
               <Button
+                aria-pressed={theme === "system"}
                 variant={theme === "system" ? "default" : "outline"}
                 onClick={() => setTheme("system")}
                 className="flex-1"

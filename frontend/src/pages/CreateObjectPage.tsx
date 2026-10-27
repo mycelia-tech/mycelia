@@ -55,7 +55,7 @@ const CreateObjectPage = () => {
         action: "create",
         object: {
           ...object,
-          name: object.name.trim(),
+          name: object.name?.trim(),
         },
       });
 

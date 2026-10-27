@@ -302,7 +302,7 @@ function useDebouncedUpdate(
   fieldName: keyof ObjectFormData,
 ) {
   const [localValue, setLocalValue] = useState(value);
-  const timeoutRef = useRef<number | undefined>(undefined);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Update local value when prop changes (e.g., from server)
   useEffect(() => {
@@ -332,8 +332,14 @@ function useDebouncedUpdate(
 }
 
 export function ObjectForm(
-  { object, onUpdate, onFieldUpdate, hideSummary, hideIconName, hideDetails, compact = false }: ObjectFormProps,
+  { object, onUpdate: onPartialUpdate, onFieldUpdate, hideSummary, hideIconName, hideDetails, compact = false }: ObjectFormProps,
 ) {
+  // Some consumers save a patch; others accumulate individual field edits.
+  // Every form control must support both contracts, including multi-field edits.
+  const onUpdate = async (updates: Partial<ObjectFormData>) => {
+    if (onPartialUpdate) await onPartialUpdate(updates);
+    else for (const [field, value] of Object.entries(updates)) onFieldUpdate?.(field, value);
+  };
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldValue, setNewFieldValue] = useState("");
   const [newFieldType, setNewFieldType] = useState<

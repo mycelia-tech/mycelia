@@ -67,7 +67,7 @@ export function ObjectSelectionDropdown({
   );
 
   const options: SelectOption[] = useMemo(() => {
-    const objectOptions = baseResults.map((obj: Object) => {
+    const objectOptions: SelectOption[] = baseResults.map((obj: Object) => {
       // Ensure consistent string representation of ObjectId
       const objectIdString = obj._id instanceof ObjectId
         ? obj._id.toHexString()

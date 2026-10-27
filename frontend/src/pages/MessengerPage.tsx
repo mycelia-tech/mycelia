@@ -1,3 +1,4 @@
+import { RequestError } from "@/components/RequestError";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Info } from "lucide-react";
@@ -60,6 +61,15 @@ export default function MessengerPage() {
   );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const focusedDeepLinkRef = useRef<string | undefined>(undefined);
+  const [chatsError, setChatsError] = useState<string | null>(null);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const [chatRefresh, setChatRefresh] = useState(0);
+  const [messageRefresh, setMessageRefresh] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+  const currentChatRef = useRef(chatId);
+  currentChatRef.current = chatId;
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<IMessage[]>([]);
   const [loadingChats, setLoadingChats] = useState(true);
@@ -75,9 +85,11 @@ export default function MessengerPage() {
 
   // Fetch Chats
   useEffect(() => {
+    let cancelled = false;
     const fetchChats = async () => {
       try {
         setLoadingChats(true);
+        setChatsError(null);
         const result = await callResource("mongo", {
           action: "find",
           collection: "chats",
@@ -86,22 +98,34 @@ export default function MessengerPage() {
             sort: { lastMessageDate: -1 },
           },
         });
-        setChats(result);
+        if (!cancelled) setChats(result);
       } catch (err) {
-        console.error("Failed to fetch chats", err);
+        if (!cancelled) {
+          setChatsError(
+            err instanceof Error ? err.message : "Could not load chats.",
+          );
+        }
       } finally {
-        setLoadingChats(false);
+        if (!cancelled) setLoadingChats(false);
       }
     };
 
-    fetchChats();
-  }, []);
+    void fetchChats();
+    return () => {
+      cancelled = true;
+    };
+  }, [chatRefresh]);
 
   // Fetch initial messages for selected chat
   useEffect(() => {
     let cancelled = false;
+    setMessagesError(null);
+    setMoreError(null);
+    setLoadingMore(false);
+    loadingMoreRef.current = false;
     if (!chatId) {
       setMessages([]);
+      setLoadingMessages(false);
       setHasMore(false);
       setOldestMessageTimestamp(null);
       setLinkedMessageUnavailable(false);
@@ -175,12 +199,10 @@ export default function MessengerPage() {
         }
       } catch (err) {
         if (cancelled) return;
-        console.error("Failed to load initial messages", err);
-        if (requestedMessageId !== null) {
-          setMessages([]);
-          setHasMore(false);
-          setLinkedMessageUnavailable(true);
-        }
+        setMessagesError(
+          err instanceof Error ? err.message : "Could not load messages.",
+        );
+        setHasMore(false);
       } finally {
         if (!cancelled) setLoadingMessages(false);
       }
@@ -190,7 +212,7 @@ export default function MessengerPage() {
     return () => {
       cancelled = true;
     };
-  }, [chatId, linkedMessageId, requestedMessageId]);
+  }, [chatId, linkedMessageId, requestedMessageId, messageRefresh]);
 
   useEffect(() => {
     if (!chatId || !linkedMessageId || loadingMessages) return;
@@ -227,10 +249,11 @@ export default function MessengerPage() {
 
   // Load more messages (older messages)
   const loadMoreMessages = useCallback(async () => {
-    if (!chatId) {
-      return;
-    }
-
+    if (!chatId || loadingMoreRef.current || loadingMessages) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setMoreError(null);
+    const requestedChat = chatId;
     try {
       const chatReference = mongoDeepLinkIdReference(chatId);
       if (!chatReference) {
@@ -252,6 +275,7 @@ export default function MessengerPage() {
         },
       });
 
+      if (currentChatRef.current !== requestedChat) return;
       const hasMoreMessages = result.length > MESSAGES_PER_PAGE;
       const messagesToShow = hasMoreMessages
         ? result.slice(0, MESSAGES_PER_PAGE)
@@ -266,9 +290,18 @@ export default function MessengerPage() {
         setHasMore(false);
       }
     } catch (err) {
-      console.error("Failed to load more messages", err);
+      if (currentChatRef.current === requestedChat) {
+        setMoreError(
+          err instanceof Error ? err.message : "Could not load older messages.",
+        );
+      }
+    } finally {
+      if (currentChatRef.current === requestedChat) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
-  }, [chatId, oldestMessageTimestamp]);
+  }, [chatId, oldestMessageTimestamp, loadingMessages]);
 
   const selectedChat = chats.find((c) => c._id.toString() === chatId);
 
@@ -296,6 +329,14 @@ export default function MessengerPage() {
               <h2 className="font-semibold">Chats</h2>
             </div>
             <ScrollArea className="flex-1">
+              {chatsError && (
+                <RequestError
+                  title="Chats could not be loaded"
+                  message={chatsError}
+                  onRetry={() => setChatRefresh((value) => value + 1)}
+                  pending={loadingChats}
+                />
+              )}
               {loadingChats
                 ? (
                   <div className="p-4 space-y-4">
@@ -315,7 +356,7 @@ export default function MessengerPage() {
                           navigate(`/messaging/${chat._id.toString()}`)}
                       />
                     ))}
-                    {chats.length === 0 && (
+                    {chats.length === 0 && !chatsError && (
                       <div className="p-8 text-center text-muted-foreground">
                         No chats found
                       </div>
@@ -455,7 +496,24 @@ export default function MessengerPage() {
                   ref={scrollContainerRef}
                   className="flex-1 overflow-hidden"
                 >
-                  {linkedMessageUnavailable
+                  {loadingMessages
+                    ? (
+                      <p
+                        role="status"
+                        className="p-6 text-center text-muted-foreground"
+                      >
+                        Loading messages…
+                      </p>
+                    )
+                    : messagesError
+                    ? (
+                      <RequestError
+                        title="Messages could not be loaded"
+                        message={messagesError}
+                        onRetry={() => setMessageRefresh((value) => value + 1)}
+                      />
+                    )
+                    : linkedMessageUnavailable
                     ? (
                       <div className="flex h-full items-center justify-center text-center">
                         <div role="alert">
@@ -477,45 +535,62 @@ export default function MessengerPage() {
                       </div>
                     )
                     : (
-                      <InfiniteScroll
-                        dataLength={messages.length}
-                        next={loadMoreMessages}
-                        hasMore={hasMore}
-                        loader={
-                          <div className="flex justify-center py-2">
-                            <div className="text-xs text-muted-foreground">
-                              Loading more messages...
+                      <>
+                        {moreError && (
+                          <RequestError
+                            title="Older messages could not be loaded"
+                            message={moreError}
+                            onRetry={() => {
+                              void loadMoreMessages();
+                            }}
+                            pending={loadingMore}
+                          />
+                        )}
+                        {!messages.length && (
+                          <p className="p-6 text-center text-muted-foreground">
+                            No messages in this chat
+                          </p>
+                        )}
+                        <InfiniteScroll
+                          dataLength={messages.length}
+                          next={loadMoreMessages}
+                          hasMore={hasMore && !moreError}
+                          loader={
+                            <div className="flex justify-center py-2">
+                              <div className="text-xs text-muted-foreground">
+                                Loading more messages...
+                              </div>
                             </div>
-                          </div>
-                        }
-                        height={`${scrollHeight}px`}
-                        inverse
-                        style={{
-                          display: "flex",
-                          flexDirection: "column-reverse",
-                        }}
-                        className="p-4 space-y-4"
-                      >
-                        {messages.map((msg) => {
-                          const messageId = msg._id.toString();
-                          const focused = messageId === linkedMessageId;
-                          return (
-                            <div
-                              key={messageId}
-                              id={messageElementId("messenger", messageId)}
-                              tabIndex={focused ? -1 : undefined}
-                              aria-current={focused ? "location" : undefined}
-                              className={cn(
-                                "scroll-mt-20 rounded-lg",
-                                focused &&
-                                  "bg-primary/5 ring-2 ring-primary/60 ring-offset-2 ring-offset-background",
-                              )}
-                            >
-                              <MessageBubble message={msg} />
-                            </div>
-                          );
-                        })}
-                      </InfiniteScroll>
+                          }
+                          height={`${scrollHeight}px`}
+                          inverse
+                          style={{
+                            display: "flex",
+                            flexDirection: "column-reverse",
+                          }}
+                          className="p-4 space-y-4"
+                        >
+                          {messages.map((msg) => {
+                            const messageId = msg._id.toString();
+                            const focused = messageId === linkedMessageId;
+                            return (
+                              <div
+                                key={messageId}
+                                id={messageElementId("messenger", messageId)}
+                                tabIndex={focused ? -1 : undefined}
+                                aria-current={focused ? "location" : undefined}
+                                className={cn(
+                                  "scroll-mt-20 rounded-lg",
+                                  focused &&
+                                    "bg-primary/5 ring-2 ring-primary/60 ring-offset-2 ring-offset-background",
+                                )}
+                              >
+                                <MessageBubble message={msg} />
+                              </div>
+                            );
+                          })}
+                        </InfiniteScroll>
+                      </>
                     )}
                 </div>
               </div>

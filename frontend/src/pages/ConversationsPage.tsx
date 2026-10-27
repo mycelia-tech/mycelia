@@ -5,7 +5,7 @@ import { MessagesSquare, ChevronRight, Clock, Loader2, Tag } from "lucide-react"
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useWebSocketSubscription } from "@/hooks/useWebSocket";
+import { useMongoChanges } from "@/hooks/useMongoChanges";
 
 interface TimeRange {
   start: string;
@@ -130,11 +130,6 @@ function ConversationCard({ conversation }: { conversation: ConversationObject }
   );
 }
 
-function getConversationStartTime(conv: ConversationObject): number {
-  const start = conv.timeRanges?.[0]?.start;
-  return start ? new Date(start).getTime() : 0;
-}
-
 export default function ConversationsPage() {
   const [page, setPage] = useState(0);
   const pageSize = 20;
@@ -174,70 +169,14 @@ export default function ConversationsPage() {
     },
   });
 
-  useWebSocketSubscription("mongo:objects", (event) => {
-    if (event.event !== "mongo.change") return;
-    
-    const change = event.data;
-    if (!change || change.collection !== "objects") return;
-    
-    const { operationType, document } = change;
-    
-    if (operationType === "insert" && document?.isConversation) {
-      const newConv = document as ConversationObject;
-      const newStartTime = getConversationStartTime(newConv);
-      
-      queryClient.setQueryData<{ conversations: ConversationObject[]; hasMore: boolean }>(
-        ["conversations", 0],
-        (old) => {
-          if (!old) return old;
-          
-          const currentNewest = old.conversations[0];
-          const currentNewestTime = currentNewest ? getConversationStartTime(currentNewest) : 0;
-          
-          if (newStartTime > currentNewestTime) {
-            const exists = old.conversations.some((c) => c._id === newConv._id);
-            if (exists) return old;
-            
-            return {
-              conversations: [newConv, ...old.conversations].slice(0, pageSize),
-              hasMore: old.hasMore || old.conversations.length >= pageSize,
-            };
-          }
-          return old;
-        }
-      );
-      
-      queryClient.setQueryData<number>(["conversations-count"], (old) => 
-        old !== undefined ? old + 1 : undefined
-      );
-    } else if (operationType === "update" && document) {
-      const updatedConv = document as Partial<ConversationObject> & { _id: string };
-      const docId = updatedConv._id || change.documentId;
-      
-      if (!docId) return;
-      
-      const queries = queryClient.getQueriesData<{ conversations: ConversationObject[]; hasMore: boolean }>({
-        queryKey: ["conversations"],
-      });
-      
-      for (const [queryKey] of queries) {
-        queryClient.setQueryData<{ conversations: ConversationObject[]; hasMore: boolean }>(
-          queryKey,
-          (old) => {
-            if (!old) return old;
-            
-            const idx = old.conversations.findIndex((c) => c._id === docId);
-            if (idx === -1) return old;
-            
-            const updated = [...old.conversations];
-            updated[idx] = { ...updated[idx], ...updatedConv };
-            return { ...old, conversations: updated };
-          }
-        );
-      }
-    }
+  useMongoChanges("mongo:objects", (changes) => {
+    const relevant = ["isConversation", "name", "summary", "timeRanges", "icon", "aliases"];
+    if (!changes.some(change => change.collection === "objects" &&
+      (change.operationType !== "update" || !change.changedFields?.length || change.changedFields.some(field => relevant.some(root => field === root || field.startsWith(root + ".")))))) return;
+    void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    void queryClient.invalidateQueries({ queryKey: ["conversations-count"] });
   });
-  
+
   if (isLoading && !data) {
     return (
       <div className="space-y-6">

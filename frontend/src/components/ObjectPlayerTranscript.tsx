@@ -281,7 +281,7 @@ export function ObjectPlayerTranscript({ timeRange, height, minHeight = 300, max
     }
 
     // Re-enable auto-scroll after 3 seconds of no scrolling
-    scrollTimeoutRef.current = window.setTimeout(() => {
+    scrollTimeoutRef.current = globalThis.setTimeout(() => {
       setUserScrolling(false);
     }, 3000);
   }, [syncEnabled]);

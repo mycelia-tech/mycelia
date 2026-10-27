@@ -1,3 +1,4 @@
+import { RequestError } from "@/components/RequestError";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { callResource } from "@/lib/api";
@@ -28,6 +29,10 @@ const WorkersPage = () => {
   >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<
+    { message: string; workerType: string; wasPaused: boolean } | null
+  >(null);
+  const [actionStatus, setActionStatus] = useState("");
   const [togglingWorker, setTogglingWorker] = useState<string | null>(null);
 
   const fetchData = async () => {
@@ -55,7 +60,10 @@ const WorkersPage = () => {
     workerType: string,
     currentlyPaused: boolean,
   ) => {
+    if (togglingWorker) return;
     setTogglingWorker(workerType);
+    setActionError(null);
+    setActionStatus("");
     try {
       await callResource("jobs", {
         action: currentlyPaused ? "resume_worker" : "pause_worker",
@@ -63,10 +71,19 @@ const WorkersPage = () => {
       });
       setWorkerStatuses((prev) => ({
         ...prev,
-        [workerType]: { paused: !currentlyPaused },
+        [workerType]: { ...prev[workerType], paused: !currentlyPaused },
       }));
+      setActionStatus(
+        `${workerType} ${currentlyPaused ? "resumed" : "paused"}.`,
+      );
     } catch (err) {
-      console.error("Failed to toggle worker pause state:", err);
+      setActionError({
+        message: err instanceof Error
+          ? err.message
+          : "Could not change worker state.",
+        workerType,
+        wasPaused: currentlyPaused,
+      });
     } finally {
       setTogglingWorker(null);
     }
@@ -141,11 +158,30 @@ const WorkersPage = () => {
       </div>
 
       {error && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm text-amber-600">
+        <div
+          role="alert"
+          className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm text-amber-600"
+        >
           Showing the last worker catalog snapshot. Refresh failed: {error}
         </div>
       )}
 
+      {actionError && (
+        <RequestError
+          title="Worker state was not changed"
+          message={actionError.message}
+          onRetry={() => {
+            void toggleWorkerPause(
+              actionError.workerType,
+              actionError.wasPaused,
+            );
+          }}
+          pending={Boolean(togglingWorker)}
+        />
+      )}
+      <p role="status" className="text-sm text-muted-foreground">
+        {actionStatus}
+      </p>
       {/* Active Workers */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
@@ -221,7 +257,11 @@ const WorkersPage = () => {
                           size="sm"
                           onClick={() =>
                             toggleWorkerPause(worker.type, isPaused)}
-                          disabled={isToggling || !worker.capabilities.pause}
+                          disabled={Boolean(togglingWorker) ||
+                            !worker.capabilities.pause}
+                          aria-label={`${
+                            isPaused ? "Resume" : "Pause"
+                          } ${worker.label}`}
                           title={isPaused ? "Resume worker" : "Pause worker"}
                         >
                           {isToggling

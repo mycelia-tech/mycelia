@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import * as userEventLib from "@testing-library/user-event";
@@ -18,15 +19,22 @@ const userEvent = (userEventLib as any).default || userEventLib;
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <SearchPage />
-    </MemoryRouter>,
+    <QueryClientProvider
+      client={new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      })}
+    >
+      <MemoryRouter>
+        <SearchPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
 describe("SearchPage", () => {
   beforeEach(() => {
     callResourceMock.mockReset();
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   });
 
   it("uses hybrid retrieval by default and renders canonical evidence", async () => {

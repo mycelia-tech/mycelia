@@ -231,11 +231,9 @@ function EditableTitle({
 
   return (
     <div className="flex items-center gap-3 group flex-1 min-w-0">
-      <EmojiPickerButton
-        value={icon}
-        onChange={onIconChange}
-        className="text-4xl flex-shrink-0"
-      />
+      <div className="text-4xl flex-shrink-0">
+        <EmojiPickerButton value={icon} onChange={onIconChange} />
+      </div>
       {isEditing
         ? (
           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -409,7 +407,7 @@ const ObjectDetailPage = () => {
   const [editingDetailsValue, setEditingDetailsValue] = useState("");
 
   // Autosave settings and status
-  const { autoSave, setAutoSave, dateFormat } = useSettingsStore();
+  const { autoSave, setAutoSave, timeFormat: dateFormat } = useSettingsStore();
   const [pendingChanges, setPendingChanges] = useState<Record<string, any>>({});
   const pendingChangesRef = useRef<Record<string, any>>({}); // Ref to always get latest pending changes
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -799,7 +797,7 @@ const ObjectDetailPage = () => {
           {object.aliases && object.aliases.length > 0 && (
             <div className="flex items-center gap-1">
               <Tag className="w-3 h-3 text-muted-foreground" />
-              {object.aliases.slice(0, 2).map((alias, idx) => (
+              {object.aliases.slice(0, 2).map((alias: string, idx: number) => (
                 <Badge key={idx} variant="secondary" className="text-xs py-0">
                   {alias}
                 </Badge>
@@ -1097,7 +1095,7 @@ const ObjectDetailPage = () => {
             handleFieldUpdate("timeRanges", newRanges);
           }}
           onDelete={(index) => {
-            const newRanges = (object.timeRanges || []).filter((_, i) =>
+            const newRanges = (object.timeRanges || []).filter((_: unknown, i: number) =>
               i !== index
             );
             handleFieldUpdate(

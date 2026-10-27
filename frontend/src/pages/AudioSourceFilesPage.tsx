@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { useWebSocketSubscription } from "@/hooks/useWebSocket";
+import { useMongoChanges } from "@/hooks/useMongoChanges";
 import { api } from "@/lib/api";
 import { ObjectId } from "bson";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,6 +35,7 @@ interface SourceFile {
   ingestion?: {
     error?: any;
     last_attempt?: any;
+    recovery?: string;
   };
 }
 
@@ -144,7 +145,7 @@ function collapseTree(node: TreeNode): TreeNode {
   return node;
 }
 
-const TreeItem = ({ node, level = 0, onRetry }: { node: TreeNode; level?: number; onRetry?: (id: string) => void }) => {
+const TreeItem = ({ node, level = 0, onRetry, retryingIds, queuedRetryIds }: { node: TreeNode; level?: number; onRetry?: (id: string) => void; retryingIds: Set<string>; queuedRetryIds: Set<string> }) => {
   const [isExpanded, setIsExpanded] = useState(level === 0);
   const hasChildren = Object.keys(node.children).length > 0;
 
@@ -166,6 +167,10 @@ const TreeItem = ({ node, level = 0, onRetry }: { node: TreeNode; level?: number
         level === 0 && "font-semibold bg-muted/50"
       )}
       style={{ paddingLeft: `${level * 1.25}rem` }}
+      role={node.type === 'folder' ? 'button' : undefined}
+      tabIndex={node.type === 'folder' ? 0 : undefined}
+      aria-expanded={node.type === 'folder' ? isExpanded : undefined}
+      onKeyDown={event => { if (node.type === 'folder' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setIsExpanded(!isExpanded); } }}
       onClick={() => node.type === 'folder' && setIsExpanded(!isExpanded)}
     >
       <span className="w-4 h-4 mr-1 flex items-center justify-center">
@@ -182,7 +187,7 @@ const TreeItem = ({ node, level = 0, onRetry }: { node: TreeNode; level?: number
         )}
       </span>
 
-      <span className="flex-1 truncate">{node.name}</span>
+      {node.type === 'file' && node.id ? <Link className="flex-1 truncate hover:underline focus-visible:outline" to={`/audio/source_files/${node.id}`}>{node.name}</Link> : <span className="flex-1 truncate">{node.name}</span>}
 
       <div className="flex items-center gap-4 ml-4 opacity-70 group-hover:opacity-100 transition-opacity whitespace-nowrap">
         {dateStr && (
@@ -195,6 +200,8 @@ const TreeItem = ({ node, level = 0, onRetry }: { node: TreeNode; level?: number
           <Button
             variant="ghost"
             size="sm"
+            disabled={retryingIds.has(node.id) || queuedRetryIds.has(node.id)}
+            aria-label={`Retry ${node.name}`}
             className="h-5 px-1.5 text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50"
             onClick={(e) => {
               e.preventDefault();
@@ -203,7 +210,7 @@ const TreeItem = ({ node, level = 0, onRetry }: { node: TreeNode; level?: number
             }}
           >
             <RotateCcw className="w-3 h-3 mr-1" />
-            Retry
+            {queuedRetryIds.has(node.id) ? "Queued" : retryingIds.has(node.id) ? "Queuing…" : "Retry"}
           </Button>
         )}
 
@@ -240,16 +247,12 @@ const TreeItem = ({ node, level = 0, onRetry }: { node: TreeNode; level?: number
 
   return (
     <div className="select-none">
-      {node.type === 'file' && node.id ? (
-        <Link to={`/audio/source_files/${node.id}`}>
-          {content}
-        </Link>
-      ) : content}
+      {content}
 
       {isExpanded && hasChildren && (
         <div className="mt-0.5">
           {sortedChildren.map(child => (
-            <TreeItem key={child.fullPath} node={child} level={level + 1} onRetry={onRetry} />
+            <TreeItem key={child.fullPath} node={child} level={level + 1} onRetry={onRetry} retryingIds={retryingIds} queuedRetryIds={queuedRetryIds} />
           ))}
         </div>
       )}
@@ -265,10 +268,14 @@ interface UploadingFile {
 
 export default function AudioSourceFilesPage() {
   const queryClient = useQueryClient();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const retryRequests = useRef(new Set<string>());
+  const [queuedRetryIds, setQueuedRetryIds] = useState<Set<string>>(new Set());
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
 
   // Use React Query cache to persist files across detail page navigation
@@ -286,6 +293,7 @@ export default function AudioSourceFilesPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'ingested' | 'error' | 'pending'>('all');
 
   const setFetchedFiles = (updater: (prev: SourceFile[]) => SourceFile[]) => {
+    if (!mounted.current) return;
     queryClient.setQueryData<SourceFile[]>(["source-files-list"], (old = []) => updater(old));
   };
 
@@ -301,6 +309,7 @@ export default function AudioSourceFilesPage() {
         query: {}
       });
 
+      if (!mounted.current) return;
       const total = typeof count === 'number' ? count : (count?.count ?? 0);
       setTotalCount(total);
 
@@ -320,11 +329,12 @@ export default function AudioSourceFilesPage() {
               path: 1,
               ingested: 1,
               start: 1,
-              "ingestion.error": 1
+              "ingestion.error": 1, "ingestion.recovery": 1
             }
           }
         });
 
+        if (!mounted.current) return;
         all.push(...batch);
         setFetchedFiles(() => [...all]);
       }
@@ -354,44 +364,31 @@ export default function AudioSourceFilesPage() {
     };
   }, [queryClient]);
 
-  useWebSocketSubscription("mongo:source_files", (event) => {
-    if (event.event === "mongo.change") {
-      const change = event.data;
-      if (!change || change.collection !== "source_files") return;
-
-      const docId = change.documentId;
-      const operationType = change.operationType;
-      const document = change.document;
-
-      setFetchedFiles((prev) => {
-        const existingIndex = prev.findIndex(f => f._id?.toString() === docId);
-
-        if (operationType === "insert" && document) {
-          if (existingIndex === -1) {
-            return [...prev, document];
-          }
-        } else if ((operationType === "update" || operationType === "replace") && document) {
-          if (existingIndex !== -1) {
-            const next = [...prev];
-            next[existingIndex] = { ...next[existingIndex], ...document };
-            return next;
-          }
-        } else if (operationType === "delete") {
-          if (existingIndex !== -1) {
-            const next = [...prev];
-            next.splice(existingIndex, 1);
-            return next;
-          }
+  useMongoChanges("mongo:source_files", (changes) => {
+    const ids = [...new Set(changes.filter(change => change.collection === "source_files").map(change => change.documentId))];
+    if (!ids.length) return;
+    const settled = changes.filter(change => change.operationType === "delete" || change.changedFields?.some(field => field === "ingested" || field === "ingestion" || field.startsWith("ingestion."))).map(change => change.documentId);
+    for (const id of settled) retryRequests.current.delete(id);
+    setQueuedRetryIds(previous => new Set([...previous].filter(id => !settled.includes(id))));
+    return (async () => {
+      try {
+        for (let offset = 0; offset < ids.length; offset += 100) {
+          const batchIds = ids.slice(offset, offset + 100);
+          const rows = await api.callResource("mongo", {
+            action: "find", collection: "source_files",
+            query: { _id: { $in: batchIds.map(id => ObjectId.isValid(id) ? new ObjectId(id) : id) } },
+            options: { limit: 100, projection: { _id: 1, path: 1, ingested: 1, start: 1, "ingestion.error": 1, "ingestion.recovery": 1 } },
+          }) as SourceFile[];
+          if (!mounted.current) return;
+          const changed = new Set(batchIds);
+          setFetchedFiles(previous => [...previous.filter(file => !changed.has(file._id?.toString() ?? "")), ...rows]);
         }
-        return prev;
-      });
-
-      if (operationType === "insert") {
-        setTotalCount(t => (t !== null ? t + 1 : null));
-      } else if (operationType === "delete") {
-        setTotalCount(t => (t !== null ? t - 1 : null));
+        const count = await api.callResource("mongo", { action: "count", collection: "source_files", query: {} });
+        setTotalCount(typeof count === "number" ? count : count?.count ?? 0);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Source updates could not be refreshed. Refresh the list to try again.");
       }
-    }
+    })();
   });
 
   // Upload handling
@@ -490,25 +487,24 @@ export default function AudioSourceFilesPage() {
 
   // Retry handling
   const handleRetry = async (fileId: string) => {
+    if (retryRequests.current.has(fileId)) return;
+    const source = fetchedFiles.find(file => file._id?.toString() === fileId);
+    if (!source?.path || source.ingestion?.recovery === "reupload") {
+      toast.error("Upload this file again to retry. Its completed audio chunks remain preserved.");
+      return;
+    }
+    retryRequests.current.add(fileId);
     setRetryingIds(prev => new Set([...prev, fileId]));
     try {
-      await api.callResource("mongo", {
-        action: "updateOne",
-        collection: "source_files",
-        query: { _id: new ObjectId(fileId) },
-        update: {
-          $set: { ingested: false },
-          $unset: { ingestion: "" }
-        }
+      await api.callResource("jobs", {
+        action: "enqueue", data: { type: "ingestion", sourceIds: [fileId], retryErrors: true, limit: 1 },
+        trigger: { type: "manual", reason: "source_file_retry" },
       });
-      // Update local state
-      setFetchedFiles(prev => prev.map(f =>
-        f._id?.toString() === fileId
-          ? { ...f, ingested: false, ingestion: undefined }
-          : f
-      ));
+      setQueuedRetryIds(previous => new Set([...previous, fileId]));
+      toast.success("Retry queued. The source error remains visible until ingestion succeeds.");
     } catch (err) {
-      console.error("Failed to retry file:", err);
+      retryRequests.current.delete(fileId);
+      toast.error(err instanceof Error ? err.message : "Could not queue ingestion retry.");
     } finally {
       setRetryingIds(prev => {
         const next = new Set(prev);
@@ -587,6 +583,7 @@ export default function AudioSourceFilesPage() {
               variant="outline"
               size="sm"
               onClick={handleRetryAll}
+              disabled={retryingIds.size > 0 || fetchedFiles.filter(file => file.ingestion?.error).every(file => queuedRetryIds.has(file._id?.toString()))}
               className="text-orange-600 border-orange-200 hover:bg-orange-50"
             >
               <RotateCcw className="h-4 w-4 mr-2" />
@@ -686,7 +683,7 @@ export default function AudioSourceFilesPage() {
                     )}
                     {uf.progress === 'uploading' && <RefreshCw className="w-3 h-3 animate-spin text-primary shrink-0" />}
                     {uf.progress === 'pending' && (
-                      <button onClick={() => removeUploadFile(i)} className="text-muted-foreground hover:text-foreground">
+                      <button type="button" aria-label={`Remove ${uf.file.name} from upload queue`} onClick={() => removeUploadFile(i)} className="text-muted-foreground hover:text-foreground">
                         <X className="w-3 h-3" />
                       </button>
                     )}
@@ -810,9 +807,9 @@ export default function AudioSourceFilesPage() {
                         if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
                         return a.name.localeCompare(b.name);
                       })
-                      .map(node => <TreeItem key={node.fullPath} node={node} onRetry={handleRetry} />)
+                      .map(node => <TreeItem key={node.fullPath} node={node} onRetry={handleRetry} retryingIds={retryingIds} queuedRetryIds={queuedRetryIds} />)
                   ) : (
-                    <TreeItem node={tree} onRetry={handleRetry} />
+                    <TreeItem node={tree} onRetry={handleRetry} retryingIds={retryingIds} queuedRetryIds={queuedRetryIds} />
                   )}
                </div>
             </div>

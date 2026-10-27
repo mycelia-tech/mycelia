@@ -1,3 +1,4 @@
+import { probeProviderConnection } from "@/lib/providerProbe";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { callResource } from "@/lib/api";
@@ -694,11 +695,7 @@ const InferenceSettingsPage = () => {
     setCheckingServer(true);
     setMessage(null);
     try {
-      const result = await callResource("llm", {
-        action: "probe",
-        baseUrl: draft.baseUrl.trim(),
-        apiKey: draft.apiKey,
-      });
+      const result = await probeProviderConnection(draft.baseUrl, draft.apiKey);
       setProviderProbes((current) => ({
         ...current,
         [draft.id]: {

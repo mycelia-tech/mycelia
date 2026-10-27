@@ -17,6 +17,12 @@ import {
   voiceIdentityKeys,
 } from "@/lib/voiceIdentity";
 import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
+import {
+  reviewSourceErrorMessage,
+  type ReviewSourceMode,
+  type ReviewSourcePayload,
+  useReviewSourcePreview,
+} from "@/modules/speakers/useReviewSourcePreview";
 import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
 import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
 import { useAudioPlaybackStore } from "@/stores/audioPlaybackStore";
@@ -143,58 +149,6 @@ type ReviewSession = {
       deduplicateOverlaps: boolean;
     };
   };
-};
-
-type ReviewSourceMode =
-  | "all_matching"
-  | "selected_recordings"
-  | "timeline_range"
-  | "diarization_generation";
-
-type ReviewSourcePayload = {
-  sourceMode: ReviewSourceMode;
-  targetProfileIds: string[];
-  embeddingSpaceIds: string[];
-  runIds: string[];
-  recordingIds: string[];
-  candidateMode: "reviewable" | "auto_matched";
-  quality: { minDurationSeconds: number; deduplicateOverlaps: boolean };
-  rangeMode: "fixed" | "all_before";
-  start?: Date;
-  end?: Date;
-};
-
-type ReviewSourcePreview = {
-  sourceMode: ReviewSourceMode;
-  range: { start: Date | string; end: Date | string };
-  embeddingSpaceIds: string[];
-  runIds: string[];
-  recordingIds: string[];
-  scope: Omit<ReviewSourcePayload, "start" | "end"> & {
-    start: Date | string;
-    end: Date | string;
-  };
-  counts: {
-    eligibleSegments: number;
-    recordings: number;
-    scannedSegments: number;
-    capped: boolean;
-  };
-  qualityStats: {
-    input: number;
-    accepted: number;
-    shortExcluded: number;
-    duplicateExcluded: number;
-  };
-  recordings: Array<{
-    id: string;
-    name?: string | null;
-    path?: string | null;
-    eligibleSegments: number;
-    start: Date | string;
-    end: Date | string;
-  }>;
-  sampleSegments: VoiceIdentityReviewSegment[];
 };
 
 type ReviewHistoryItem = {
@@ -418,20 +372,6 @@ function shortTechnicalId(value: string | null | undefined): string {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
-function reviewSourceErrorMessage(error: unknown): string {
-  if (
-    error instanceof DOMException &&
-    ["AbortError", "TimeoutError"].includes(error.name)
-  ) {
-    return "Preview stopped after 60 seconds. Try a shorter range or retry when Mongo is less busy.";
-  }
-  const message = error instanceof Error ? error.message : "Unknown error";
-  if (/MaxTimeMS|time limit|timed out/i.test(message)) {
-    return "The bounded database scan reached its time limit. Retry, choose a shorter range, or wait for heavy diarization writes to finish.";
-  }
-  return message;
-}
-
 export default function VoiceIdentityReviewPage() {
   const defaultTimeZone = useSettingsStore((state) => state.defaultTimeZone);
   const pickerTimeZone = resolveDefaultTimeZone(defaultTimeZone);
@@ -495,16 +435,16 @@ export default function VoiceIdentityReviewPage() {
     [],
   );
   const [recordingSearch, setRecordingSearch] = useState("");
-  const [sourcePreview, setSourcePreview] = useState<
-    ReviewSourcePreview | null
-  >(null);
-  const [previewedSourcePayload, setPreviewedSourcePayload] = useState<
-    ReviewSourcePayload | null
-  >(null);
-  const [sourcePreviewDirty, setSourcePreviewDirty] = useState(true);
-  const sourcePreviewRevisionRef = useRef(0);
-  const [sourcePreviewElapsedSeconds, setSourcePreviewElapsedSeconds] =
-    useState(0);
+  const {
+    sourcePreview,
+    previewedSourcePayload,
+    sourcePreviewDirty,
+    sourcePreviewElapsedSeconds,
+    previewReviewSource,
+    startPreview,
+    invalidateSourcePreview,
+    resetSourcePreview,
+  } = useReviewSourcePreview<VoiceIdentityReviewSegment>();
   const [newWindowSize, setNewWindowSize] = useState<5 | 10 | 20>(10);
   const [showReviewHistory, setShowReviewHistory] = useState(false);
   const [historyRecordingId, setHistoryRecordingId] = useState<string | null>(
@@ -577,15 +517,13 @@ export default function VoiceIdentityReviewPage() {
     setCustomStart(dateTimeInputValue(new Date(startMs)));
     setCustomEnd(dateTimeInputValue(new Date(endMs)));
     setShowNewSession(true);
-    setSourcePreview(null);
-    setPreviewedSourcePayload(null);
-    setSourcePreviewDirty(true);
-    sourcePreviewRevisionRef.current += 1;
+    resetSourcePreview();
   }, [
     searchParams,
     timelineSourceAvailable,
     timelineSourceEnd,
     timelineSourceStart,
+    resetSourcePreview,
   ]);
 
   const profiles = voiceSelection.profiles;
@@ -599,16 +537,13 @@ export default function VoiceIdentityReviewPage() {
   const primary = reviewProfile;
   const profileId = reviewProfileId;
   useEffect(() => {
-    setSourcePreview(null);
-    setPreviewedSourcePayload(null);
-    setSourcePreviewDirty(true);
+    resetSourcePreview();
     setSelectedRecordingIds([]);
-    sourcePreviewRevisionRef.current += 1;
     useAudioPlaybackStore.getState().stopActive();
     setSelectedSessionId(null);
     setHistory([]);
     setPlayOnMount(false);
-  }, [reviewProfileId]);
+  }, [reviewProfileId, resetSourcePreview]);
   const allProfileOptions = profiles.map((profile) => ({
     id: normalizeObjectId(profile._id) ?? "",
     name: String(profile.name ?? "Unnamed profile"),
@@ -808,11 +743,6 @@ export default function VoiceIdentityReviewPage() {
     }
   }, [reviewSession?.preferences?.autoPlay]);
 
-  const invalidateSourcePreview = () => {
-    sourcePreviewRevisionRef.current += 1;
-    setSourcePreviewDirty(true);
-    setPreviewedSourcePayload(null);
-  };
   const buildReviewSourcePayload = (): ReviewSourcePayload => {
     if (!reviewProfileId) throw new Error("Choose a voice profile first");
     if (!reviewProfile?.embeddingSpaceId) {
@@ -891,55 +821,9 @@ export default function VoiceIdentityReviewPage() {
     };
   };
 
-  const previewReviewSource = useMutation({
-    mutationFn: async (
-      request: { payload: ReviewSourcePayload; revision: number },
-    ) => {
-      return await callResource("speaker-segments", {
-        action: "preview-review-session",
-        ...request.payload,
-        previewLimit: 5,
-      }, { signal: AbortSignal.timeout(60_000) }) as ReviewSourcePreview;
-    },
-    onSuccess: (preview, request) => {
-      if (request.revision !== sourcePreviewRevisionRef.current) return;
-      setSourcePreview(preview);
-      setPreviewedSourcePayload({
-        ...preview.scope,
-        start: new Date(preview.scope.start),
-        end: new Date(preview.scope.end),
-      });
-      setSourcePreviewDirty(false);
-    },
-    onError: (error, request) => {
-      if (request.revision !== sourcePreviewRevisionRef.current) return;
-      toast.error("Could not preview review source", {
-        description: reviewSourceErrorMessage(error),
-      });
-    },
-  });
-
-  useEffect(() => {
-    if (!previewReviewSource.isPending) {
-      setSourcePreviewElapsedSeconds(0);
-      return;
-    }
-    const startedAt = Date.now();
-    setSourcePreviewElapsedSeconds(0);
-    const timer = globalThis.setInterval(() => {
-      setSourcePreviewElapsedSeconds(
-        Math.floor((Date.now() - startedAt) / 1_000),
-      );
-    }, 1_000);
-    return () => globalThis.clearInterval(timer);
-  }, [previewReviewSource.isPending]);
-
   const startSourcePreview = () => {
     try {
-      previewReviewSource.mutate({
-        payload: buildReviewSourcePayload(),
-        revision: sourcePreviewRevisionRef.current,
-      });
+      void startPreview(buildReviewSourcePayload());
     } catch (error) {
       toast.error("Could not preview review source", {
         description: error instanceof Error ? error.message : "Unknown error",
@@ -979,9 +863,7 @@ export default function VoiceIdentityReviewPage() {
       setSelectedSessionId(id);
       void queryClient.invalidateQueries({ queryKey: reviewHistoryQueryKey });
       setShowNewSession(false);
-      setSourcePreview(null);
-      setPreviewedSourcePayload(null);
-      setSourcePreviewDirty(true);
+      resetSourcePreview();
       setHistory([]);
       toast.success(
         `Review session created with ${session.loadedCount} segments`,
@@ -2382,8 +2264,7 @@ export default function VoiceIdentityReviewPage() {
                           setNewSourceMode(
                             event.target.value as ReviewSourceMode,
                           );
-                          setSourcePreview(null);
-                          invalidateSourcePreview();
+                          resetSourcePreview();
                         }}
                       >
                         <option value="all_matching">

@@ -21,6 +21,7 @@ describe("normalizeAudioSourceFileStats", () => {
     expect(normalizeAudioSourceFileStats(undefined, 13)).toEqual({
       total: 13,
       ingested: 0,
+      blocked: 0,
       pending: 0,
       errors: 0,
       byKind: [],

@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useMemorySearch } from "@/modules/search/useMemorySearch";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -50,9 +50,9 @@ const SOURCE_KINDS = [
 ];
 
 const MODE_COPY: Record<RagSearchMode, string> = {
-  hybrid: "Dense and lexical retrieval fused for the best default recall.",
-  semantic: "Meaning-based retrieval from the Qdrant vector projection.",
-  lexical: "Sparse BM25 retrieval for exact terms and distinctive names.",
+  hybrid: "Find matches by meaning and exact words.",
+  semantic: "Find related ideas, even when the wording differs.",
+  lexical: "Find exact terms and distinctive names.",
 };
 
 function displayDate(value?: string): string | null {
@@ -90,12 +90,6 @@ function resultSource(result: RagSearchResult) {
     groupId: result.source?.groupId,
     sourceHash: result.source?.sourceHash,
   };
-}
-
-function exactValues(value: string): string[] {
-  return [
-    ...new Set(value.split(",").map((item) => item.trim()).filter(Boolean)),
-  ];
 }
 
 function CanonicalLink({
@@ -166,61 +160,58 @@ function ResultCard(
                 </Badge>
               )}
             </div>
-            <CardTitle className="text-base leading-snug">
+            <CardTitle
+              role="heading"
+              aria-level={3}
+              className="text-base leading-snug"
+            >
               {source.title || source.id || result.pointId || result.id}
             </CardTitle>
-            {(source.occurredAt || source.id) && (
+            {source.occurredAt && (
               <CardDescription className="flex flex-wrap gap-x-3 gap-y-1">
                 {source.occurredAt && (
-                  <span>{displayDate(source.occurredAt)}</span>
-                )}
-                {source.id && (
-                  <span
-                    className="max-w-[34rem] truncate font-mono"
-                    title={source.id}
-                  >
-                    {source.id}
+                  <span>
+                    {displayDate(source.occurredAt)}
+                    {source.end ? ` – ${displayDate(source.end)}` : ""}
                   </span>
                 )}
               </CardDescription>
             )}
-          </div>
-          <div className="rounded-md border bg-muted/30 px-3 py-2 text-right">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Score
-            </div>
-            <div className="font-mono text-sm font-semibold">
-              {formatScore(result.score)}
-            </div>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="whitespace-pre-wrap text-sm leading-6">{result.text}</p>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            {scoreParts.map(([label, value]) => (
-              <span key={label}>
-                {label}:{" "}
-                <span className="font-mono">{formatScore(value!)}</span>
-              </span>
-            ))}
-            {result.generation && <span>generation: {result.generation}</span>}
-            {result.evidenceId && (
-              <span className="font-mono" title={result.evidenceId}>
-                evidence: {result.evidenceId}
-              </span>
-            )}
-            {source.groupId && <span>context: {source.groupId}</span>}
-            {source.senderId && (
-              <span className="font-mono">sender: {source.senderId}</span>
-            )}
-            {source.sourceHash && (
-              <span className="font-mono" title={source.sourceHash}>
-                source revision: {source.sourceHash.slice(0, 12)}
-              </span>
-            )}
-          </div>
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Result diagnostics</summary>
+            <div className="mt-2 flex flex-wrap gap-3">
+              <span>Score: {formatScore(result.score)}</span>
+              {source.id && <span>source: {source.id}</span>}
+              {scoreParts.map(([label, value]) => (
+                <span key={label}>
+                  {label}:{" "}
+                  <span className="font-mono">{formatScore(value!)}</span>
+                </span>
+              ))}
+              {result.generation && <span>generation: {result.generation}
+              </span>}
+              {result.evidenceId && (
+                <span className="font-mono" title={result.evidenceId}>
+                  evidence: {result.evidenceId}
+                </span>
+              )}
+              {source.groupId && <span>context: {source.groupId}</span>}
+              {source.senderId && (
+                <span className="font-mono">sender: {source.senderId}</span>
+              )}
+              {source.sourceHash && (
+                <span className="font-mono" title={source.sourceHash}>
+                  source revision: {source.sourceHash.slice(0, 12)}
+                </span>
+              )}
+            </div>
+          </details>
           {source.uri && (
             <CanonicalLink
               uri={source.uri}
@@ -235,81 +226,36 @@ function ResultCard(
 }
 
 export default function SearchPage() {
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<RagSearchMode>("hybrid");
-  const [kinds, setKinds] = useState<string[]>([]);
-  const [range, setRange] = useState<DateRangeValue | undefined>();
-  const [limit, setLimit] = useState("10");
-  const [platforms, setPlatforms] = useState("");
-  const [senderIds, setSenderIds] = useState("");
-  const [sourceCollection, setSourceCollection] = useState("messages");
-  const [sourceId, setSourceId] = useState("");
-  const [maxPerSource, setMaxPerSource] = useState("2");
-  const [response, setResponse] = useState<RagSearchResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
-  const controllerRef = useRef<AbortController | null>(null);
-
-  useEffect(() => () => controllerRef.current?.abort(), []);
-
-  const toggleKind = (kind: string, checked: boolean) => {
-    setKinds((current) =>
-      checked
-        ? [...current, kind]
-        : current.filter((candidate) => candidate !== kind)
+  const { form, setField, submit, response, loading, error, hasSearched } =
+    useMemorySearch();
+  const {
+    query,
+    mode,
+    kinds,
+    range,
+    limit,
+    platforms,
+    senderIds,
+    sourceCollection,
+    sourceId,
+    maxPerSource,
+  } = form;
+  const setQuery = (value: string) => setField("query", value);
+  const setMode = (value: RagSearchMode) => setField("mode", value);
+  const setRange = (value: DateRangeValue | undefined) =>
+    setField("range", value);
+  const setLimit = (value: string) => setField("limit", value);
+  const setPlatforms = (value: string) => setField("platforms", value);
+  const setSenderIds = (value: string) => setField("senderIds", value);
+  const setSourceCollection = (value: string) =>
+    setField("sourceCollection", value as typeof sourceCollection);
+  const setSourceId = (value: string) => setField("sourceId", value);
+  const setMaxPerSource = (value: string) => setField("maxPerSource", value);
+  const toggleKind = (kind: string, checked: boolean) =>
+    setField(
+      "kinds",
+      checked ? [...kinds, kind] : kinds.filter((value) => value !== kind),
     );
-  };
-
-  const runSearch = async (event: FormEvent) => {
-    event.preventDefault();
-    const normalizedQuery = query.trim();
-    if (!normalizedQuery) {
-      setError("Enter a question or phrase to search the knowledge index.");
-      return;
-    }
-
-    controllerRef.current?.abort();
-    const controller = new AbortController();
-    controllerRef.current = controller;
-    setLoading(true);
-    setError(null);
-    setHasSearched(true);
-    setResponse(null);
-
-    try {
-      const next = await ragApi.search({
-        query: normalizedQuery,
-        mode,
-        kinds,
-        start: range?.start.toISOString(),
-        end: range?.end?.toISOString(),
-        limit: Number(limit),
-        platforms: exactValues(platforms),
-        senderIds: exactValues(senderIds),
-        sources: sourceId.trim()
-          ? [{
-            collection: sourceCollection as
-              | "transcriptions"
-              | "messages"
-              | "objects"
-              | "media_visual_descriptions",
-            id: sourceId.trim(),
-          }]
-          : undefined,
-        maxPerSource: Number(maxPerSource),
-      }, controller.signal);
-      setResponse(next);
-    } catch (caught) {
-      if (controller.signal.aborted) return;
-      setError(ragErrorMessage(caught));
-    } finally {
-      if (controllerRef.current === controller) {
-        controllerRef.current = null;
-        setLoading(false);
-      }
-    }
-  };
 
   const actualMode = response?.mode ?? mode;
   const results = response?.results ?? [];
@@ -322,8 +268,8 @@ export default function SearchPage() {
           <h1 className="text-3xl font-bold tracking-tight">Smart Search</h1>
         </div>
         <p className="max-w-3xl text-muted-foreground">
-          Search the rebuildable Qdrant knowledge projection. Every result keeps
-          a link back to its canonical Mycelia source.
+          Find messages, recordings, photos, and memories. Open a result to see
+          its original source and time context.
         </p>
       </div>
 
@@ -333,7 +279,13 @@ export default function SearchPage() {
           <CardDescription>{MODE_COPY[mode]}</CardDescription>
         </CardHeader>
         <CardContent>
-          <form className="space-y-5" onSubmit={runSearch}>
+          <form
+            className="space-y-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit();
+            }}
+          >
             <div className="flex flex-col gap-2 sm:flex-row">
               <div className="flex-1 space-y-2">
                 <Label htmlFor="rag-query">Question or phrase</Label>
@@ -568,7 +520,7 @@ export default function SearchPage() {
         {loading && (
           <Card className="p-10 text-center text-muted-foreground">
             <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-            Searching the active projection…
+            Searching your memories…
           </Card>
         )}
 
@@ -590,49 +542,56 @@ export default function SearchPage() {
                 </p>
               </div>
               {(response.projectionId || response.projectionFingerprint) && (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Badge
-                    variant="outline"
-                    className="max-w-full font-mono font-normal"
-                  >
-                    projection{" "}
-                    {response.projectionId || response.projectionFingerprint}
-                  </Badge>
-                  {response.freshness && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer">
+                    Search diagnostics
+                  </summary>
+                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                     <Badge
-                      variant={response.freshness.checkpointState === "error"
-                        ? "destructive"
-                        : response.freshness.paused
-                        ? "secondary"
-                        : "outline"}
-                      title={response.freshness.checkpointAt
-                        ? `Checkpoint ${
-                          displayDate(response.freshness.checkpointAt)
-                        } · ${response.freshness.checkpointState}`
-                        : `Checkpoint timestamp unavailable · ${response.freshness.checkpointState}`}
+                      variant="outline"
+                      className="max-w-full font-mono font-normal"
                     >
-                      {response.freshness.lifecycleState}
-                      {` · checkpoint ${response.freshness.checkpointState}`}
-                      {response.freshness.lagSeconds != null
-                        ? ` · ${Math.round(response.freshness.lagSeconds)}s lag`
-                        : " · lag unknown"}
+                      projection{" "}
+                      {response.projectionId || response.projectionFingerprint}
                     </Badge>
-                  )}
-                  <Badge
-                    variant={response.revalidation.state === "verified"
-                      ? "outline"
-                      : "destructive"}
-                    title={`${response.revalidation.checkedSources} canonical sources checked`}
-                  >
-                    Mongo {response.revalidation.state}
-                    {response.revalidation.staleCandidates > 0
-                      ? ` · ${response.revalidation.staleCandidates} stale dropped`
-                      : ""}
-                    {response.revalidation.filterRefinedCandidates > 0
-                      ? ` · ${response.revalidation.filterRefinedCandidates} exact-filter refined`
-                      : ""}
-                  </Badge>
-                </div>
+                    {response.freshness && (
+                      <Badge
+                        variant={response.freshness.checkpointState === "error"
+                          ? "destructive"
+                          : response.freshness.paused
+                          ? "secondary"
+                          : "outline"}
+                        title={response.freshness.checkpointAt
+                          ? `Checkpoint ${
+                            displayDate(response.freshness.checkpointAt)
+                          } · ${response.freshness.checkpointState}`
+                          : `Checkpoint timestamp unavailable · ${response.freshness.checkpointState}`}
+                      >
+                        {response.freshness.lifecycleState}
+                        {` · checkpoint ${response.freshness.checkpointState}`}
+                        {response.freshness.lagSeconds != null
+                          ? ` · ${
+                            Math.round(response.freshness.lagSeconds)
+                          }s lag`
+                          : " · lag unknown"}
+                      </Badge>
+                    )}
+                    <Badge
+                      variant={response.revalidation.state === "verified"
+                        ? "outline"
+                        : "destructive"}
+                      title={`${response.revalidation.checkedSources} canonical sources checked`}
+                    >
+                      Mongo {response.revalidation.state}
+                      {response.revalidation.staleCandidates > 0
+                        ? ` · ${response.revalidation.staleCandidates} stale dropped`
+                        : ""}
+                      {response.revalidation.filterRefinedCandidates > 0
+                        ? ` · ${response.revalidation.filterRefinedCandidates} exact-filter refined`
+                        : ""}
+                    </Badge>
+                  </div>
+                </details>
               )}
             </div>
 
@@ -659,10 +618,10 @@ export default function SearchPage() {
         {!loading && !hasSearched && !error && (
           <Card className="p-10 text-center">
             <Database className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-            <p className="font-medium">The knowledge index is ready to query</p>
+            <p className="font-medium">Search your memories</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Hybrid search is the default. Exact operational facts should still
-              be verified against the linked canonical record.
+              Enter a phrase or question, then open a source to see the full
+              context.
             </p>
           </Card>
         )}

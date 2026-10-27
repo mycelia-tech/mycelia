@@ -1,5 +1,6 @@
 /// <reference path="../vite-env.d.ts" />
 
+import { useBacklogRecovery } from "@/modules/jobs/useBacklogRecovery";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -2518,35 +2519,7 @@ export default function JobsPage() {
     },
   });
 
-  const runBacklogMutation = useMutation({
-    mutationFn: async (workerType: string) => {
-      // retryNow only exists on some worker schemas; strict validation
-      // rejects the key on the others (tagger, entity_typing).
-      const supportsRetryNow = workerType === "conversation_extractor_merged" ||
-        workerType === "summarization";
-      return await api.callResource("jobs", {
-        action: "enqueue",
-        data: {
-          type: workerType,
-          ...(supportsRetryNow ? { retryNow: true } : {}),
-        },
-        trigger: {
-          type: "manual",
-          reason: "pipeline_health_run_now",
-        },
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      queryClient.invalidateQueries({ queryKey: ["job-stats"] });
-      void markPipelineHealthStale();
-    },
-    onError: (error) => {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to launch job",
-      );
-    },
-  });
+  const runBacklogMutation = useBacklogRecovery(markPipelineHealthStale);
 
   const previewTimelineBookkeepingMutation = useMutation({
     mutationFn: async () =>

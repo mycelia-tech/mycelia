@@ -228,28 +228,31 @@ export function SummaryCompareDialog({
           e.preventDefault();
           setFocusedPanel(1);
           break;
-        case "ArrowUp":
+        case "ArrowUp": {
           e.preventDefault();
           const currentIdx = getCurrentIndex();
           const prevIdx = currentIdx > 0 ? currentIdx - 1 : summaries.length - 1;
           setCurrentIndex(prevIdx);
           break;
-        case "ArrowDown":
+        }
+        case "ArrowDown": {
           e.preventDefault();
           const currIdx = getCurrentIndex();
           const nextIdx = currIdx < summaries.length - 1 ? currIdx + 1 : 0;
           setCurrentIndex(nextIdx);
           break;
-        case " ":
+        }
+        case " ": {
           e.preventDefault();
           const idxToStar = focusedPanel === 0 ? leftIndex : rightIndex;
           onStarSummary(idxToStar);
           break;
+        }
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [open, focusedPanel, leftIndex, rightIndex, summaries.length, getCurrentIndex, setCurrentIndex, onStarSummary]);
 
   if (summaries.length < 2) {
