@@ -40,6 +40,7 @@ import { shutdownTelemetry } from "@/lib/telemetry.ts";
 import { ensureAllCollectionsExist } from "@/lib/mongo/collections.ts";
 import { registerRoutes } from "./routes.ts";
 import { errorHandler } from "@/middleware/errorHandler.ts";
+import { createBodyParsers } from "@/middleware/body-parsers.ts";
 import { getRootDB } from "@/lib/mongo/core.server.ts";
 import { redis } from "@/lib/redis.ts";
 import { startWorkers, stopWorkers } from "@/lib/jobs/workers.ts";
@@ -300,8 +301,7 @@ async function startServer(
       ),
     );
   }
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  app.use(createBodyParsers());
 
   app.use((req: Request, _res: Response, next: () => void) => {
     if (req.url !== "/health" && req.url !== "/readiness") {

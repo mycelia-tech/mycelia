@@ -33,7 +33,7 @@
     "chokidar": "^4.0.3",
     "denque": "^2.1.0",
     "detect-libc": "^2.0.4",
-    "express": "^4.21.2",
+    "express": "4.22.3",
     "fast-xml-parser": "^4.5.0",
     "fflate": "^0.8.2",
     "ioredis": "^5.6.1",
