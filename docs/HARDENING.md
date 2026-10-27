@@ -35,6 +35,10 @@ Never switch a running worktree or migrate database authentication implicitly.
 - Production nginx redirects HTTP to HTTPS, preserves the incoming host port,
   adds basic security headers and excludes query strings from access logs.
   `APP_MODE=dev` is the explicit local HTTP exception.
+- JSON/form parsing uses the pinned Express 4.22.3 dependency and body-parser
+  1.20.9. Parser failures return generic 400/413/415 errors without passing raw
+  request bodies to the application logger. See the
+  [dependency triage](reports/dependency-triage-2026-10-28.md) for remaining paths.
 
 ## Processing contracts
 
@@ -51,6 +55,15 @@ Python retries only safe operations or operations with stable identity and
 deduplication, with bounded connection/read deadlines and cancellation checks.
 `MYCELIA_ENV_FILE` and `MYCELIA_IMPORTERS_FILE` select explicit config files;
 process environment takes precedence over dotenv. HTTPS verification remains on.
+
+Access logs are upserted by Redis stream ID with majority/journal acknowledgement
+before the exact IDs are acknowledged and removed. Failed persistence remains
+pending for bounded retries; another consumer group prevents payload deletion.
+The blocking stream read has its own Redis connection. This prevents retention
+of newly processed payloads; it does not reclaim the historical acknowledged
+stream. Legacy entries need separate archival/reconciliation because the old
+writer did not record stream IDs and could acknowledge failed persistence. See
+[access-log recovery](../DEVELOPMENT.md#access-log-memory-and-recovery).
 
 ## Daily workflows and feature modules
 
@@ -76,6 +89,11 @@ extraction should preserve their domain contracts and regression tests.
 `frontend/src/modules/jobs/JobProgressCell` now owns worker-specific progress,
 result, error and processed-range presentation. JobsPage retains orchestration;
 existing props, timeline/detail links and its compatibility re-export are kept.
+
+`frontend/src/modules/media/useMediaInventory` owns page loading, cursor state,
+stale-response protection and visible-tab refresh of the loaded inventory prefix.
+MediaPage keeps URL state, selection and domain actions; existing media contracts
+and routes are preserved.
 
 Live audio attaches opaque capture/session/request UUIDs and allowlisted failure
 codes across Omi, WLK and the private ASR adapter. A capture ID persists across

@@ -55,7 +55,7 @@ and no containers carrying the new test-run owner label. The only remaining
 MongoDB container was the stopped main database. The two Mongo images (`8.0` and
 `8.2`) are cached images, not additional running databases. No containers, images
 or data volumes were removed. The user confirmed the main Mycelia stack was
-intentionally stopped and must remain stopped.
+intentionally stopped and, at that point, requested that it remain stopped.
 
 The host had approximately 3.5–3.6 GiB available disk space and about 6 GiB of used
 swap; the OS memory-pressure query reported 40% available memory. Docker's image
@@ -81,6 +81,71 @@ Its six tests and nine deployment-guard tests passed. JobsPage's progress/result
 presenter moved into `modules/jobs/JobProgressCell`, reducing the page by 1,189
 lines with existing props and links preserved; all three focused frontend tests,
 changed-file typechecking and lint passed. No service was started for these checks.
+
+## Follow-up: authorized startup and memory diagnosis (2026-10-28)
+
+The user subsequently authorized starting Mongo and the main stack, with load
+profiling if needed. The existing six main containers were started without
+recreating them or changing their source checkout. No additional MongoDB was
+started. Backend still runs the original checkout in production mode; the new
+hardening worktree has not been deployed.
+
+The principal Redis memory consumer is confirmed: `access_logs` contained
+32,710,807 entries, with sampled `MEMORY USAGE` of 3,503,227,349 bytes. Total Redis
+allocation was 3,622,346,848 bytes, with no configured data-memory limit. Its RDB
+load took 68.8 seconds. Stream timestamps span January 21 to October 27, 2026;
+one consumer group reported 4,323 pending entries and no unread lag. The old
+worker never removed acknowledged stream entries. No historical stream entries
+were removed during diagnosis.
+
+Mongo initially used about 400 MiB resident memory and responded in about 20 ms.
+After application startup it populated roughly 2.1 GiB of its 2.5 GiB WiredTiger
+cache; the sampled server status showed no queued or active database clients.
+These are different phases, not evidence of an unbounded Mongo leak. Docker
+operations briefly timed out and later recovered without a Docker restart.
+Host profiling also observed substantial concurrent Flutter/Dart I/O and other
+desktop workloads; this does not establish a single cause for the prior freeze.
+The previously observed missing containerd snapshot remains unresolved.
+
+Backend cold start took about six minutes from container start to `[READY]`.
+Worker discovery accounts for about four minutes of that interval: 26 workers
+are imported sequentially in fresh Deno processes, with no per-child deadline or
+progress log. The child PID changed during observation, establishing progress.
+The discovery implementation was not changed in this follow-up; bounded startup
+and lightweight manifests remain a concrete next improvement.
+
+Frontend and databases passed their configured health checks; Python capabilities
+reported `ready` with seven job types. Backend emitted `[READY]`, and local HTTPS
+`/health` and `/readiness` returned 200. An exchange using the configured worker
+credential succeeded, followed by an authenticated `jobs/pipeline_health` request
+(HTTP 200, about 0.54 seconds). Readiness confirms startup, not successful GPU
+inference, ingestion completion or the deployment of this branch. Doctor still
+exits nonzero for the intentional source mismatch and the existing public Mongo
+port; these deployment findings were not silently suppressed.
+
+### Source changes and focused validation
+
+- Access-log persistence uses stable stream IDs, retries pending batches, and
+  acknowledges only durable normal/quarantine writes. Exact saved IDs are
+  deleted atomically only for the sole consumer group. Blocking reads have a
+  dedicated connection. Nine container-free regression tests, typechecking and
+  lint passed. Five additional real Redis checks passed for exact deletion,
+  repeated ACK, multiple groups, tombstones and a missing group. This used one
+  disposable 64 MiB / 0.25 CPU Redis with no network or published ports, removed
+  immediately afterward; production data was not a test target. Actual Mongo
+  upserts and worker shutdown/reconnect were not exercised by these tests.
+- Express 4.22.3/body-parser 1.20.9 and safe parser-error handling passed eight
+  ordinary loopback compatibility/error tests, typechecking and lint. Remaining
+  advisory paths and the reproduction limit are recorded in the
+  [dependency triage](reports/dependency-triage-2026-10-28.md).
+- Media inventory requests/pagination/refresh moved to `useMediaInventory`;
+  the page retains selection and domain actions. Existing MediaPage tests passed
+  21/21, with changed-file typechecking and lint. Existing routes are preserved.
+
+The initial full-suite baseline was not rerun under this host load. New checks
+were focused and bounded. Historical Redis cleanup requires separate verified
+archival/reconciliation: old acknowledgements do not prove successful Mongo
+persistence. No data reset, original-file removal or queue-history purge occurred.
 
 ## Rollout gates and compatibility
 

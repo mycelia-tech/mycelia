@@ -10,6 +10,10 @@ development mode with hot reload.
 Use Deno 2.9.5 and uv 0.7.3 (Python 3.12 for the worker). `deno.lock` is the
 authoritative TypeScript dependency graph; use `deno install --frozen`, not npm
 install, in backend/frontend. The frontend npm lockfile has been retired.
+The backend's Express 4.22.3 lock resolves body-parser 1.20.9. JSON/form parser
+errors have a dedicated safe response handler; compatibility checks are in
+`backend/app/middleware/body-parsers.test.ts`. Remaining dependency findings are
+tracked in [the dated triage](docs/reports/dependency-triage-2026-10-28.md).
 
 ```sh
 deno task verify --list
@@ -68,6 +72,32 @@ Python notebook/debug dependencies are separate from runtime; use
 `MYCELIA_ENV_FILE`, `MYCELIA_IMPORTERS_FILE`, and `MYCELIA_LOG_DIR` avoid cwd and
 host-log coupling in isolated tests. Trust local TLS CAs instead of disabling
 HTTPS verification.
+
+### Access-log memory and recovery
+
+Redis stream acknowledgement (`XACK`) does not release its payloads. When
+investigating memory use, compare `INFO memory`, `INFO keyspace`, `XLEN access_logs`,
+`MEMORY USAGE access_logs SAMPLES 1` and `XINFO GROUPS access_logs`. Use the existing
+local credential mechanism, never passwords in command arguments or copied logs.
+These metadata checks do not read document bodies or modify the stream.
+
+The access-log worker uses a separate Redis connection for blocking reads. It
+retries pending events in batches of at most 100, upserts normal/quarantined
+events by stable stream identity, then atomically acknowledges the exact saved
+IDs. It removes these payloads only when its consumer group is the sole group.
+Mongo writes require majority/journal acknowledgement; a failure retains the
+batch for retry with a one-second backoff. Redis commands have a ten-second
+deadline and Mongo bulk writes have a fifteen-second total deadline. Stopping
+interrupts Redis reads/backoff; an outstanding shared Mongo connection lookup
+still follows the existing application connection retry policy.
+
+The upgrade does **not** trim historical acknowledged entries. Older code could
+acknowledge even after both Mongo writes failed, so acknowledgement is not proof
+of archival completeness. Older Mongo rows also lack stream IDs; retrying a
+legacy pending event can create one duplicate across the version boundary.
+Before reclaiming historical payloads, preserve a recoverable archive, establish
+which events are durable, and review an explicit migration/rollback plan. Do not
+`FLUSHDB`, delete the stream or apply an arbitrary `MAXLEN` retention policy.
 
 ### Shared GPU audio service
 

@@ -19,6 +19,9 @@ host maintenance and authentication migration are explicit opt-ins described in
 Backend integration tests use one resource-limited Mongo/Redis pair and refuse
 overlapping runs or less than 5 GiB free disk space. See
 [verification and source guard](DEVELOPMENT.md#verification-and-source-guard).
+Access logging now persists audit events before acknowledging them and releases
+only those saved Redis entries. Historical stream cleanup remains a separate
+verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-and-recovery).
 
 ### Audio Ingestion & Processing
 
