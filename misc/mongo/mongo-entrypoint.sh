@@ -15,6 +15,19 @@ run_mongosh() {
 }
 
 USE_AUTH="false"
+MONGO_PID=""
+
+# As container PID 1 this shell must forward Docker's stop signal. Waiting
+# without a trap leaves mongod running until Docker forcibly kills it.
+shutdown_mongo() {
+  trap '' TERM INT
+  if [ -n "$MONGO_PID" ]; then
+    kill -TERM "$MONGO_PID" 2>/dev/null || true
+    wait "$MONGO_PID" || true
+  fi
+  exit 0
+}
+trap shutdown_mongo TERM INT
 
 # Start MongoDB in the background using the provided command or default
 if [ $# -eq 0 ]; then

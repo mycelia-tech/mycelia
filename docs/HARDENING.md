@@ -107,6 +107,18 @@ substitute for a sustained physical-device acceptance run.
 
 ## Validation and release
 
+Mongo's entrypoint forwards TERM/INT to `mongod` and waits for shutdown, including
+during initialization. Compose gives it 60 seconds to flush. Signal tests use
+synthetic child processes and never start a database. An already running wrapper
+loads this change only on its next planned recreation; do not restart Mongo just
+to reload application code.
+
+`PYTHON_WORKER_CPU_LIMIT` defaults to `4.0` CPUs. A shared desktop can set `2.0`
+to reserve CPU for interactive work. An operator can apply the same quota with
+`docker update --cpus 2 <python-worker-container>` without interrupting a job;
+keep the dotenv setting consistent so the next recreation preserves the quota.
+This is a throughput tradeoff, not evidence that model thread counts are tuned.
+
 `deno task verify` runs repository, backend, frontend, SDK, Python, RAG, CPU
 GPU, isolated nginx and browser acceptance checks. Supply group names for focused
 work, e.g. `deno task verify sdk repo`. Browser tests need a locally installed

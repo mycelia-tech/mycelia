@@ -26,6 +26,7 @@ services:
       retries: 6
   mongo:
     image: mongo:8.2
+    stop_grace_period: 60s
     entrypoint: ["/mongo-entrypoint.sh"]
     command: mongod --config /etc/mongod.conf
     volumes:
@@ -171,7 +172,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4.0"
+          cpus: "${PYTHON_WORKER_CPU_LIMIT:-4.0}"
           memory: 4G
         reservations:
           cpus: "0.5"
