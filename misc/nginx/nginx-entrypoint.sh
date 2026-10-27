@@ -48,5 +48,9 @@ export NGINX_HTTP_REDIRECT
 # Do not log query strings: device WebSocket URLs may contain short-lived JWTs.
 export NGINX_ENVSUBST_FILTER='^(NGINX_RESOLVER|NGINX_HTTP_REDIRECT)$'
 
+# The image's server_name localhost would beat our default server and bypass
+# application routing/security headers, even with both address families bound.
+rm -f /etc/nginx/conf.d/default.conf
+
 # Execute the original nginx entrypoint
 exec /docker-entrypoint.sh "$@"

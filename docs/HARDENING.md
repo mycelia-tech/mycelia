@@ -36,6 +36,8 @@ Never switch a running worktree or migrate database authentication implicitly.
   adds basic security headers and excludes query strings from access logs.
   The application is the default server on both IPv4 and IPv6; localhost over
   IPv6 must not fall through to the nginx image's stock welcome page.
+  Startup removes the stock `default.conf`, whose explicit `localhost` name
+  would otherwise override the application's default server on either family.
   `APP_MODE=dev` is the explicit local HTTP exception.
 - JSON/form parsing uses the pinned Express 4.22.3 dependency and body-parser
   1.20.9. Parser failures return generic 400/413/415 errors without passing raw
