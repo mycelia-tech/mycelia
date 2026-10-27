@@ -6,5 +6,5 @@ command -v uv >/dev/null || { echo 'Install uv before starting the importer.' >&
 command -v ffmpeg >/dev/null || { echo 'Install ffmpeg before starting the importer.' >&2; exit 1; }
 command -v ffprobe >/dev/null || { echo 'Install ffprobe before starting the importer.' >&2; exit 1; }
 cd "${repo_root}/python"
-exec env UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/private/tmp/mycelia-daemon-venv}" \
+exec env UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-${repo_root}/python/.venv}" \
   uv run --env-file "${repo_root}/.env" voice_memos_bridge_server.py

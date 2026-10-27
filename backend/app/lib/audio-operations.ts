@@ -27,6 +27,7 @@ export async function readAudioOperations(mongo: MongoCall) {
         hint: AUDIO_IMPORTS_INDEX,
         maxTimeMS: 1_000,
         projection: {
+          name: 1,
           path: 1,
           start: 1,
           ingested_at: 1,
@@ -52,7 +53,9 @@ export async function readAudioOperations(mongo: MongoCall) {
   return {
     recentImports: imports?.map((source: any) => ({
       id: String(source._id),
-      name: source.path?.split(/[\\/]/).pop() ?? String(source._id),
+      name: typeof source.name === "string" && source.name.trim()
+        ? source.name
+        : source.path?.split(/[\\/]/).pop() ?? String(source._id),
       recordedAt: source.start ?? null,
       importedAt: source.ingested_at,
       source: source.platform?.importer ?? "audio",

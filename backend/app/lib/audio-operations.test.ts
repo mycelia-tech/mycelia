@@ -33,6 +33,28 @@ Deno.test("audio operations polling uses only capped indexed metadata reads", as
   expect(result.recentImports?.[0]).not.toHaveProperty("path");
 });
 
+Deno.test("Bridge imports retain their name and dates without a permanent source path", async () => {
+  const recordedAt = new Date("2026-10-20T10:00:00Z");
+  const importedAt = new Date("2026-10-27T11:00:00Z");
+  const result = await readAudioOperations(async (input) => {
+    if (input.action !== "find") return null;
+    expect(input.options.projection.name).toBe(1);
+    return [{
+      _id: "bridge-recording",
+      name: "Walk to the station",
+      start: recordedAt,
+      ingested_at: importedAt,
+    }];
+  });
+  expect(result.recentImports).toEqual([{
+    id: "bridge-recording",
+    name: "Walk to the station",
+    recordedAt,
+    importedAt,
+    source: "audio",
+  }]);
+});
+
 Deno.test("audio operations errors stay unknown without unindexed fallback", async () => {
   let calls = 0;
   const result = await readAudioOperations(() => {

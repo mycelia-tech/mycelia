@@ -4,7 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${repo_root}/.env"
-pipeline_venv="${UV_PROJECT_ENVIRONMENT:-/private/tmp/mycelia-daemon-venv}"
+pipeline_venv="${UV_PROJECT_ENVIRONMENT:-${repo_root}/python/.venv}"
 service_path="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 
 # launchd uses a minimal PATH, so Homebrew tools are otherwise unavailable to

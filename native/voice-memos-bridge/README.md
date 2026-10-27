@@ -62,7 +62,9 @@ unless you previously enabled automatic import.
 7. **Automatic import** (off by default, separate from the old copier preference)
    checks/imports every 1, 5 or 15 minutes while Bridge is running. macOS sleep is
    allowed; Bridge login auto-start is not configured.
-8. **Open pipeline** shows downstream VAD/transcription. Bridge's own table and
+8. **Open pipeline** shows downstream VAD/transcription and the last successful
+   import time. Its recent-import list uses the recording name even when Bridge
+   retains no permanent source path. Bridge's own table and
    counters show transfer, Opus processing, Mongo confirmation, errors and times.
    During encoding, processed audio time / duration, percent, speed, elapsed time
    and last-progress age come from ffmpeg's bounded `-progress` stream. A 30-second
@@ -153,6 +155,14 @@ requires a private 0600 pairing token. The Bridge reads only that local token,
 never Mycelia credentials. The helper uses the checkout's existing `.env` to
 authenticate to Mycelia. It is idle unless the UI requests work. The separate
 legacy `tech.mycelia.ingestion` service on 8001 is not reconfigured by setup.
+
+The host launchers `run-voice-memos-importer.sh`, `run-ingestion-service.sh` and
+`run-audio-pipeline.sh` use the checkout's persistent `python/.venv` by default.
+An explicit `UV_PROJECT_ENVIRONMENT` still selects another environment. Keep
+long-running service environments outside temporary directories: macOS cleanup
+can remove an inactive environment's interpreter/configuration while leaving
+some packages behind. Updating a launcher takes effect on its next start;
+finish or pause active imports before restarting an importer.
 
 ```bash
 # The one-time setup shown by the UI, using only the system stdlib:
