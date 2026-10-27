@@ -3,6 +3,7 @@ import { redis } from "@/lib/redis.ts";
 import {
   ACCESS_LOG_GROUP,
   ACCESS_LOG_STREAM,
+  accessLogRetentionId,
   ACKNOWLEDGE_PERSISTED_ACCESS_LOGS,
   persistAccessLogBatch,
   readAccessLogBatch,
@@ -16,6 +17,9 @@ let accessLogWorker: { stop: () => Promise<void> } | null = null;
 
 export async function startAccessLogWorker(): Promise<void> {
   if (accessLogWorker) return;
+  const retainThroughId = accessLogRetentionId(
+    Deno.env.get("ACCESS_LOG_RETAIN_THROUGH_ID"),
+  );
 
   // Blocking reads must not stall the shared connection used by HTTP requests
   // and job scheduling. A finite retry count lets the loop back off on failure.
@@ -109,6 +113,7 @@ export async function startAccessLogWorker(): Promise<void> {
                 1,
                 ACCESS_LOG_STREAM,
                 ACCESS_LOG_GROUP,
+                retainThroughId,
                 ...ids,
               );
             },

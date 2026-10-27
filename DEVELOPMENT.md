@@ -98,6 +98,12 @@ legacy pending event can create one duplicate across the version boundary.
 Before reclaiming historical payloads, preserve a recoverable archive, establish
 which events are durable, and review an explicit migration/rollback plan. Do not
 `FLUSHDB`, delete the stream or apply an arbitrary `MAXLEN` retention policy.
+For a rollout that must preserve all existing payloads, including pending ones,
+capture the stream's `last-generated-id` after stopping the old backend and set
+`ACCESS_LOG_RETAIN_THROUGH_ID` to that inclusive boundary in backend environment.
+Keep the setting on subsequent starts. These events can still be durably
+persisted/acknowledged, but their Redis payloads remain; only later IDs qualify
+for normal release. Changing the boundary is not a cleanup operation.
 
 ### Shared GPU audio service
 

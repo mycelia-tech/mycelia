@@ -1,14 +1,28 @@
-import { deepStrictEqual, equal, rejects } from "node:assert/strict";
+import { deepStrictEqual, equal, rejects, throws } from "node:assert/strict";
 import {
   ACCESS_LOG_BATCH_SIZE,
   ACCESS_LOG_GROUP,
   ACCESS_LOG_STREAM,
   type AccessLogEntry,
   type AccessLogPersistence,
+  accessLogRetentionId,
   persistAccessLogBatch,
   readAccessLogBatch,
   type StoredAccessLog,
 } from "./accessLog.persistence.ts";
+
+Deno.test("access log retention boundary validates an inclusive exact stream ID", () => {
+  equal(accessLogRetentionId(undefined), "0-0");
+  equal(accessLogRetentionId(""), "0-0");
+  equal(accessLogRetentionId("1793116438559-4323"), "1793116438559-4323");
+  equal(
+    accessLogRetentionId("18446744073709551615-0"),
+    "18446744073709551615-0",
+  );
+  for (const value of ["-1-0", "001-0", "123", "1-*", " 1-0", "1-0\n"]) {
+    throws(() => accessLogRetentionId(value));
+  }
+});
 
 function entry(
   id = "1000-0",

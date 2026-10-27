@@ -3,6 +3,15 @@ export const ACCESS_LOG_GROUP = "access_logs_group";
 export const ACCESS_LOG_CONSUMER = "worker-1";
 export const ACCESS_LOG_BATCH_SIZE = 100;
 
+/** Inclusive cutover: retain existing payloads, including pending events. */
+export function accessLogRetentionId(value: string | undefined): string {
+  if (value === undefined || value === "") return "0-0";
+  if (!/^(0|[1-9][0-9]{0,19})-(0|[1-9][0-9]{0,19})$/.test(value)) {
+    throw new Error("ACCESS_LOG_RETAIN_THROUGH_ID must be a Redis stream ID");
+  }
+  return value;
+}
+
 type StreamValue = string | Uint8Array;
 export type AccessLogEntry = [StreamValue, StreamValue[] | null];
 export type StoredAccessLog = Record<string, unknown> & { _id: string };
@@ -98,12 +107,26 @@ export async function persistAccessLogBatch(
 // No MAXLEN/MINID trim: historical acknowledged entries need a separate audit.
 export const ACKNOWLEDGE_PERSISTED_ACCESS_LOGS = `
 local groups = redis.call('XINFO', 'GROUPS', KEYS[1])
-local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], unpack(ARGV, 2))
+local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], unpack(ARGV, 3))
 local deleted = 0
+local function greater(a, b)
+  return #a > #b or (#a == #b and a > b)
+end
+local cutoffMs, cutoffSequence = string.match(ARGV[2], '^(%d+)%-(%d+)$')
+local eligible = {}
+for i = 3, #ARGV do
+  local ms, sequence = string.match(ARGV[i], '^(%d+)%-(%d+)$')
+  if cutoffMs and ms and (greater(ms, cutoffMs) or
+      (ms == cutoffMs and greater(sequence, cutoffSequence))) then
+    table.insert(eligible, ARGV[i])
+  end
+end
 if #groups == 1 then
   for i = 1, #groups[1], 2 do
     if groups[1][i] == 'name' and groups[1][i + 1] == ARGV[1] then
-      deleted = redis.call('XDEL', KEYS[1], unpack(ARGV, 2))
+      if #eligible > 0 then
+        deleted = redis.call('XDEL', KEYS[1], unpack(eligible))
+      end
       break
     end
   end
