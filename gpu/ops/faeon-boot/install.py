@@ -38,8 +38,9 @@ def write_new(path, content, mode):
     with os.fdopen(fd, 'wb') as output:
         output.write(content)
         output.flush()
+        os.fchmod(output.fileno(), mode)
         os.fsync(output.fileno())
-    os.chmod(path, mode)
+        return os.fstat(output.fileno())
 
 
 def checked(args, timeout=30):
@@ -47,6 +48,74 @@ def checked(args, timeout=30):
                             text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError('Validation failed: ' + args[0] + '\n' + result.stderr[-2000:])
+
+
+def staged_service(service, helper_path):
+    command = b'command = /usr/local/sbin/faeon-runtime-admin mount'
+    if service.splitlines().count(command) != 1:
+        raise RuntimeError('Expected exactly one reviewed mount command')
+    if not helper_path.is_absolute() or any(c.isspace() for c in str(helper_path)):
+        raise RuntimeError('Unsafe staging executable path')
+    replacement = b'command = ' + os.fsencode(helper_path) + b' mount'
+    return b''.join(
+        replacement + line[len(command):] if line.rstrip(b'\r\n') == command else line
+        for line in service.splitlines(keepends=True)
+    )
+
+
+def remove_created_helper(path, created, content):
+    """Remove only this attempt's unchanged root-owned helper after failure."""
+    trusted(path.parent, True)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise RuntimeError('Cannot verify created helper; preserve it for inspection') from error
+    with os.fdopen(fd, 'rb') as source:
+        current = os.fstat(source.fileno())
+        if (not stat.S_ISREG(current.st_mode)
+                or (current.st_dev, current.st_ino) != (created.st_dev, created.st_ino)
+                or current.st_uid != 0 or stat.S_IMODE(current.st_mode) != 0o755
+                or current.st_size != len(content)
+                or hashlib.sha256(source.read()).digest() != hashlib.sha256(content).digest()):
+            raise RuntimeError('Created helper changed; preserve it for inspection')
+        named = path.lstat()
+        if (named.st_dev, named.st_ino) != (current.st_dev, current.st_ino):
+            raise RuntimeError('Created helper was replaced; preserve it for inspection')
+        path.unlink()
+
+
+def activate_configuration(stage, sudo_stage, contents, targets, dockerd, new_dockerd):
+    """Validate a real executable twice before publishing services or sudo access."""
+    helper_name = 'faeon-runtime-admin'
+    helper_content = contents[helper_name]
+    staged_helper = stage / helper_name
+    service = stage / 'faeon-datadrive'
+    write_new(staged_helper, helper_content, 0o755)
+    write_new(service, staged_service(contents['faeon-datadrive'], staged_helper), 0o600)
+    checker = ['/usr/bin/dinit-check', '-d', str(stage), '-d', '/etc/dinit.d',
+               '-d', '/usr/lib/dinit.d', 'dockerd']
+    checked(['/usr/bin/visudo', '-c', '-f', str(sudo_stage)])
+    checked(checker)
+
+    helper_path, helper_mode = targets[helper_name]
+    created = write_new(helper_path, helper_content, helper_mode)
+    try:
+        production_service = stage / 'faeon-datadrive.production'
+        write_new(production_service, contents['faeon-datadrive'], 0o600)
+        os.replace(production_service, service)
+        checked(checker)
+    except BaseException:
+        remove_created_helper(helper_path, created, helper_content)
+        raise
+
+    # No NOPASSWD grant or live dependency is installed before both full checks.
+    for name, (path, mode) in targets.items():
+        if name != helper_name:
+            write_new(path, contents[name], mode)
+    replacement = dockerd.with_name('dockerd.faeon-next')
+    write_new(replacement, new_dockerd, stat.S_IMODE(dockerd.stat().st_mode))
+    os.replace(replacement, dockerd)
+    checked(['/usr/bin/visudo', '-c'])
 
 
 def inspect_shadow(target):
@@ -132,19 +201,9 @@ def main():
     stage = backup / 'service-check'
     stage.mkdir(mode=0o700)
     write_new(stage / 'dockerd', new_dockerd, 0o600)
-    write_new(stage / 'faeon-datadrive', contents['faeon-datadrive'], 0o600)
     sudo_stage = backup / 'sudoers.proposed'
     write_new(sudo_stage, contents['sudoers-faeon-runtime'], 0o600)
-    checked(['/usr/bin/visudo', '-c', '-f', str(sudo_stage)])
-    checked(['/usr/bin/dinit-check', '-d', str(stage), '-d', '/etc/dinit.d',
-             '-d', '/usr/lib/dinit.d', 'dockerd'])
-    for name, (path, mode) in targets.items():
-        write_new(path, contents[name], mode)
-    # Preserve every original service property and its file mode.
-    replacement = dockerd.with_name('dockerd.faeon-next')
-    write_new(replacement, new_dockerd, stat.S_IMODE(dockerd.stat().st_mode))
-    os.replace(replacement, dockerd)
-    checked(['/usr/bin/visudo', '-c'])
+    activate_configuration(stage, sudo_stage, contents, targets, dockerd, new_dockerd)
     record = helper['mount_record']()
     shadow = None
     if record is None:

@@ -17,7 +17,7 @@ container start/stop, model download, formatting or fsck is performed.
 
 ## One-time installation
 
-Review the five install files and checksums, copy them to one private directory
+Review the installer, helper, service, sudoers rule and checksums, copy the bundle to one private directory
 on faeon, then run in a user-visible terminal:
 
 ```sh
@@ -28,7 +28,15 @@ sudo /usr/bin/python3 -I /absolute/path/to/reviewed-bundle/install.py
 Enter the server sudo password only in that terminal. The installer accepts no
 arguments. It checks exact source checksums, the previously observed Docker
 service checksum and existing fstab identity. It validates sudoers and the dinit
-dependency graph before activation. Root-owned backups and the installation
+dependency graph before activation. The first full dinit check uses an executable
+helper copy in the root-private staging directory. After that passes, only the
+live helper is installed, and a second full check uses the exact production
+service command. The live service, Docker dependency and NOPASSWD grant are
+published only after both checks succeed. If the second check fails, the helper
+is removed only if its inode, device, root ownership, mode and SHA256 still
+match this attempt; a changed or replaced helper is preserved for inspection.
+This also avoids requiring the not-yet-installed live executable during the
+first check. Root-owned backups and the installation
 receipt are saved under `/var/lib/faeon-runtime-admin/<timestamp>-<suffix>/`.
 
 The only NOPASSWD commands granted to `Skywinder` are:
@@ -60,6 +68,11 @@ inference are separate checks.
 
 Four offline guard tests cover wrong filesystem/UUID/root/read-only identity,
 idempotence, refusal of wrong existing mounts and extra-argument rejection.
+Eight installer regression tests cover staged/production executable validation,
+publication ordering, failure cleanup and preservation of replaced or modified
+helpers. Run them from this bundle directory with
+`python3 -B -m unittest discover -s . -p 'test_*.py'`; they use temporary files and
+mock privileged checks, without executing sudo, dinit or mount commands.
 Installed `visudo` and `dinit-check` validate configuration. Inspect guard status,
 the exact mount UUID, expected model/cache files and individual container jobs.
 **A reboot has not been tested.** Installing the dependency does not reload the
