@@ -34,6 +34,8 @@ Never switch a running worktree or migrate database authentication implicitly.
   allowed only for loopback origins in explicit development mode.
 - Production nginx redirects HTTP to HTTPS, preserves the incoming host port,
   adds basic security headers and excludes query strings from access logs.
+  The application is the default server on both IPv4 and IPv6; localhost over
+  IPv6 must not fall through to the nginx image's stock welcome page.
   `APP_MODE=dev` is the explicit local HTTP exception.
 - JSON/form parsing uses the pinned Express 4.22.3 dependency and body-parser
   1.20.9. Parser failures return generic 400/413/415 errors without passing raw

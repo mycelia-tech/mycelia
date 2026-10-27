@@ -136,6 +136,10 @@ Deno.test("nginx redirects HTTP, routes sessions and consent, and excludes URL c
       /[Ll]ocation: https:\/\/127\.0\.0\.1:4433\/api\/ping/,
     );
     match(redirect.error, /X-Content-Type-Options: nosniff/i);
+    const ipv6 = await request("-S", "http://[::1]/api/ping");
+    equal(ipv6.code, 0, "IPv6 redirect must reach the HTTPS application");
+    match(ipv6.error, /308/);
+    match(ipv6.text, /^backend:GET:/);
     const logs = await run(["docker", "logs", name]);
     equal((logs.text + logs.error).includes("SYNTHETIC_URL_CANARY"), false);
   } finally {

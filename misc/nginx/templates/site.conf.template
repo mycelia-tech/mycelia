@@ -11,8 +11,11 @@ server {
     # request that lands on it for the full 5s DNS resend interval.
     resolver ${NGINX_RESOLVER} ipv6=off valid=30s;
     listen 80 default_server;
+    listen [::]:80 default_server;
     listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
     listen 4433 ssl http2 default_server;
+    listen [::]:4433 ssl http2 default_server;
 
     server_name _;
 
