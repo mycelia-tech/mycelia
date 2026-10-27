@@ -1,8 +1,10 @@
 # Repository improvements: implementation and rollout evidence
 
-This change implements the repository hardening package in an isolated worktree.
-It does not switch the running checkout, migrate a production database or claim
-that an operator backup has been restored.
+The initial package was implemented and validated in an isolated worktree.
+The [2026-10-28 main-stack rollout](reports/hardening-rollout-2026-10-28.md) now
+records the authorized deployment, data preservation and observed load. Earlier
+sections below are dated history, not the current deployment state. Mongo
+authentication migration and a verified operator-backup restoration remain separate.
 
 | Area | Implemented result |
 | --- | --- |

@@ -3,6 +3,10 @@
 This guide is for developers who want to contribute to Mycelia or run it in
 development mode with hot reload.
 
+The [2026-10-28 main-stack rollout report](docs/reports/hardening-rollout-2026-10-28.md)
+records deployed revisions, preserved Redis data, live verification and measured
+CPU limits. It distinguishes running changes from pending maintenance work.
+
 ## Development Setup
 
 ### Verification and source guard
