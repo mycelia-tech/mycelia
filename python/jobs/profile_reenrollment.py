@@ -46,6 +46,32 @@ class ProfileReenrollmentJobData(BaseModel):
     routingContext: Dict[str, Any] | None = None
 
 
+def _invalidate_profile_identity_evidence(profile_id: str, revision: int) -> None:
+    call_resource(
+        "speaker-segments",
+        {
+            "action": "invalidate-profile-identity-evidence",
+            "profileId": profile_id,
+            "profileRevision": revision,
+            "reason": "profile_reenrollment",
+        },
+    )
+
+
+def _completed_reenrollment_result(profile: dict[str, Any], profile_id: str) -> Dict[str, Any]:
+    prototypes = profile.get("embeddingPrototypes") or []
+    return {
+        "processed": int(profile.get("sample_count") or len(prototypes)),
+        "profileId": profile_id,
+        "profileRevision": int(profile.get("revision", 1)),
+        "embeddingSpaceId": profile.get("embeddingSpaceId"),
+        "runtimeProvenance": profile.get("runtimeProvenance"),
+        "prototypeCount": len(prototypes),
+        "sampleOutliers": sum(1 for item in prototypes if item.get("isOutlier")),
+        "hasMore": False,
+    }
+
+
 def process_profile_reenrollment_job(
     job_id: str,
     data: ProfileReenrollmentJobData,
@@ -54,6 +80,19 @@ def process_profile_reenrollment_job(
     profile = get_profile_by_id(data.profileId)
     if not profile:
         raise ValueError(f"Profile not found: {data.profileId}")
+    enrollment_provenance = profile.get("enrollmentProvenance") or {}
+    if (
+        profile.get("enrollmentStatus") == "ready"
+        and enrollment_provenance.get("source") == "saved_samples_rebuild"
+        and enrollment_provenance.get("jobId") == job_id
+    ):
+        # The profile write succeeded in an earlier attempt but the evidence
+        # invalidation response was lost or failed. Retry only that idempotent
+        # boundary; do not advance the profile revision a second time.
+        _invalidate_profile_identity_evidence(
+            data.profileId, int(profile.get("revision", 1))
+        )
+        return _completed_reenrollment_result(profile, data.profileId)
     samples = (
         call_resource(
             "mongo",
@@ -181,6 +220,7 @@ def process_profile_reenrollment_job(
     )
     if (result or {}).get("matchedCount", 0) != 1:
         raise RuntimeError("Profile changed while it was being re-enrolled")
+    _invalidate_profile_identity_evidence(data.profileId, revision)
     return {
         "processed": len(samples),
         "profileId": data.profileId,

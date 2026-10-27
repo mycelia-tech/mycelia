@@ -4,10 +4,18 @@ import {
   assertRejects,
   assertThrows,
 } from "jsr:@std/assert@^1.0.15";
+import { ObjectId } from "bson";
 import {
+  annotationResolvesReviewForProfile,
   buildReviewCandidateQuery,
+  buildReviewHistoryRevisionScope,
   buildReviewScanMetadata,
+  commitReviewDecisionArtifacts,
+  eligibleReviewDecisionProfileIds,
+  frozenIdentitySourceCeiling,
   resolveReviewCandidateContext,
+  reviewCandidateMatchesIdentity,
+  sameIdentityProfileSnapshots,
   speakerSegmentsRequestSchema,
   stratifyReviewCandidates,
 } from "./resource.server.ts";
@@ -24,6 +32,105 @@ const segmentId = "66b000000000000000000001";
 const skyProfileId = "66b000000000000000000010";
 const otherProfileId = "66b000000000000000000020";
 const recordingId = "66b000000000000000000030";
+
+Deno.test("review artifact commit invalidates eligible evidence and model sets only", async () => {
+  const segment = {
+    _id: segmentId,
+    original_id: recordingId,
+    start: new Date("2026-08-01T00:00:00Z"),
+    end: new Date("2026-08-01T00:00:05Z"),
+  };
+  for (const calibrationUse of ["eligible", "timeline_only"] as const) {
+    const requests: any[] = [];
+    await commitReviewDecisionArtifacts(
+      async (request: any) => {
+        requests.push(request);
+        return { matchedCount: 1, modifiedCount: 1 };
+      },
+      {
+        _id: "66b000000000000000000099",
+        sessionId,
+        segmentIds: [segmentId],
+        targetProfileIds: [skyProfileId],
+        outcome: "assigned",
+        profileId: otherProfileId,
+        excludedProfileIds: [skyProfileId],
+        calibrationUse,
+        status: "building",
+      },
+      [segment],
+    );
+
+    const invalidatedCollections = requests
+      .filter((request) => request.action === "updateMany")
+      .map((request) => request.collection)
+      .sort();
+    assertEquals(
+      invalidatedCollections,
+      calibrationUse === "eligible"
+        ? [
+          "identity_model_sets",
+          "identity_model_sets",
+          "speaker_calibrations",
+          "speaker_identity_evaluations",
+          "speaker_profiles",
+        ]
+        : [],
+    );
+    if (calibrationUse === "eligible") {
+      const modelSetUpdates = requests.filter((request) =>
+        request.action === "updateMany" &&
+        request.collection === "identity_model_sets"
+      );
+      assertEquals(modelSetUpdates[0].query.status, {
+        $in: ["building", "ready"],
+      });
+      assertEquals(modelSetUpdates[1].query.status, "active");
+      assertEquals(modelSetUpdates[1].update.$set.status, undefined);
+      assertEquals(modelSetUpdates[1].update.$addToSet.staleProfileIds.$each, [
+        skyProfileId,
+        otherProfileId,
+      ]);
+    }
+  }
+  assertEquals(eligibleReviewDecisionProfileIds({ outcome: "skipped" }), []);
+  assertEquals(
+    eligibleReviewDecisionProfileIds({
+      outcome: "assigned",
+      calibrationUse: "timeline_only",
+      targetProfileIds: [skyProfileId],
+    }),
+    [],
+  );
+});
+
+Deno.test("identity preflight freezes every profile snapshot and source ceiling", () => {
+  const snapshots = [{
+    profileId: skyProfileId,
+    profileRevision: 7,
+    calibrationId: "sky-r7",
+    embeddingSpaceId: "space-v2",
+    evidenceSnapshotHash: "evidence-7",
+  }, {
+    profileId: otherProfileId,
+    profileRevision: 3,
+    calibrationId: "belka-r3",
+    embeddingSpaceId: "space-v2",
+    evidenceSnapshotHash: "evidence-3",
+  }];
+  assert(sameIdentityProfileSnapshots(snapshots, [...snapshots].reverse()));
+  assertEquals(
+    sameIdentityProfileSnapshots(snapshots, [
+      snapshots[0],
+      { ...snapshots[1], profileRevision: 4 },
+    ]),
+    false,
+  );
+  assertEquals(frozenIdentitySourceCeiling(segmentId), {
+    _id: { $lte: new ObjectId(segmentId) },
+  });
+  assertEquals(frozenIdentitySourceCeiling("legacy-missing"), {});
+});
 
 Deno.test("review decision assigns another profile while excluding the calibration target", () => {
   const result = speakerSegmentsRequestSchema.safeParse({
@@ -73,6 +180,33 @@ Deno.test("review revision contract requires the decision being replaced", () =>
   assert(result.success);
   assertEquals(result.data.action, "revise-review-decision");
 });
+
+Deno.test(
+  "review history revision only replaces this profile decision and its annotation",
+  () => {
+    const decisionId = new ObjectId("66b000000000000000000099");
+    const author = "reviewer@example.com";
+    const scope = buildReviewHistoryRevisionScope({
+      segmentId: new ObjectId(segmentId),
+      profileId: new ObjectId(skyProfileId),
+      decisionId,
+      author,
+    });
+
+    assertEquals(scope.currentDecision, {
+      segmentIds: new ObjectId(segmentId),
+      targetProfileIds: new ObjectId(skyProfileId),
+      author,
+      status: "committed",
+    });
+    assertEquals(scope.replacedAnnotation, {
+      segmentId: new ObjectId(segmentId),
+      decisionId,
+      source: "manual",
+      author,
+    });
+  },
+);
 
 Deno.test("undo contract carries the session revision", () => {
   const result = speakerSegmentsRequestSchema.safeParse({
@@ -281,12 +415,58 @@ Deno.test("review candidate query enforces generation, embedding space, recordin
       )
     ),
   );
-  const identity = query.$and[0].$or as Array<Record<string, unknown>>;
-  assert(
-    identity.some((condition) =>
-      condition["speakerIdentity.identityState"] === "unclassified"
-    ),
+  assertEquals(
+    query.$and.some((condition: any) => condition.speakerIdentity),
+    false,
   );
+});
+
+Deno.test("review candidate selection uses active projections and target-aware annotations", () => {
+  const automaticIdentity = {
+    calibrationId: "sky-r7",
+    profileRevision: 7,
+    embeddingSpaceId: "space-v2",
+    evidenceSnapshotHash: "evidence-7",
+    decisionValidity: "verified" as const,
+  };
+  assert(reviewCandidateMatchesIdentity(
+    {
+      speakerIdentity: {
+        modelSetId: "set-active",
+        source: "automatic",
+        validity: "verified",
+        selectedProfileState: "identified",
+      },
+    },
+    "auto_matched",
+    skyProfileId,
+    automaticIdentity,
+  ));
+  assert(reviewCandidateMatchesIdentity(
+    {
+      speakerIdentity: {
+        modelSetId: "set-active",
+        selectedProfileState: "ambiguous",
+      },
+    },
+    "reviewable",
+    skyProfileId,
+  ));
+  assertEquals(
+    annotationResolvesReviewForProfile({
+      profileId: null,
+      excludedProfileIds: [otherProfileId],
+    }, skyProfileId),
+    false,
+  );
+  assert(annotationResolvesReviewForProfile({
+    profileId: otherProfileId,
+    excludedProfileIds: [],
+  }, skyProfileId));
+  assert(annotationResolvesReviewForProfile({
+    profileId: null,
+    excludedProfileIds: [skyProfileId],
+  }, skyProfileId));
 });
 
 Deno.test("review source schema keeps discovery permissive and create strict", () => {
@@ -359,7 +539,7 @@ Deno.test("review source schema keeps discovery permissive and create strict", (
   assert(frozenGeneration.success);
 });
 
-Deno.test("automatic-match review query is pinned to verified calibration provenance", () => {
+Deno.test("automatic-match review query defers identity to active projections", () => {
   const query = buildReviewCandidateQuery(
     new Date("2026-08-01T00:00:00Z"),
     new Date("2026-08-02T00:00:00Z"),
@@ -375,16 +555,7 @@ Deno.test("automatic-match review query is pinned to verified calibration proven
       decisionValidity: "verified",
     },
   ) as any;
-  const identity = query.$and[0];
-  assertEquals(identity["speakerIdentity.calibrationId"], "sky-r7");
-  assertEquals(identity["speakerIdentity.profileRevision"], 7);
-  assertEquals(identity["speakerIdentity.embeddingSpaceId"], "space-v2");
-  assertEquals(
-    identity["speakerIdentity.thresholds.evidenceSnapshotHash"],
-    "evidence-r7",
-  );
-  assertEquals(identity["speakerIdentity.source"], "automatic");
-  assertEquals(identity["speakerIdentity.validity"], "verified");
+  assertEquals(JSON.stringify(query).includes("speakerIdentity"), false);
   const provisional = buildReviewCandidateQuery(
     new Date("2026-08-01T00:00:00Z"),
     new Date("2026-08-02T00:00:00Z"),
@@ -400,16 +571,12 @@ Deno.test("automatic-match review query is pinned to verified calibration proven
       decisionValidity: "provisional",
     },
   ) as any;
-  assertEquals(
-    provisional.$and[0]["speakerIdentity.validity"],
-    "provisional",
-  );
+  assertEquals(JSON.stringify(provisional).includes("speakerIdentity"), false);
   assertThrows(() =>
     buildReviewCandidateQuery(
       new Date("2026-08-01T00:00:00Z"),
       new Date("2026-08-02T00:00:00Z"),
       "auto_matched",
-      skyProfileId,
     )
   );
 });
@@ -453,6 +620,7 @@ Deno.test("automatic-match review uses only fresh calibration evidence at the pr
   };
   const mongo = async (request: any) => {
     if (request.collection === "speaker_profiles") return profile;
+    if (request.collection === "identity_model_set_heads") return null;
     if (request.collection === "speaker_calibrations") {
       return [
         {
@@ -488,6 +656,7 @@ Deno.test("automatic-match review uses only fresh calibration evidence at the pr
           if (request.collection === "speaker_profiles") {
             return { ...profile, calibrationEvidenceRevision: 4 };
           }
+          if (request.collection === "identity_model_set_heads") return null;
           if (request.collection === "speaker_calibrations") {
             return [headCalibration];
           }
@@ -504,6 +673,43 @@ Deno.test("automatic-match review uses only fresh calibration evidence at the pr
     Error,
     "current server-validated calibration",
   );
+});
+
+Deno.test("automatic-match review accepts the active model-set projection without a legacy calibration head", async () => {
+  const resolved = await resolveReviewCandidateContext(
+    async (request: any) => {
+      if (request.collection === "speaker_profiles") {
+        return {
+          _id: skyProfileId,
+          name: "Sky",
+          revision: 8,
+          embeddingSpaceId: "space-v2",
+        };
+      }
+      if (request.collection === "identity_model_set_heads") {
+        return { activeModelSetId: "set-current" };
+      }
+      if (request.collection === "identity_model_sets") {
+        return {
+          modelSetId: "set-current",
+          profileIds: [skyProfileId, otherProfileId],
+          staleProfileIds: [],
+          status: "active",
+        };
+      }
+      throw new Error(`Unexpected Mongo request: ${request.collection}`);
+    },
+    skyProfileId,
+    ["space-v2"],
+    {
+      sourceMode: "all_matching",
+      runIds: [],
+      candidateMode: "auto_matched",
+    },
+  );
+
+  assertEquals(resolved.automaticIdentity, null);
+  assertEquals(resolved.embeddingSpaceIds, ["space-v2"]);
 });
 
 Deno.test("review scan cursor and cap use raw candidates before exclusions", () => {

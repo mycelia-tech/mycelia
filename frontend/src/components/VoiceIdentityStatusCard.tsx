@@ -1,12 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AlertCircle, UserRound } from "lucide-react";
-import { normalizeObjectId } from "@/lib/diarization";
 import {
   loadVoiceIdentityStatus,
-  loadVoiceProfiles,
   voiceIdentityKeys,
 } from "@/lib/voiceIdentity";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
+import { VoiceIdentityModelSetStatus } from "@/components/voice/VoiceIdentityModelSetStatus";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,13 +20,9 @@ import {
 } from "@/components/ui/card";
 
 export function VoiceIdentityStatusCard() {
-  const profilesQuery = useQuery({
-    queryKey: voiceIdentityKeys.profiles,
-    queryFn: loadVoiceProfiles,
-    staleTime: 30_000,
-  });
-  const primary = profilesQuery.data?.find((profile) => profile.is_primary);
-  const primaryId = normalizeObjectId(primary?._id);
+  const voiceSelection = useSelectedVoiceProfile();
+  const primary = voiceSelection.selectedProfile;
+  const primaryId = voiceSelection.selectedProfileId;
   const statusQuery = useQuery({
     queryKey: voiceIdentityKeys.status(primaryId),
     enabled: Boolean(primaryId),
@@ -51,13 +49,15 @@ export function VoiceIdentityStatusCard() {
           Voice identity
         </CardTitle>
         <CardDescription>
-          Identify Sky in already diarized audio. Calibration teaches the
-          matcher which similarity scores mean Sky, not Sky, or uncertain; it
-          does not rerun diarization.
+          Identify {primary?.name ?? "a selected voice"}{" "}
+          in already diarized audio. Calibration teaches the matcher which
+          scores mean this voice, another voice, or uncertain; it does not rerun
+          diarization.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {profilesQuery.isLoading || (primaryId && statusQuery.isLoading)
+        <VoiceProfileContextBar selection={voiceSelection} compact />
+        {voiceSelection.isLoading || (primaryId && statusQuery.isLoading)
           ? (
             <p className="text-sm text-muted-foreground">
               Loading identity readiness…
@@ -66,12 +66,12 @@ export function VoiceIdentityStatusCard() {
           : !primaryId
           ? (
             <p className="text-sm text-amber-600">
-              No primary voice profile is configured.
+              No voice profile is selected.
             </p>
           )
           : (
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge variant="outline">Primary: {primary?.name}</Badge>
+              <Badge variant="outline">Voice: {primary?.name}</Badge>
               <Badge variant="outline">
                 Revision {status?.profile?.revision ?? primary?.revision ?? 1}
               </Badge>
@@ -118,15 +118,17 @@ export function VoiceIdentityStatusCard() {
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
               <div className="space-y-1">
                 <p className="text-sm font-medium">
-                  Calibrate {primary?.name ?? "the primary voice"}{" "}
+                  Calibrate {primary?.name ?? "the selected voice"}{" "}
                   before classification
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Review clear Sky / not-Sky examples, use different recordings
-                  to fit and check the thresholds, then save the validated
-                  calibration. You choose the required precision; the server
-                  recalculates the actual thresholds and shows the resulting
-                  coverage and false matches.
+                  Review clear {primary?.name ?? "target"}{" "}
+                  / not-{primary?.name ??
+                    "target"}{" "}
+                  examples, use different recordings to fit and check the
+                  thresholds, then save the validated calibration. You choose
+                  the required precision; the server recalculates the actual
+                  thresholds and shows the resulting coverage and false matches.
                 </p>
               </div>
             </div>
@@ -142,7 +144,12 @@ export function VoiceIdentityStatusCard() {
             )}
             <div className="flex flex-wrap items-center gap-3">
               <Button asChild size="sm">
-                <Link to="/settings/voice-identity#calibration">
+                <Link
+                  to={withVoiceProfile(
+                    "/settings/voice-identity#calibration",
+                    primaryId,
+                  )}
+                >
                   Open calibration setup
                 </Link>
               </Button>
@@ -152,40 +159,47 @@ export function VoiceIdentityStatusCard() {
             </div>
           </div>
         )}
+        <VoiceIdentityModelSetStatus profileId={primaryId} />
         <div className="flex flex-wrap gap-4 text-sm font-medium">
           <Link
             className="text-primary hover:underline"
-            to="/settings/voice-profiles"
+            to={withVoiceProfile("/settings/voice-profiles", primaryId)}
           >
             Profiles & samples →
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/settings/voice-identity#calibration"
+            to={withVoiceProfile(
+              "/settings/voice-identity#calibration",
+              primaryId,
+            )}
           >
             Calibration details →
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/settings/voice-identity/operations"
+            to={withVoiceProfile(
+              "/settings/voice-identity/operations",
+              primaryId,
+            )}
           >
             Operations & generations →
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/jobs?type=speakerIdentity"
+            to={withVoiceProfile("/jobs?type=speakerIdentity", primaryId)}
           >
             Identity jobs →
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/jobs?type=diarization"
+            to={withVoiceProfile("/jobs?type=diarization", primaryId)}
           >
             Diarization jobs →
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/settings/diarization"
+            to={withVoiceProfile("/settings/diarization", primaryId)}
           >
             Diarization servers →
           </Link>

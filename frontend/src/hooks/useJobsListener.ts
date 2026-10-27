@@ -162,6 +162,15 @@ export function useJobsListener(options: UseJobsListenerOptions = {}) {
 
       if (!jobData?.jobId) return;
 
+      if (
+        jobData.jobType === "speakerIdentitySourceIndex" &&
+        (event.event === "job.completed" || event.event === "job.failed")
+      ) {
+        void queryClient.invalidateQueries({
+          queryKey: ["speaker-identity-preflight"],
+        });
+      }
+
       // Skip jobs outside the selected view, including internal photo children
       // that are represented by their durable batch in the default Jobs UI.
       if (!shouldIncludeJobEvent(jobData.jobType, options.types)) {
@@ -235,7 +244,9 @@ export function useJobsListener(options: UseJobsListenerOptions = {}) {
 
       if (event.event === "job.completed" && event.data) {
         if (jobData.jobType === "speakerIdentity") {
-          void queryClient.invalidateQueries({ queryKey: ["speaker-track"] });
+          void queryClient.invalidateQueries({
+            queryKey: ["speaker-timeline-summary"],
+          });
           void queryClient.invalidateQueries({
             queryKey: ["speaker-identity-status"],
           });

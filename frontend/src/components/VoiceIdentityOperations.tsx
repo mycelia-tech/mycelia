@@ -5,7 +5,6 @@ import { ChevronDown, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { callResource } from "@/lib/api";
 import { formatPickerRange } from "@/lib/datePicker";
-import { normalizeObjectId } from "@/lib/diarization";
 import { resolveDefaultTimeZone } from "@/lib/timeZones";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,11 +38,9 @@ import {
 } from "@/lib/voiceIdentityOperations";
 import { useActionDialog } from "@/components/ActionDialogProvider";
 import { getSpeakerIdentityProgressView } from "@/lib/speakerIdentityProgress";
-import {
-  loadVoiceProfiles,
-  voiceIdentityKeys,
-  type VoiceProfile,
-} from "@/lib/voiceIdentity";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 import { shortTechnicalId } from "@/lib/speakerIdentityLaunch";
 import {
   buildEmptyActivationRepairPreviewRequest,
@@ -108,8 +105,11 @@ type IdentityCampaign = {
 
 type PurgePreview = {
   runId: string;
+  status: string;
   documents: number;
   embeddings: number;
+  activeSegments: number;
+  snapshotFingerprint: string;
   confirmation: string;
 };
 
@@ -138,6 +138,7 @@ export function VoiceIdentityOperations() {
   const { promptAction } = useActionDialog();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const voiceSelection = useSelectedVoiceProfile();
   const defaultTimeZone = useSettingsStore((state) => state.defaultTimeZone);
   const pickerTimeZone = resolveDefaultTimeZone(defaultTimeZone);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -228,12 +229,8 @@ export function VoiceIdentityOperations() {
         : false;
     },
   });
-  const { data: profiles = [] } = useQuery<VoiceProfile[]>({
-    queryKey: voiceIdentityKeys.profiles,
-    queryFn: loadVoiceProfiles,
-  });
-  const primary = profiles.find((profile) => profile.is_primary);
-  const primaryId = primary ? normalizeObjectId(primary._id) : null;
+  const primary = voiceSelection.selectedProfile;
+  const primaryId = voiceSelection.selectedProfileId;
   const activeRun = runs.find((run) => run.status === "active");
   const { data: identityCampaigns = [] } = useQuery<IdentityCampaign[]>({
     queryKey: ["speaker-identity-campaigns", primaryId, activeRun?.runId],
@@ -393,7 +390,11 @@ export function VoiceIdentityOperations() {
       },
     ) => {
       if (action === "purge-superseded") {
-        const phrase = `PURGE ${runId}`;
+        const preview = purgePreview;
+        if (!preview || preview.runId !== runId) {
+          throw new Error("Preview this generation again before purging it");
+        }
+        const phrase = preview.confirmation;
         const confirmation = await promptAction({
           title: `Purge superseded run ${runId}?`,
           description:
@@ -407,6 +408,7 @@ export function VoiceIdentityOperations() {
         const value = await callResource("speaker-segments", {
           action,
           runId,
+          snapshotFingerprint: preview.snapshotFingerprint,
           confirmation,
         });
         return { kind: action, runId, value };
@@ -461,42 +463,48 @@ export function VoiceIdentityOperations() {
   return (
     <Card data-testid="voice-identity-operations">
       <CardHeader>
-        <CardTitle>Voice Identity — Sky first</CardTitle>
+        <CardTitle>
+          Voice Identity — {primary?.name ?? "select a voice"}
+        </CardTitle>
         <CardDescription>
           Cheap classification uses stored embeddings. Re-diarization creates a
           separate generation and never replaces active data before activation.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <VoiceProfileContextBar selection={voiceSelection} compact />
         <nav
           aria-label="Related voice identity pages"
           className="flex flex-wrap gap-x-4 gap-y-1 border-b pb-3 text-sm font-medium"
         >
           <Link
             className="text-primary hover:underline"
-            to="/settings/voice-identity"
+            to={withVoiceProfile("/settings/voice-identity", primaryId)}
           >
             Review & calibration
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/jobs?type=speakerIdentity"
+            to={withVoiceProfile("/jobs?type=speakerIdentity", primaryId)}
           >
             Identity jobs
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/jobs?type=diarization"
+            to={withVoiceProfile("/jobs?type=diarization", primaryId)}
           >
             Diarization jobs
           </Link>
           <Link
             className="text-primary hover:underline"
-            to="/settings/diarization"
+            to={withVoiceProfile("/settings/diarization", primaryId)}
           >
             Diarization servers
           </Link>
-          <Link className="text-primary hover:underline" to="/audio/pipeline">
+          <Link
+            className="text-primary hover:underline"
+            to={withVoiceProfile("/audio/pipeline", primaryId)}
+          >
             Audio Pipeline
           </Link>
         </nav>
@@ -599,7 +607,7 @@ export function VoiceIdentityOperations() {
               partial raw-job launch.
             </p>
           </div>
-          <SpeakerIdentityLaunchPanel />
+          <SpeakerIdentityLaunchPanel profileId={primaryId ?? undefined} />
         </section>
 
         <section className="space-y-3 rounded-md border p-3">
@@ -667,7 +675,10 @@ export function VoiceIdentityOperations() {
               Re-diarize range
             </Button>
             <Link
-              to={`/transcript?start=${range.start.getTime()}&end=${range.end.getTime()}`}
+              to={withVoiceProfile(
+                `/transcript?start=${range.start.getTime()}&end=${range.end.getTime()}`,
+                primaryId,
+              )}
             >
               <Button variant="ghost">Open transcript</Button>
             </Link>
@@ -687,19 +698,27 @@ export function VoiceIdentityOperations() {
             </div>
             <div className="flex gap-2">
               {latestIdentityCampaign?.currentJobId && (
-                <Link to={`/jobs/${latestIdentityCampaign.currentJobId}`}>
+                <Link
+                  to={withVoiceProfile(
+                    `/jobs/${latestIdentityCampaign.currentJobId}`,
+                    primaryId,
+                  )}
+                >
                   <Button size="sm" variant="outline">Job details</Button>
                 </Link>
               )}
               {latestIdentityCampaign?.range?.start && (
                 <Link
-                  to={`/timeline?start=${
-                    new Date(latestIdentityCampaign.range.start).getTime()
-                  }&end=${
-                    latestIdentityCampaign.range.end
-                      ? new Date(latestIdentityCampaign.range.end).getTime()
-                      : Date.now()
-                  }`}
+                  to={withVoiceProfile(
+                    `/timeline?start=${
+                      new Date(latestIdentityCampaign.range.start).getTime()
+                    }&end=${
+                      latestIdentityCampaign.range.end
+                        ? new Date(latestIdentityCampaign.range.end).getTime()
+                        : Date.now()
+                    }`,
+                    primaryId,
+                  )}
                 >
                   <Button size="sm" variant="outline">Timeline</Button>
                 </Link>
@@ -717,9 +736,13 @@ export function VoiceIdentityOperations() {
               </div>
               <div className="flex flex-wrap gap-3 text-xs">
                 <span className="text-green-600">
-                  {latestIdentityCampaign.matched ?? 0} Sky
+                  {latestIdentityCampaign.matched ?? 0}{" "}
+                  {primary?.name ?? "voice"}
                 </span>
-                <span>{latestIdentityCampaign.rejected ?? 0} not Sky</span>
+                <span>
+                  {latestIdentityCampaign.rejected ?? 0} not{" "}
+                  {primary?.name ?? "voice"}
+                </span>
                 <span className="text-amber-600">
                   {latestIdentityCampaign.uncertain ?? 0} uncertain
                 </span>
@@ -890,7 +913,10 @@ export function VoiceIdentityOperations() {
                         {run.campaign.currentJobId && (
                           <Link
                             className="text-primary hover:underline"
-                            to={`/jobs/${run.campaign.currentJobId}`}
+                            to={withVoiceProfile(
+                              `/jobs/${run.campaign.currentJobId}`,
+                              primaryId,
+                            )}
                           >
                             Current job
                           </Link>

@@ -138,6 +138,10 @@ import { DiarizationLaunchDialog } from "@/components/DiarizationLaunchDialog";
 import {
   SpeakerIdentityLaunchDialog,
 } from "@/components/SpeakerIdentityLaunchDialog";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileSelect } from "@/components/voice/VoiceProfileContextBar";
+import { normalizeObjectId } from "@/lib/diarization";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 import {
   type DetectedDiarizatorReadinessMode,
   type DiarizatorReadinessMode,
@@ -169,6 +173,13 @@ type WorkerStatus = {
     }>;
   }>;
 };
+
+function speakerIdentityProfileName(job: JobInfo): string {
+  return String(
+    job.data?.profileSnapshot?.name ?? job.data?.profileName ??
+      job.result?.profileName ?? job.progress?.profileName ?? "selected voice",
+  );
+}
 
 function formatLifecycleTimestamp(value?: string): string {
   if (!value) return "checking…";
@@ -539,9 +550,11 @@ const WORKER_SECTIONS: ReadonlyArray<{
 function JobDateRange({
   job,
   label,
+  selectedProfileId,
 }: {
   job: JobInfo;
   label?: string;
+  selectedProfileId?: string | null;
 }) {
   const range = getJobTimeRange(job);
   if (!range) return null;
@@ -550,7 +563,10 @@ function JobDateRange({
   const isSameDay = end && start.toDateString() === end.toDateString();
   return (
     <Link
-      to={`/timeline?start=${start.getTime()}&end=${endTs}`}
+      to={withVoiceProfile(
+        `/timeline?start=${start.getTime()}&end=${endTs}`,
+        selectedProfileId,
+      )}
       className="text-xs text-primary hover:underline"
       title={range.source === "processed"
         ? "Audio interval actually processed by this job"
@@ -572,7 +588,13 @@ function JobDateRange({
  * Renders the Progress column content for a job row.
  * Handles all job types with type-specific displays.
  */
-export function JobProgressCell({ job }: { job: JobInfo }) {
+export function JobProgressCell({
+  job,
+  selectedProfileId,
+}: {
+  job: JobInfo;
+  selectedProfileId?: string | null;
+}) {
   const result = job.result || {};
   const progress = job.progress || {};
   // Treat as completed if state is completed, OR if active but result already populated
@@ -684,10 +706,13 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
             </Badge>
             {seqStart && (
               <Link
-                to={`/timeline?start=${new Date(seqStart).getTime()}&end=${
-                  new Date(seqStart).getTime() +
-                  (result.audioDuration || 60) * 1000 + 60000
-                }`}
+                to={withVoiceProfile(
+                  `/timeline?start=${new Date(seqStart).getTime()}&end=${
+                    new Date(seqStart).getTime() +
+                    (result.audioDuration || 60) * 1000 + 60000
+                  }`,
+                  selectedProfileId,
+                )}
                 className="text-xs text-primary hover:underline"
               >
                 {format(new Date(seqStart), "MMM d, HH:mm")}
@@ -700,12 +725,15 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
         <div className="space-y-1">
           {result.sequenceStart && (
             <Link
-              to={`/timeline?start=${
-                new Date(result.sequenceStart).getTime()
-              }&end=${
-                new Date(result.sequenceStart).getTime() +
-                (result.audioDuration || 60) * 1000 + 60000
-              }`}
+              to={withVoiceProfile(
+                `/timeline?start=${
+                  new Date(result.sequenceStart).getTime()
+                }&end=${
+                  new Date(result.sequenceStart).getTime() +
+                  (result.audioDuration || 60) * 1000 + 60000
+                }`,
+                selectedProfileId,
+              )}
               className="text-xs text-primary hover:underline"
             >
               {format(new Date(result.sequenceStart), "MMM d, HH:mm")}
@@ -766,9 +794,12 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
           </Badge>
           {progress.sequenceStart && (
             <Link
-              to={`/timeline?start=${
-                new Date(progress.sequenceStart).getTime()
-              }&end=${new Date(progress.sequenceStart).getTime() + 120000}`}
+              to={withVoiceProfile(
+                `/timeline?start=${
+                  new Date(progress.sequenceStart).getTime()
+                }&end=${new Date(progress.sequenceStart).getTime() + 120000}`,
+                selectedProfileId,
+              )}
               className="text-xs text-primary hover:underline"
             >
               {format(new Date(progress.sequenceStart), "MMM d, HH:mm")}
@@ -822,7 +853,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
       }
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {result.processed != null && result.total != null && (
               <span>{result.processed}/{result.total} processed</span>
@@ -841,7 +872,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
     if (isActive && progress) {
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {progress.processed != null && progress.total != null && (
               <span>{progress.processed}/{progress.total} processed</span>
@@ -878,7 +909,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
       }
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {result.chunksCreated != null && (
               <span>{result.chunksCreated} chunks</span>
@@ -911,7 +942,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
           >
             {stageLabels[progress.stage] ?? progress.stage}
           </Badge>
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {progress.finalized != null && (
               <span>{progress.finalized} finalized</span>
@@ -944,7 +975,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
       }
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           {(result.chunksProcessed ?? 0) > 0 &&
             (result.conversationsCreated ?? 0) === 0 && (
             <Badge
@@ -1015,7 +1046,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
           >
             {stageLabels[progress.stage] ?? progress.stage}
           </Badge>
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {progress.chunksProcessed != null && (
               <span>{progress.chunksProcessed} chunks</span>
@@ -1082,7 +1113,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
     if (isCompleted) {
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {result.conversationsProcessed != null && (
               <span>{result.conversationsProcessed} conversations</span>
@@ -1109,7 +1140,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
           >
             Tagging
           </Badge>
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {progress.current != null && progress.total != null && (
               <span>{progress.current}/{progress.total}</span>
@@ -1157,7 +1188,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
               summar{batchSummaries.length === 1 ? "y" : "ies"} created
             </div>
             <Link
-              to={`/jobs/${job.id}`}
+              to={withVoiceProfile(`/jobs/${job.id}`, selectedProfileId)}
               className="text-xs text-primary hover:underline"
             >
               view conversations
@@ -1188,7 +1219,10 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
         <div className="space-y-1">
           {start && end && (
             <Link
-              to={`/timeline?start=${start.getTime()}&end=${end.getTime()}`}
+              to={withVoiceProfile(
+                `/timeline?start=${start.getTime()}&end=${end.getTime()}`,
+                selectedProfileId,
+              )}
               className="text-xs text-primary hover:underline"
             >
               {format(start, "MMM d, HH:mm")} — {format(end, "HH:mm")}
@@ -1237,7 +1271,11 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
       }
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} label="Audio" />
+          <JobDateRange
+            job={job}
+            label="Audio"
+            selectedProfileId={selectedProfileId}
+          />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {result.sequences_processed != null && (
               <span>{result.sequences_processed} sequences</span>
@@ -1277,7 +1315,11 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
           >
             {stageLabels[progress.stage] ?? progress.stage}
           </Badge>
-          <JobDateRange job={job} label="Audio" />
+          <JobDateRange
+            job={job}
+            label="Audio"
+            selectedProfileId={selectedProfileId}
+          />
           {progressView.batchProgressLabel && (
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1330,7 +1372,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
     if (isCompleted) {
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             {result.processed != null && (
               <span>{result.processed} processed</span>
@@ -1345,14 +1387,17 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
 
   // --- Speaker Identity ---
   if (job.type === "speakerIdentity") {
+    const profileName = speakerIdentityProfileName(job);
     if (isCompleted) {
       return (
         <div className="space-y-1">
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span>{result.processed ?? 0} scanned</span>
-            <span className="text-green-500">{result.matched ?? 0} Sky</span>
-            <span>{result.rejected ?? 0} not Sky</span>
+            <span className="text-green-500">
+              {result.matched ?? 0} {profileName}
+            </span>
+            <span>{result.rejected ?? 0} not {profileName}</span>
             <span className="text-amber-500">
               {result.uncertain ?? 0} uncertain
             </span>
@@ -1367,7 +1412,8 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
             <div className="text-[11px] text-muted-foreground">
               Campaign {result.campaignProcessed ?? result.processed ?? 0}/
               {result.campaignTotal ?? "?"} · {result.campaignMatched ?? 0}{" "}
-              Sky · {result.campaignRejected ?? 0} not Sky ·{" "}
+              {profileName} · {result.campaignRejected ?? 0} not {profileName} ·
+              {" "}
               {result.campaignUncertain ?? 0} uncertain
             </div>
           )}
@@ -1392,7 +1438,7 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
               ? "Counting embeddings"
               : "Classifying voices"}
           </Badge>
-          <JobDateRange job={job} />
+          <JobDateRange job={job} selectedProfileId={selectedProfileId} />
           {progress.total != null && (
             <Progress value={view.percent} className="h-1.5" />
           )}
@@ -1401,8 +1447,10 @@ export function JobProgressCell({ job }: { job: JobInfo }) {
             <span>{view.etaLabel}</span>
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-            <span className="text-green-500">{progress.matched ?? 0} Sky</span>
-            <span>{progress.rejected ?? 0} not Sky</span>
+            <span className="text-green-500">
+              {progress.matched ?? 0} {profileName}
+            </span>
+            <span>{progress.rejected ?? 0} not {profileName}</span>
             <span className="text-amber-500">
               {progress.uncertain ?? 0} uncertain
             </span>
@@ -1675,6 +1723,7 @@ export default function JobsPage() {
   ];
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const voiceSelection = useSelectedVoiceProfile();
   const normalizedSearchParams = useMemo(
     () => normalizeMediaRecognitionJobParams(searchParams),
     [searchParams],
@@ -3559,6 +3608,24 @@ export default function JobsPage() {
       }
     }
 
+    const onlySpeakerIdentity = !allTypesSelected && filterTypes.size === 1 &&
+      filterTypes.has("speakerIdentity");
+    if (onlySpeakerIdentity && voiceSelection.selectedProfileId) {
+      result = result.filter((job) => {
+        const directProfileId = normalizeObjectId(job.data?.profileId) ??
+          normalizeObjectId(job.data?.profileSnapshot?.profileId) ??
+          normalizeObjectId(job.result?.profileId);
+        const snapshots = Array.isArray(job.data?.profileSnapshots)
+          ? job.data.profileSnapshots
+          : [];
+        return directProfileId === voiceSelection.selectedProfileId ||
+          snapshots.some((snapshot: any) =>
+            normalizeObjectId(snapshot?.profileId) ===
+              voiceSelection.selectedProfileId
+          );
+      });
+    }
+
     // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -3654,6 +3721,7 @@ export default function JobsPage() {
     limit,
     sortColumn,
     sortDirection,
+    voiceSelection.selectedProfileId,
   ]);
 
   const refetch = () => {
@@ -6014,7 +6082,12 @@ export default function JobsPage() {
                                       : worker.type === "diarization"
                                       ? <DiarizationLaunchDialog />
                                       : worker.type === "speakerIdentity"
-                                      ? <SpeakerIdentityLaunchDialog />
+                                      ? (
+                                        <SpeakerIdentityLaunchDialog
+                                          profileId={voiceSelection
+                                            .selectedProfileId ?? undefined}
+                                        />
+                                      )
                                       : (
                                         <Tooltip>
                                           <TooltipTrigger asChild>
@@ -6735,6 +6808,15 @@ export default function JobsPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
+                {!allTypesSelected && filterTypes.size === 1 &&
+                  filterTypes.has("speakerIdentity") && (
+                  <VoiceProfileSelect
+                    selection={voiceSelection}
+                    ariaLabel="Filter identity jobs by voice profile"
+                    className="h-8 w-[220px] rounded-md border bg-background px-2 text-xs"
+                  />
+                )}
+
                 <Popover
                   open={inferenceFilterOpen}
                   onOpenChange={setInferenceFilterOpen}
@@ -7012,7 +7094,10 @@ export default function JobsPage() {
                         >
                           <TableCell>
                             <Link
-                              to={`/jobs/${job.id}`}
+                              to={withVoiceProfile(
+                                `/jobs/${job.id}`,
+                                voiceSelection.selectedProfileId,
+                              )}
                             >
                               <Badge
                                 variant="secondary"
@@ -7276,7 +7361,10 @@ export default function JobsPage() {
                             })()}
                             {job.restartedFromJobId && (
                               <Link
-                                to={`/jobs/${job.restartedFromJobId}`}
+                                to={withVoiceProfile(
+                                  `/jobs/${job.restartedFromJobId}`,
+                                  voiceSelection.selectedProfileId,
+                                )}
                                 onClick={(event) => event.stopPropagation()}
                                 className="block text-[10px] font-normal text-amber-500 hover:underline"
                               >
@@ -7287,7 +7375,10 @@ export default function JobsPage() {
                             )}
                             {job.restartJobId && (
                               <Link
-                                to={`/jobs/${job.restartJobId}`}
+                                to={withVoiceProfile(
+                                  `/jobs/${job.restartJobId}`,
+                                  voiceSelection.selectedProfileId,
+                                )}
                                 onClick={(event) => event.stopPropagation()}
                                 className="block text-[10px] font-normal text-amber-500 hover:underline"
                               >
@@ -7324,7 +7415,11 @@ export default function JobsPage() {
                               <span className="ml-1 text-xs">(retry)</span>}
                           </TableCell>
                           <TableCell>
-                            <JobProgressCell job={job} />
+                            <JobProgressCell
+                              job={job}
+                              selectedProfileId={voiceSelection
+                                .selectedProfileId}
+                            />
                           </TableCell>
                           <TableCell className="w-[80px] text-right p-1">
                             <Tooltip>

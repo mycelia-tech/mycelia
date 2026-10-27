@@ -13,14 +13,17 @@ import {
   shortTechnicalId,
   type SpeakerIdentityCampaignStart,
   type SpeakerIdentityPreflight,
+  speakerIdentityPreflightState,
   type SpeakerIdentityScope,
 } from "@/lib/speakerIdentityLaunch";
 import {
   loadVoiceIdentityStatus,
-  loadVoiceProfiles,
   voiceIdentityKeys,
   type VoiceIdentityStatus,
 } from "@/lib/voiceIdentity";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DateRangePicker } from "@/components/DateRangePicker";
@@ -43,6 +46,8 @@ type RangeMode = 24 | 168 | 336 | "custom";
 
 type SpeakerIdentityLauncherProps = {
   enabled: boolean;
+  profileId?: string;
+  showProfileSelector?: boolean;
   onCancel?: () => void;
   onQueued?: (jobId: string) => void;
 };
@@ -53,6 +58,8 @@ function errorMessage(error: unknown) {
 
 function SpeakerIdentityLauncher({
   enabled,
+  profileId: requestedProfileId,
+  showProfileSelector = false,
   onCancel,
   onQueued,
 }: SpeakerIdentityLauncherProps) {
@@ -74,14 +81,11 @@ function SpeakerIdentityLauncher({
     if (enabled) setRangeAnchor(new Date());
   }, [enabled]);
 
-  const profilesQuery = useQuery({
-    queryKey: voiceIdentityKeys.profiles,
-    queryFn: loadVoiceProfiles,
-    enabled,
-    staleTime: 30_000,
-  });
-  const primary = profilesQuery.data?.find((profile) => profile.is_primary);
-  const primaryId = normalizeObjectId(primary?._id);
+  const voiceSelection = useSelectedVoiceProfile();
+  const primaryId = requestedProfileId ?? voiceSelection.selectedProfileId;
+  const primary = voiceSelection.profiles.find((profile) =>
+    normalizeObjectId(profile._id) === primaryId
+  );
   const statusQuery = useQuery<VoiceIdentityStatus>({
     queryKey: voiceIdentityKeys.status(primaryId),
     queryFn: () => loadVoiceIdentityStatus(primaryId!),
@@ -133,8 +137,15 @@ function SpeakerIdentityLauncher({
     enabled: enabled && Boolean(primaryId),
     staleTime: 15_000,
     retry: 1,
+    refetchInterval: (query) =>
+      (query.state.data as SpeakerIdentityPreflight | undefined)?.status ===
+          "counting"
+        ? 3_000
+        : false,
   });
   const preflight = preflightQuery.data;
+  const { sourcePreparing, noCompatibleSegments } =
+    speakerIdentityPreflightState(preflight);
   const resolved = preflight?.resolved;
   const effectivePolicy = resolved?.classificationPolicy ??
     calibrationPolicy;
@@ -143,7 +154,7 @@ function SpeakerIdentityLauncher({
       ["queued", "counting", "running"].includes(status.latestCampaign.status)
     ? status.latestCampaign
     : null;
-  const loading = profilesQuery.isLoading ||
+  const loading = voiceSelection.isLoading ||
     (Boolean(primaryId) && statusQuery.isLoading) ||
     (Boolean(primaryId) && preflightQuery.isLoading);
   const rangeInvalid = scope.mode === "range" && scope.end <= scope.start;
@@ -151,16 +162,19 @@ function SpeakerIdentityLauncher({
     scope.end.getTime() - scope.start.getTime() >
       maxRangeHours * 3_600_000;
   const eligibleSegments = preflight?.totals.eligibleSegments ?? null;
-  const noCompatibleSegments = eligibleSegments === 0;
 
   const blockers = useMemo(() => {
     const values: string[] = [];
-    if (!profilesQuery.isLoading && profilesQuery.isError) {
+    if (!voiceSelection.isLoading && voiceSelection.isError) {
       values.push(
-        `Could not load voice profiles: ${errorMessage(profilesQuery.error)}`,
+        `Could not load voice profiles: ${errorMessage(voiceSelection.error)}`,
       );
-    } else if (!profilesQuery.isLoading && !primaryId) {
-      values.push("Create or select a primary voice profile first");
+    } else if (!voiceSelection.isLoading && !primaryId) {
+      values.push(
+        voiceSelection.invalidRequestedProfileId
+          ? "The requested voice profile is unavailable or archived"
+          : "Create or select a voice profile first",
+      );
     }
     if (!statusQuery.isLoading && statusQuery.isError) {
       values.push(
@@ -196,9 +210,10 @@ function SpeakerIdentityLauncher({
     preflightQuery.isError,
     preflightQuery.isLoading,
     primaryId,
-    profilesQuery.error,
-    profilesQuery.isError,
-    profilesQuery.isLoading,
+    voiceSelection.error,
+    voiceSelection.invalidRequestedProfileId,
+    voiceSelection.isError,
+    voiceSelection.isLoading,
     rangeInvalid,
     rangeTooLarge,
     statusQuery.error,
@@ -208,7 +223,10 @@ function SpeakerIdentityLauncher({
 
   const launch = useMutation({
     mutationFn: async () => {
-      if (!primaryId || !preflight?.canStart || noCompatibleSegments) {
+      if (
+        !primaryId || !preflight?.canStart || !preflight.preflightToken ||
+        sourcePreparing || noCompatibleSegments
+      ) {
         throw new Error(blockers[0] ?? "No compatible segments to classify");
       }
       return await api.callResource(
@@ -232,6 +250,12 @@ function SpeakerIdentityLauncher({
       void queryClient.invalidateQueries({
         queryKey: voiceIdentityKeys.status(primaryId),
       });
+      void queryClient.invalidateQueries({
+        queryKey: ["identity-model-sets", primaryId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["identity-model-set-head", primaryId],
+      });
       if (result.jobId) onQueued?.(result.jobId);
     },
     onError: (error) => toast.error(errorMessage(error)),
@@ -241,12 +265,16 @@ function SpeakerIdentityLauncher({
     ? new Date(preflight.snapshotCutoff)
     : null;
   const canStart = Boolean(
-    !loading && preflight?.canStart && !noCompatibleSegments &&
+    !loading && !sourcePreparing && preflight?.canStart &&
+      preflight.preflightToken && !noCompatibleSegments &&
       blockers.length === 0,
   );
 
   return (
     <div className="space-y-4">
+      {showProfileSelector && (
+        <VoiceProfileContextBar selection={voiceSelection} compact />
+      )}
       <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -266,20 +294,24 @@ function SpeakerIdentityLauncher({
           </div>
           <div className="text-right">
             <p className="text-2xl font-semibold tabular-nums">
-              {preflightQuery.isLoading
+              {sourcePreparing
+                ? preflight?.sourceIndex.scannedSegments.toLocaleString() ?? "…"
+                : preflightQuery.isLoading
                 ? "…"
                 : eligibleSegments == null
                 ? "—"
                 : eligibleSegments.toLocaleString()}
             </p>
             <p className="text-xs text-muted-foreground">
-              {noCompatibleSegments
+              {sourcePreparing
+                ? "segments scanned"
+                : noCompatibleSegments
                 ? "No compatible segments"
                 : "segments ready"}
             </p>
           </div>
         </div>
-        {preflight && (
+        {preflight && !sourcePreparing && (
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
               {preflight.partitions.length} compatible generation
@@ -294,13 +326,38 @@ function SpeakerIdentityLauncher({
         )}
       </div>
 
+      {sourcePreparing && preflight?.sourceIndex && (
+        <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
+          <p className="font-medium">Preparing classification source</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {preflight.sourceIndex.scannedSegments.toLocaleString()}{" "}
+            segments scanned · batch{" "}
+            {preflight.sourceIndex.batchCount.toLocaleString()}.{" "}
+            {preflight.sourceIndex.recoveryWaiting
+              ? "Waiting for the worker to recover after a restart. The queue releases its previous lock automatically within 10 minutes; no action is needed."
+              : "This one-time index continues in the background and this page updates automatically."}
+          </p>
+          {preflight.sourceIndex.currentJobId && (
+            <Link
+              className="mt-2 inline-block text-xs font-medium text-primary hover:underline"
+              to={withVoiceProfile(
+                `/jobs/${preflight.sourceIndex.currentJobId}`,
+                primaryId,
+              )}
+            >
+              Open source preparation job →
+            </Link>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="rounded-md border bg-muted/20 p-3">
           <p className="text-xs text-muted-foreground">Voice profile</p>
           <p className="mt-1 text-sm font-medium">
             {loading
               ? "Loading…"
-              : resolved?.profileName ?? primary?.name ?? "No primary profile"}
+              : resolved?.profileName ?? primary?.name ?? "No voice profile"}
           </p>
           {(resolved?.profileRevision ?? status?.profile?.revision) && (
             <p className="text-xs text-muted-foreground">
@@ -469,7 +526,10 @@ function SpeakerIdentityLauncher({
           Current classification is {activeCampaign.status}.{" "}
           <Link
             className="font-medium text-primary hover:underline"
-            to={`/jobs/${activeCampaign.currentJobId}`}
+            to={withVoiceProfile(
+              `/jobs/${activeCampaign.currentJobId}`,
+              primaryId,
+            )}
           >
             Open job details
           </Link>
@@ -489,9 +549,12 @@ function SpeakerIdentityLauncher({
           </p>
           <Link
             className="mt-2 inline-block text-xs font-medium text-primary hover:underline"
-            to={`/settings/voice-identity/operations?repairRun=${
-              encodeURIComponent(preflight.coverageRepair.runId)
-            }`}
+            to={withVoiceProfile(
+              `/settings/voice-identity/operations?repairRun=${
+                encodeURIComponent(preflight.coverageRepair.runId)
+              }`,
+              primaryId,
+            )}
           >
             Preview safe coverage repair →
           </Link>
@@ -509,7 +572,10 @@ function SpeakerIdentityLauncher({
           <div className="mt-2 flex flex-wrap gap-3 text-xs font-medium">
             <Link
               className="text-primary hover:underline"
-              to="/settings/voice-identity#calibration"
+              to={withVoiceProfile(
+                "/settings/voice-identity#calibration",
+                primaryId,
+              )}
             >
               Review and validate →
             </Link>
@@ -548,6 +614,8 @@ function SpeakerIdentityLauncher({
           <Play className="mr-2 h-4 w-4" />
           {launch.isPending
             ? "Starting…"
+            : sourcePreparing
+            ? "Preparing source…"
             : effectivePilot
             ? "Start provisional pilot"
             : scope.mode === "all_compatible"
@@ -560,14 +628,26 @@ function SpeakerIdentityLauncher({
 }
 
 export function SpeakerIdentityLaunchPanel({
+  profileId,
   onQueued,
 }: {
+  profileId?: string;
   onQueued?: (jobId: string) => void;
 }) {
-  return <SpeakerIdentityLauncher enabled onQueued={onQueued} />;
+  return (
+    <SpeakerIdentityLauncher
+      enabled
+      profileId={profileId}
+      onQueued={onQueued}
+    />
+  );
 }
 
-export function SpeakerIdentityLaunchDialog() {
+export function SpeakerIdentityLaunchDialog({
+  profileId,
+}: {
+  profileId?: string;
+} = {}) {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -595,6 +675,8 @@ export function SpeakerIdentityLaunchDialog() {
         </DialogHeader>
         <SpeakerIdentityLauncher
           enabled={open}
+          profileId={profileId}
+          showProfileSelector={!profileId}
           onCancel={() => setOpen(false)}
           onQueued={() => setOpen(false)}
         />

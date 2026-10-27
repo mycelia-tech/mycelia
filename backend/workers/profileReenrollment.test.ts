@@ -7,4 +7,14 @@ Deno.test("profile re-enrollment can download its saved GridFS samples", () => {
     action: "download",
     effect: "allow",
   });
+  expect(profileReenrollment.policies).toContainEqual({
+    resource: "speaker-segments",
+    action: "invalidate-profile-identity-evidence",
+    effect: "allow",
+  });
+  expect(profileReenrollment.policies).not.toContainEqual({
+    resource: "speaker-segments",
+    action: "*",
+    effect: "allow",
+  });
 });

@@ -296,6 +296,24 @@ def get_profile_by_id(profile_id: str) -> Optional[Dict[str, Any]]:
     return result
 
 
+def get_profiles_by_ids(profile_ids: List[str]) -> List[Dict[str, Any]]:
+    """Load profile snapshots in caller order for a multi-profile model set."""
+    if not profile_ids:
+        return []
+    object_ids = [ObjectId(profile_id) for profile_id in profile_ids]
+    result = call_resource("mongo", {
+        "action": "find",
+        "collection": "speaker_profiles",
+        "query": {
+            "_id": {"$in": object_ids},
+            "lifecycleStatus": {"$ne": "archived"},
+        },
+    })
+    profiles = result if isinstance(result, list) else []
+    by_id = {str(profile.get("_id")): profile for profile in profiles}
+    return [by_id[profile_id] for profile_id in profile_ids if profile_id in by_id]
+
+
 def delete_profile(profile_id: str) -> bool:
     """Delete a speaker profile by ID."""
     result = call_resource("mongo", {

@@ -24,7 +24,49 @@ export interface IdentityPartition {
   end: Date;
   eligibleSegments: number;
   sourceSegments: number;
+  /** Full partition count in the materialized source snapshot. */
+  indexedSourceSegments?: number;
+  /** Source-index identity used to reject stale preflight tokens. */
+  sourceBuildId?: string;
+  sourceRevision?: number;
+  maxSegmentId?: string;
   generation?: number | null;
+}
+
+export interface IdentitySourceSnapshot {
+  buildId: string;
+  revision: number;
+  membershipRevision: number;
+  builtAt: Date;
+  maxSegmentId?: string | null;
+}
+
+export function identityPartitionKey(
+  partition: Pick<IdentityPartition, "runId" | "embeddingSpaceId">,
+): string {
+  return `${partition.runId}\u0000${partition.embeddingSpaceId}`;
+}
+
+/**
+ * A completed campaign is a materialized baseline only when it really reached
+ * zero remaining work. Older campaigns could report `completed` while still
+ * carrying pending segments, so they must never suppress a new campaign.
+ */
+export function isCompleteIdentityCampaign(campaign: any): boolean {
+  return campaign?.status === "completed" &&
+    Number(campaign?.pendingSegments ?? -1) === 0 &&
+    campaign?.sourceChanged !== true;
+}
+
+export function remainingIdentityPartitionSegments(
+  sourceSegments: number,
+  baselineSegments: number,
+): number {
+  return Math.max(
+    Math.max(0, Math.trunc(sourceSegments)) -
+      Math.max(0, Math.trunc(baselineSegments)),
+    0,
+  );
 }
 
 export function buildCurrentIdentityCondition(

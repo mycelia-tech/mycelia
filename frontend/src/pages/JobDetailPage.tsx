@@ -55,6 +55,9 @@ import {
   canRerunJobFromJobs,
   managedWorkerDestination,
 } from "@/lib/jobFilters";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { resolveJobVoiceProfileContext } from "@/lib/jobVoiceProfile";
 
 interface TranscriptionDoc {
   _id: string;
@@ -91,7 +94,15 @@ interface ConversationChunk {
 
 type JobRelatedLink = { to: string; label: string };
 
-function getJobRelatedLinks(jobType: string): JobRelatedLink[] {
+function getJobRelatedLinks(
+  job: JobInfo,
+  fallbackProfileId?: string | null,
+): JobRelatedLink[] {
+  const jobType = job.type;
+  const profileId = resolveJobVoiceProfileContext(
+    job,
+    fallbackProfileId,
+  ).primaryProfileId;
   if (jobType === "mediaFolderImport") {
     return [{ to: "/media", label: "Photo library" }];
   }
@@ -103,7 +114,10 @@ function getJobRelatedLinks(jobType: string): JobRelatedLink[] {
   }
   if (jobType === "diarization") {
     return [
-      { to: "/audio/pipeline", label: "Audio Pipeline" },
+      {
+        to: withVoiceProfile("/audio/pipeline", profileId),
+        label: "Audio Pipeline",
+      },
       { to: "/settings/diarization", label: "Diarization servers" },
       {
         to: "/settings/voice-identity/operations",
@@ -113,18 +127,33 @@ function getJobRelatedLinks(jobType: string): JobRelatedLink[] {
   }
   if (jobType === "speakerIdentity" || jobType === "speakerMatching") {
     return [
-      { to: "/settings/voice-identity", label: "Review & calibration" },
       {
-        to: "/settings/voice-identity/operations",
+        to: withVoiceProfile("/settings/voice-identity", profileId),
+        label: "Review & calibration",
+      },
+      {
+        to: withVoiceProfile(
+          "/settings/voice-identity/operations",
+          profileId,
+        ),
         label: "Identity operations",
       },
-      { to: "/audio/pipeline", label: "Audio Pipeline" },
+      {
+        to: withVoiceProfile("/audio/pipeline", profileId),
+        label: "Audio Pipeline",
+      },
     ];
   }
   if (jobType === "profileReenrollment" || jobType === "enrollment") {
     return [
-      { to: "/settings/voice-profiles", label: "Profiles & samples" },
-      { to: "/settings/voice-identity", label: "Review & calibration" },
+      {
+        to: withVoiceProfile("/settings/voice-profiles", profileId),
+        label: "Profiles & samples",
+      },
+      {
+        to: withVoiceProfile("/settings/voice-identity", profileId),
+        label: "Review & calibration",
+      },
       { to: "/settings/diarization", label: "Diarization servers" },
     ];
   }
@@ -357,7 +386,13 @@ function describeDiarizationError(error: any): string {
     "The sequence could not be diarized in this attempt.";
 }
 
-function DiarizationErrorsPanel({ job }: { job: JobInfo }) {
+function DiarizationErrorsPanel({
+  job,
+  selectedProfileId,
+}: {
+  job: JobInfo;
+  selectedProfileId?: string | null;
+}) {
   const errors = Array.isArray(job.result?.errors) ? job.result.errors : [];
   if (errors.length === 0) return null;
 
@@ -483,9 +518,12 @@ function DiarizationErrorsPanel({ job }: { job: JobInfo }) {
                   !Number.isNaN(end.getTime()) && (
                   <Link
                     className="text-primary hover:underline"
-                    to={`/timeline?start=${start.getTime()}&end=${
-                      end.getTime() + 60_000
-                    }`}
+                    to={withVoiceProfile(
+                      `/timeline?start=${start.getTime()}&end=${
+                        end.getTime() + 60_000
+                      }`,
+                      selectedProfileId,
+                    )}
                   >
                     Open audio range
                   </Link>
@@ -597,6 +635,7 @@ export default function JobDetailPage() {
   const navigate = useNavigate();
   const { getJobById, isLoading: isListenerLoading } = useJobsListener();
   const queryClient = useQueryClient();
+  const voiceSelection = useSelectedVoiceProfile();
 
   const cachedJob = id ? getJobById(id) : null;
 
@@ -629,6 +668,16 @@ export default function JobDetailPage() {
   // Prefer the detail endpoint because it also checks BullMQ and refreshes
   // when list websocket events are missed.
   const job = fetchedJob || cachedJob;
+  const jobVoiceContext = job
+    ? resolveJobVoiceProfileContext(job, voiceSelection.selectedProfileId)
+    : {
+      profileIds: voiceSelection.selectedProfileId
+        ? [voiceSelection.selectedProfileId]
+        : [],
+      primaryProfileId: voiceSelection.selectedProfileId,
+      label: "selected voice",
+    };
+  const jobProfileId = jobVoiceContext.primaryProfileId;
   const isTranscriptionJob = job?.type === "transcription";
   const isConversationExtractorJob = job?.type === "conversation_extractor";
   const isLoading = (isListenerLoading && !cachedJob) ||
@@ -865,7 +914,12 @@ export default function JobDetailPage() {
           ? `New diarization generation ${result.runId} queued`
           : "New job queued with the same input",
       );
-      navigate(`/jobs/${result.jobId}`);
+      navigate(
+        withVoiceProfile(
+          `/jobs/${result.jobId}`,
+          jobProfileId,
+        ),
+      );
     },
     onError: (error) => {
       toast.error(
@@ -945,7 +999,12 @@ export default function JobDetailPage() {
   const jobListHref = job.type === "mediaRecognition"
     ? "/jobs?type=mediaRecognition&internal=1"
     : `/jobs?type=${encodeURIComponent(job.type)}`;
-  const relatedLinks = getJobRelatedLinks(job.type);
+  const relatedLinks = getJobRelatedLinks(job, jobProfileId);
+  const speakerProfileName = jobVoiceContext.label;
+  const jobListHrefWithProfile = withVoiceProfile(
+    jobListHref,
+    jobProfileId,
+  );
   const managedMediaDestination = canRerunJobFromJobs(job.type)
     ? null
     : managedWorkerDestination(job.type);
@@ -961,7 +1020,10 @@ export default function JobDetailPage() {
     <div className="container mx-auto space-y-4 p-4 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <Link to={jobListHref} aria-label={`Back to ${job.type} jobs`}>
+          <Link
+            to={jobListHrefWithProfile}
+            aria-label={`Back to ${job.type} jobs`}
+          >
             <Button variant="ghost" size="icon">
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -1137,9 +1199,11 @@ export default function JobDetailPage() {
                     </div>
                     <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
                       <span className="text-green-500">
-                        {job.progress?.matched ?? 0} Sky
+                        {job.progress?.matched ?? 0} {speakerProfileName}
                       </span>
-                      <span>{job.progress?.rejected ?? 0} not Sky</span>
+                      <span>
+                        {job.progress?.rejected ?? 0} not {speakerProfileName}
+                      </span>
                       <span className="text-amber-500">
                         {job.progress?.uncertain ?? 0} uncertain
                       </span>
@@ -1936,8 +2000,16 @@ export default function JobDetailPage() {
                   value: processingTime,
                 },
                 { icon: Hash, label: "Scanned", value: r.processed ?? 0 },
-                { icon: Users, label: "Sky", value: r.matched ?? 0 },
-                { icon: Users, label: "Not Sky", value: r.rejected ?? 0 },
+                {
+                  icon: Users,
+                  label: speakerProfileName,
+                  value: r.matched ?? 0,
+                },
+                {
+                  icon: Users,
+                  label: `Not ${speakerProfileName}`,
+                  value: r.rejected ?? 0,
+                },
                 {
                   icon: AlertTriangle,
                   label: "Uncertain",
@@ -2012,12 +2084,13 @@ export default function JobDetailPage() {
                         : "Date range:"}
                     </span>{" "}
                     <Link
-                      to={`/timeline?start=${
-                        jobTimeRange!.start.getTime()
-                      }&end=${
-                        jobTimeRange!.end?.getTime() ??
-                          jobTimeRange!.start.getTime() + 86400000
-                      }`}
+                      to={withVoiceProfile(
+                        `/timeline?start=${jobTimeRange!.start.getTime()}&end=${
+                          jobTimeRange!.end?.getTime() ??
+                            jobTimeRange!.start.getTime() + 86400000
+                        }`,
+                        jobProfileId,
+                      )}
                       className="text-primary hover:underline"
                     >
                       {dateRange}
@@ -2090,7 +2163,10 @@ export default function JobDetailPage() {
                   ))}
                 </div>
                 {job.type === "diarization" && (
-                  <DiarizationErrorsPanel job={job} />
+                  <DiarizationErrorsPanel
+                    job={job}
+                    selectedProfileId={jobProfileId}
+                  />
                 )}
                 {job.type === "summarization" &&
                   Array.isArray(r.skips) && r.skips.length > 0 && (
@@ -2142,11 +2218,14 @@ export default function JobDetailPage() {
                                 {err.start && err.end && (
                                   <Link
                                     className="text-primary hover:underline"
-                                    to={`/timeline?start=${
-                                      new Date(err.start).getTime()
-                                    }&end=${
-                                      new Date(err.end).getTime() + 60_000
-                                    }`}
+                                    to={withVoiceProfile(
+                                      `/timeline?start=${
+                                        new Date(err.start).getTime()
+                                      }&end=${
+                                        new Date(err.end).getTime() + 60_000
+                                      }`,
+                                      jobProfileId,
+                                    )}
                                   >
                                     Open on Timeline
                                   </Link>
@@ -2604,9 +2683,12 @@ export default function JobDetailPage() {
                               {chunk.start && chunk.end && (
                                 <Link
                                   className="text-primary hover:underline"
-                                  to={`/timeline?start=${
-                                    new Date(chunk.start).getTime()
-                                  }&end=${new Date(chunk.end).getTime()}`}
+                                  to={withVoiceProfile(
+                                    `/timeline?start=${
+                                      new Date(chunk.start).getTime()
+                                    }&end=${new Date(chunk.end).getTime()}`,
+                                    jobProfileId,
+                                  )}
                                 >
                                   Open time range
                                 </Link>

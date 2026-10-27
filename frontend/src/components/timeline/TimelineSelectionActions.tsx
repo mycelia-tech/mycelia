@@ -21,6 +21,8 @@ import { SummarizeDialog } from "@/components/dialogs/SummarizeDialog";
 import { RunJobDialog } from "@/components/dialogs/RunJobDialog";
 import { AssignLocationDialog } from "@/components/location/AssignLocationDialog";
 import { AddTimelineVoiceSampleDialog } from "@/components/voice/AddTimelineVoiceSampleDialog";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 
 interface TimelineSelectionActionsProps {
   startDate: Date;
@@ -39,6 +41,7 @@ export function TimelineSelectionActions({
   onCreateEvent,
   onClearSelection,
 }: TimelineSelectionActionsProps) {
+  const voiceSelection = useSelectedVoiceProfile();
   const [isSummarizeOpen, setIsSummarizeOpen] = useState(false);
   const [isRunJobOpen, setIsRunJobOpen] = useState(false);
   const [isSetLocationOpen, setIsSetLocationOpen] = useState(false);
@@ -128,6 +131,8 @@ export function TimelineSelectionActions({
         onOpenChange={setIsAddVoiceSampleOpen}
         startDate={startDate}
         endDate={endDate}
+        initialProfileId={voiceSelection.selectedProfileId}
+        onProfileSelected={voiceSelection.selectProfile}
       />
 
       <div className="flex flex-col items-center gap-1">
@@ -135,8 +140,11 @@ export function TimelineSelectionActions({
           <TooltipTrigger asChild>
             <Button asChild variant="outline" size="icon">
               <Link
-                to={"/settings/voice-identity?reviewSource=timeline&newSession=1&start=" +
-                  startDate.getTime() + "&end=" + endDate.getTime()}
+                to={withVoiceProfile(
+                  "/settings/voice-identity?reviewSource=timeline&newSession=1&start=" +
+                    startDate.getTime() + "&end=" + endDate.getTime(),
+                  voiceSelection.selectedProfileId,
+                )}
               >
                 <UsersRound className="h-4 w-4" />
               </Link>

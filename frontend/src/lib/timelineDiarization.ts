@@ -10,9 +10,31 @@ export interface TimelineLegendItem {
   opacity: number;
   stroke?: string;
   strokeDasharray?: string;
+  pattern?: "diagonal";
 }
 
 const SPEAKER_IDENTITY_APPEARANCE = {
+  identified: {
+    id: "identified",
+    label: "Selected voice",
+    color: "#22c55e",
+    opacity: 0.86,
+  },
+  ambiguous: {
+    id: "ambiguous",
+    label: "Selected voice is a candidate",
+    color: "#22c55e",
+    opacity: 0.78,
+    stroke: "#166534",
+    strokeDasharray: "3 2",
+    pattern: "diagonal",
+  },
+  unknown: {
+    id: "unknown",
+    label: "Other / unknown",
+    color: "#64748b",
+    opacity: 0.82,
+  },
   matched: {
     id: "matched",
     label: "Sky",
@@ -39,9 +61,13 @@ const SPEAKER_IDENTITY_APPEARANCE = {
   },
 } as const satisfies Record<string, TimelineLegendItem>;
 
-export const SPEAKER_IDENTITY_LEGEND = Object.values(
-  SPEAKER_IDENTITY_APPEARANCE,
-);
+export const SPEAKER_IDENTITY_LEGEND: TimelineLegendItem[] = [
+  SPEAKER_IDENTITY_APPEARANCE.identified,
+  SPEAKER_IDENTITY_APPEARANCE.ambiguous,
+  SPEAKER_IDENTITY_APPEARANCE.unknown,
+  SPEAKER_IDENTITY_APPEARANCE.uncertain,
+  SPEAKER_IDENTITY_APPEARANCE.unclassified,
+];
 
 export const SPEAKER_IDENTITY_VALIDITY_LEGEND: TimelineLegendItem[] = [
   {
@@ -57,22 +83,44 @@ export const SPEAKER_IDENTITY_VALIDITY_LEGEND: TimelineLegendItem[] = [
 export function speakerIdentityAppearance(
   state?: string,
   validity?: string,
+  selectedProfile?: { name?: string; color?: string },
 ): TimelineLegendItem {
   const appearance = state && state in SPEAKER_IDENTITY_APPEARANCE
     ? SPEAKER_IDENTITY_APPEARANCE[
       state as keyof typeof SPEAKER_IDENTITY_APPEARANCE
     ]
     : SPEAKER_IDENTITY_APPEARANCE.unclassified;
+  const usesProfileColor = ["identified", "ambiguous", "matched"].includes(
+    appearance.id,
+  );
+  const profileAppearance = usesProfileColor
+    ? {
+      ...appearance,
+      color: selectedProfile?.color ?? appearance.color,
+      label: appearance.id === "ambiguous"
+        ? `${selectedProfile?.name ?? "Selected voice"} is a candidate`
+        : selectedProfile?.name ?? appearance.label,
+    }
+    : appearance;
   if (validity === "provisional") {
     return {
-      ...appearance,
-      label: `Pilot · ${appearance.label}`,
+      ...profileAppearance,
+      label: `Pilot · ${profileAppearance.label}`,
       opacity: 0.58,
       stroke: "#a855f7",
       strokeDasharray: "4 2",
     };
   }
-  return appearance;
+  return profileAppearance;
+}
+
+export function speakerIdentityLegend(
+  selectedProfile?: { name?: string; color?: string },
+): TimelineLegendItem[] {
+  return ["identified", "ambiguous", "unknown", "uncertain", "unclassified"]
+    .map((state) =>
+      speakerIdentityAppearance(state, undefined, selectedProfile)
+    );
 }
 
 export function coverageOpacity(state: DiarizationCoverageState): number {

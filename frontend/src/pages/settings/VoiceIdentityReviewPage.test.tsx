@@ -167,13 +167,13 @@ const readyPreview = {
   canValidate: true,
 };
 
-function renderPage() {
+function renderPage(initialEntry = "/") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <VoiceIdentityReviewPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -186,6 +186,12 @@ describe("VoiceIdentityReviewPage", () => {
   });
 
   it("shows a continuous review stream instead of a required 10-item batch", async () => {
+    const belkaProfile = {
+      ...profile,
+      _id: "66b000000000000000000020",
+      name: "Belka",
+      is_primary: false,
+    };
     let sessionListCalls = 0;
     const first = {
       _id: "66b000000000000000000001",
@@ -199,7 +205,7 @@ describe("VoiceIdentityReviewPage", () => {
       name: "Rolling review",
       status: "active",
       revision: 1,
-      targetProfileIds: [profile._id],
+      targetProfileIds: [belkaProfile._id],
       window: [{ segmentId: first._id, groupId: "g1", status: "pending" }],
       groups: [{
         groupId: "g1",
@@ -228,7 +234,9 @@ describe("VoiceIdentityReviewPage", () => {
       },
     };
     mockCallResource.mockImplementation((resource, input: any) => {
-      if (resource === "mongo") return Promise.resolve([profile]);
+      if (resource === "mongo") {
+        return Promise.resolve([profile, belkaProfile]);
+      }
       if (resource === "jobs") {
         return Promise.resolve({
           services: [{ id: "diarizator", status: "healthy" }],
@@ -288,7 +296,7 @@ describe("VoiceIdentityReviewPage", () => {
       return Promise.resolve({});
     });
 
-    renderPage();
+    renderPage(`/?profileId=${belkaProfile._id}`);
 
     await screen.findByRole("button", {
       name: "Start recommended review",
@@ -317,6 +325,14 @@ describe("VoiceIdentityReviewPage", () => {
         candidateMode: "reviewable",
         quality: { minDurationSeconds: 1, deduplicateOverlaps: true },
         limit: 10,
+        targetProfileIds: [belkaProfile._id],
+      }),
+    );
+    expect(mockCallResource).toHaveBeenCalledWith(
+      "speaker-segments",
+      expect.objectContaining({
+        action: "identity-status",
+        profileId: belkaProfile._id,
       }),
     );
     expect(mockCallResource).not.toHaveBeenCalledWith(

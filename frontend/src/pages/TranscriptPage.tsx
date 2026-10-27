@@ -20,6 +20,14 @@ import {
   normalizeObjectId,
 } from "@/lib/diarization";
 import { SpeakerBadge } from "@/modules/speakers";
+import {
+  buildSpeakerProfileDirectory,
+  resolveSpeakerIdentityDisplay,
+  type SpeakerIdentityCandidateDisplay,
+} from "@/lib/speakerIdentityDisplay";
+import { useSelectedVoiceProfile } from "@/hooks/useSelectedVoiceProfile";
+import { VoiceProfileContextBar } from "@/components/voice/VoiceProfileContextBar";
+import { withVoiceProfile } from "@/lib/voiceProfileNavigation";
 
 interface TranscriptSegment {
   start: number; // seconds from transcript start
@@ -54,14 +62,36 @@ interface DiarizationDoc {
   embedding?: number[];
   matched_speaker?: {
     profile_id: unknown;
-    name: string;
-    similarity: number;
+    name?: string;
+    similarity?: number;
   };
   speakerIdentity?: {
-    state: "matched" | "rejected" | "uncertain";
+    state?: "matched" | "rejected" | "uncertain" | "ambiguous";
+    identityState?:
+      | "identified"
+      | "ambiguous"
+      | "unknown"
+      | "uncertain"
+      | "unclassified";
+    resolution?:
+      | "identified"
+      | "ambiguous"
+      | "unknown"
+      | "uncertain"
+      | "unclassified";
+    selectedProfileState?:
+      | "identified"
+      | "ambiguous"
+      | "unknown"
+      | "uncertain"
+      | "unclassified";
+    modelSetId?: string;
     profileId?: unknown;
+    evaluatedProfileId?: unknown;
     primaryScore?: number;
     source?: "automatic" | "manual_projection";
+    topCandidate?: SpeakerIdentityCandidateDisplay;
+    candidates?: SpeakerIdentityCandidateDisplay[];
   };
 }
 
@@ -134,21 +164,44 @@ const TranscriptPage = () => {
   const [searchSegments, setSearchSegments] = useState<RenderSegment[]>([]);
   const [lastSearchedQ, setLastSearchedQ] = useState<string>(initialQ);
   const [identityFilter, setIdentityFilter] = useState<
-    "all" | "matched" | "rejected" | "uncertain"
+    "all" | "matched" | "rejected" | "uncertain" | "ambiguous"
   >("all");
   const [profileFilter, setProfileFilter] = useState("all");
   const [minConfidence, setMinConfidence] = useState(0);
+  const voiceSelection = useSelectedVoiceProfile();
+  const selectedProfileId = voiceSelection.selectedProfileId;
+  const speakerProfiles = voiceSelection.profiles;
+  const speakerProfileDirectory = useMemo(
+    () => buildSpeakerProfileDirectory(speakerProfiles),
+    [speakerProfiles],
+  );
+  const resolveDiarizationIdentity = (item: DiarizationDoc) =>
+    resolveSpeakerIdentityDisplay({
+      identity: item.speakerIdentity,
+      legacyMatchedSpeaker: item.matched_speaker,
+      profiles: speakerProfileDirectory,
+      selectedProfileId,
+    });
   const visibleProfiles = useMemo(() =>
     Array.from(new Map(
       diarizations.flatMap((item) => {
-        const id = normalizeObjectId(
-          item.speakerIdentity?.profileId ?? item.matched_speaker?.profile_id,
-        );
-        const name = item.matched_speaker?.name ??
-          (item.speakerIdentity?.state === "matched" ? "Sky" : null);
-        return id && name ? [[id, name] as const] : [];
+        const display = resolveSpeakerIdentityDisplay({
+          identity: item.speakerIdentity,
+          legacyMatchedSpeaker: item.matched_speaker,
+          profiles: speakerProfileDirectory,
+          selectedProfileId,
+        });
+        return [
+          display.profile,
+          display.evaluatedProfile,
+          ...display.candidates,
+        ]
+          .flatMap((profile) =>
+            profile ? [[profile.id, profile.name] as const] : []
+          );
       }),
-    ).entries()), [diarizations]);
+    ).entries()), [diarizations, selectedProfileId, speakerProfileDirectory]);
+  const selectedProfileName = voiceSelection.selectedProfile?.name ?? null;
   const [openingConversationKey, setOpeningConversationKey] = useState<
     string | null
   >(null);
@@ -203,6 +256,7 @@ const TranscriptPage = () => {
       action: "list",
       start: rangeStart,
       end: rangeEnd,
+      ...(selectedProfileId ? { selectedProfileId } : {}),
       limit: 5000,
     }) as { segments: DiarizationDoc[] };
     return result.segments;
@@ -581,7 +635,10 @@ const TranscriptPage = () => {
       setSearchSegments([]);
       setSegments([]);
       navigate(
-        `?start=${range.start.getTime()}&end=${range.end.getTime()}`,
+        withVoiceProfile(
+          `?start=${range.start.getTime()}&end=${range.end.getTime()}`,
+          selectedProfileId,
+        ),
       );
     } catch (err) {
       setSearchError(
@@ -639,7 +696,14 @@ const TranscriptPage = () => {
     }
 
     initialFetch();
-  }, [startDate, endDate, startParam, endParam, initialQ]);
+  }, [
+    startDate,
+    endDate,
+    startParam,
+    endParam,
+    initialQ,
+    selectedProfileId,
+  ]);
 
   if (loading) {
     return (
@@ -668,6 +732,7 @@ const TranscriptPage = () => {
       <div className="space-y-1">
         <h1 className="text-3xl font-bold">Transcript</h1>
       </div>
+      <VoiceProfileContextBar selection={voiceSelection} />
 
       <form
         className="space-y-4 rounded-lg border bg-card p-4"
@@ -751,9 +816,14 @@ const TranscriptPage = () => {
             aria-label="Speaker identity filter"
           >
             <option value="all">All voices</option>
-            <option value="matched">Contains Sky</option>
-            <option value="rejected">Not Sky</option>
+            <option value="matched">
+              Contains {selectedProfileName ?? "identified voice"}
+            </option>
+            <option value="rejected">
+              Not {selectedProfileName ?? "selected voice"}
+            </option>
             <option value="uncertain">Uncertain</option>
+            <option value="ambiguous">Ambiguous candidates</option>
           </select>
           <select
             value={profileFilter}
@@ -830,19 +900,29 @@ const TranscriptPage = () => {
                   if (!diarizationOverlapsTranscript(diarization, segment)) {
                     return false;
                   }
+                  const display = resolveDiarizationIdentity(diarization);
+                  const matchesIdentity = identityFilter === "all" ||
+                    (identityFilter === "matched" &&
+                      display.selectedResolution === "identified") ||
+                    (identityFilter === "rejected" &&
+                      display.selectedResolution === "rejected") ||
+                    (identityFilter === "uncertain" &&
+                      display.selectedResolution === "uncertain") ||
+                    (identityFilter === "ambiguous" &&
+                      display.selectedResolution === "ambiguous");
+                  if (!matchesIdentity) return false;
+                  const relatedProfileIds = new Set([
+                    display.profile?.id,
+                    display.evaluatedProfile?.id,
+                    ...display.candidates.map((candidate) => candidate.id),
+                  ].filter((id): id is string => Boolean(id)));
                   if (
-                    identityFilter !== "all" &&
-                    diarization.speakerIdentity?.state !== identityFilter
-                  ) return false;
-                  const profileId = normalizeObjectId(
-                    diarization.speakerIdentity?.profileId ??
-                      diarization.matched_speaker?.profile_id,
-                  );
-                  if (profileFilter !== "all" && profileId !== profileFilter) {
+                    profileFilter !== "all" &&
+                    !relatedProfileIds.has(profileFilter)
+                  ) {
                     return false;
                   }
-                  const score = diarization.speakerIdentity?.primaryScore ??
-                    diarization.matched_speaker?.similarity ?? 0;
+                  const score = display.score ?? 0;
                   return score >= minConfidence;
                 });
               }).map(
@@ -869,15 +949,22 @@ const TranscriptPage = () => {
                       diarizationOverlapsTranscript(d, seg)
                     )
                     : [];
+                  const resolvedDiarizations = diarizationsInSegment.map(
+                    (diarization) => ({
+                      diarization,
+                      display: resolveDiarizationIdentity(diarization),
+                    }),
+                  );
                   const identifiedSpeakers = Array.from(
                     new Map(
-                      diarizationsInSegment
-                        .filter((d) => d.matched_speaker)
-                        .map((d) => [
-                          normalizeObjectId(
-                            d.matched_speaker!.profile_id,
-                          ) ?? d.matched_speaker!.name,
-                          d,
+                      resolvedDiarizations
+                        .filter(({ display }) =>
+                          display.resolution === "identified" &&
+                          display.profile
+                        )
+                        .map((resolved) => [
+                          resolved.display.profile!.id,
+                          resolved,
                         ]),
                     ).values(),
                   );
@@ -887,8 +974,12 @@ const TranscriptPage = () => {
                       {gapBadge}
                       <div className="flex gap-3">
                         <div className="flex flex-col gap-1 items-center pt-1">
-                          {diarizationsInSegment.map((diarization, diarIdx) => {
-                            const color =
+                          {resolvedDiarizations.map(({
+                            diarization,
+                            display,
+                          }, diarIdx) => {
+                            const color = display.profile?.color ||
+                              display.evaluatedProfile?.color ||
                               embeddingToColor(diarization.embedding) ||
                               "#eab308";
                             return (
@@ -905,15 +996,15 @@ const TranscriptPage = () => {
                                       Diarization
                                     </div>
                                     <div>
-                                      Speaker:{" "}
-                                      {diarization.matched_speaker?.name ??
-                                        diarization.speaker ?? "Unknown"}
+                                      Voice: {display.label}
+                                      {display.profile?.archived
+                                        ? " (archived)"
+                                        : ""}
                                     </div>
-                                    {diarization.matched_speaker && (
+                                    {display.score !== null && (
                                       <div>
                                         Match: {Math.round(
-                                          diarization.matched_speaker
-                                            .similarity * 100,
+                                          display.score * 100,
                                         )}%
                                       </div>
                                     )}
@@ -941,7 +1032,10 @@ const TranscriptPage = () => {
                                             ? diarization._id.toString()
                                             : String(diarization._id);
                                         navigate(
-                                          `/diarizations/${diarizationId}`,
+                                          withVoiceProfile(
+                                            `/diarizations/${diarizationId}`,
+                                            selectedProfileId,
+                                          ),
                                         );
                                       }}
                                       className="w-full mt-2"
@@ -988,9 +1082,12 @@ const TranscriptPage = () => {
                                       setSearchSegments([]);
                                       setSegments([]);
                                       navigate(
-                                        `?start=${center - offset}&end=${
-                                          center + offset
-                                        }`,
+                                        withVoiceProfile(
+                                          `?start=${center - offset}&end=${
+                                            center + offset
+                                          }`,
+                                          selectedProfileId,
+                                        ),
                                       );
                                     }}
                                   >
@@ -1025,40 +1122,44 @@ const TranscriptPage = () => {
                                 </>
                               )}
                             </div>
-                            {identifiedSpeakers.map((diarization) => (
+                            {identifiedSpeakers.map(({
+                              diarization,
+                              display,
+                            }) => (
                               <SpeakerBadge
-                                key={normalizeObjectId(
-                                  diarization.matched_speaker!.profile_id,
-                                ) ?? diarization.matched_speaker!.name}
-                                name={diarization.matched_speaker!.name}
-                                similarity={diarization.matched_speaker!
-                                  .similarity}
-                                color={embeddingToColor(
-                                  diarization.embedding,
-                                ) || "#6b7280"}
+                                key={display.profile!.id}
+                                name={`${display.profile!.name}${
+                                  display.profile!.archived ? " (archived)" : ""
+                                }`}
+                                similarity={display.score ?? undefined}
+                                color={display.profile!.color ||
+                                  embeddingToColor(diarization.embedding) ||
+                                  "#6b7280"}
                               />
                             ))}
                             {Array.from(
-                              new Set(
-                                diarizationsInSegment.map((d) =>
-                                  d.speakerIdentity?.state
-                                ).filter(Boolean),
-                              ),
-                            ).map((state) => (
+                              new Map(
+                                resolvedDiarizations
+                                  .filter(({ display }) =>
+                                    display.resolution !== "identified" &&
+                                    display.resolution !== "unclassified"
+                                  )
+                                  .map(({ display }) => [
+                                    `${display.resolution}:${display.label}`,
+                                    display,
+                                  ]),
+                              ).values(),
+                            ).map((display) => (
                               <Badge
-                                key={state}
+                                key={`${display.resolution}:${display.label}`}
                                 variant="outline"
-                                className={state === "matched"
-                                  ? "border-green-500 text-green-700"
-                                  : state === "rejected"
+                                className={display.resolution === "rejected"
                                   ? "border-slate-400 text-slate-600"
+                                  : display.resolution === "ambiguous"
+                                  ? "border-violet-500 text-violet-700"
                                   : "border-amber-500 text-amber-700"}
                               >
-                                {state === "matched"
-                                  ? "Sky"
-                                  : state === "rejected"
-                                  ? "not Sky"
-                                  : "uncertain"}
+                                {display.label}
                               </Badge>
                             ))}
                           </div>

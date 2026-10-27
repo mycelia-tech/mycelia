@@ -4,7 +4,13 @@
 
 - `profileReenrollment`: rebuilds a profile from every linked saved sample and advances its revision.
 - `diarization`: `missing` processes only uncovered speech; `build_generation` writes a bounded, cursor-resumable versioned run without changing active data.
-- `speakerIdentity`: idempotent tri-state matching over stored embeddings for one run/profile revision/calibration.
+- `speakerIdentity`: idempotent matching over stored embeddings for a frozen
+  identity model set. It writes one evaluation per profile and projects the
+  segment as `identified`, `ambiguous`, `uncertain`, `unknown`, or
+  `unclassified`; the initial production set contains only Sky.
+- `speakerIdentitySourceIndex`: resumably materializes active
+  `runId + embeddingSpaceId` partitions so browser preflight never groups the
+  full diarization corpus synchronously.
 
 `speakerMatching` remains a legacy compatibility worker. New historical backfills should use `speakerIdentity`.
 

@@ -1,4 +1,7 @@
 export type SpeakerTimelineState =
+  | "identified"
+  | "ambiguous"
+  | "unknown"
   | "matched"
   | "rejected"
   | "uncertain"
@@ -12,6 +15,8 @@ export type SpeakerTimelineValidity =
 export type SpeakerTimelineFilters = {
   states?: SpeakerTimelineState[];
   validities?: SpeakerTimelineValidity[];
+  inclusion?: "selected_only" | "includes_candidate";
+  sources?: Array<"manual" | "automatic">;
 };
 
 export type SpeakerTimelineInterval = {
@@ -36,7 +41,7 @@ export type SpeakerTimelineSummary = {
   mode: "intervals" | "buckets";
   status: "ready" | "no_data";
   reason?: string;
-  profile?: { id: string; name?: string };
+  profile?: { id: string; name?: string; color?: string };
   calibration?: { id: string; status: "full" | "pilot" };
   intervals?: SpeakerTimelineInterval[];
   buckets?: SpeakerTimelineBucket[];
@@ -44,6 +49,9 @@ export type SpeakerTimelineSummary = {
   totals: {
     segments: number;
     matched: number;
+    identified?: number;
+    ambiguous?: number;
+    unknown?: number;
     rejected: number;
     uncertain: number;
     unclassified: number;
@@ -58,6 +66,7 @@ export function buildSpeakerTimelineSummaryRequest(input: {
   detail: "intervals" | "buckets";
   bucketMs: number;
   filters: SpeakerTimelineFilters;
+  profileId?: string | null;
 }) {
   return {
     action: "speaker-timeline-summary" as const,
@@ -66,6 +75,7 @@ export function buildSpeakerTimelineSummaryRequest(input: {
     detail: input.detail,
     bucketMs: input.bucketMs,
     filters: input.filters,
+    ...(input.profileId ? { profileId: input.profileId } : {}),
   };
 }
 

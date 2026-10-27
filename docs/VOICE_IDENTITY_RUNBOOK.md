@@ -23,6 +23,13 @@ identity decision. Only a compatible `speakerIdentity` result produced from a
 validated calibration is verified. Manual speaker annotations remain
 authoritative and are not affected by rebuilding embeddings or calibration.
 
+Current automatic identity is versioned as an **identity model set**. Each set
+freezes the included profiles, profile revisions, calibrations, voice-model
+space, and source cutoff. A segment is `identified` only when exactly one
+profile passes its threshold. If several profiles pass, it is `ambiguous` and
+keeps every candidate until a person chooses one. Building/ready sets do not
+replace the active set; activation is an explicit, resume-safe final step.
+
 ## Bring-up
 
 ```bash
@@ -66,6 +73,26 @@ Migrations `0066_speaker_review_source_index`,
 preflight, Timeline aggregation, calibration idempotency, single-campaign
 admission, and exact empty-activation repair previews indexed. They are applied
 automatically at backend startup.
+
+Migration `0086_speaker_identity_multi_profile_foundation` adds the resumable
+identity source index, per-profile evaluations, immutable model sets, active
+model-set heads, and Timeline projections. Initial source reconciliation runs
+as a bounded job. While it is building, the UI shows **Preparing source N/M**;
+it does not run a corpus-wide aggregation from a browser request.
+
+## Selected voice context
+
+Every Voice Identity surface uses the same `profileId` query parameter. The
+selection order is URL, last locally selected profile, primary profile, then the
+first active profile. Review, Calibration, Jobs, Operations, Timeline, and
+Transcript links preserve it. An archived/missing URL profile is reported and
+is never silently replaced.
+
+Use **Voice Profiles → Work with this voice** to switch context. Creating a new
+profile selects it immediately and opens sample enrollment. Archiving a profile
+is a tombstone operation: previewed references, samples, labels, calibrations,
+jobs, and historical Timeline identity remain stored; an active primary/model
+set/campaign must be resolved first.
 
 ## Pilot and backfill
 
@@ -170,10 +197,22 @@ reuses stored diarization embeddings and does not rerun audio processing.
    watchdog re-enqueues a missing reservation with that same ID after a backend
    crash, and the Python worker refuses to write if another job owns the
    campaign.
-7. After the first full-history campaign completes, every newly completed
+7. When the campaign reaches real `remaining=0`, the new model set becomes
+   **Ready**. Press **Show results on Timeline**. Until this explicit activation,
+   the previous active set remains visible. Timeline then supports **Selected
+   voice only**, **Includes selected candidate**, **Ambiguous**, **Uncertain**,
+   and **Unclassified**. A solid profile color is an unambiguous/manual match;
+   hatching means the selected profile is one of several candidates.
+8. After the first full-history campaign completes, every newly completed
    diarization batch triggers a small automatic identity campaign using the same
    current full calibration. The trigger remains disabled before that baseline,
    so it cannot start the initial historical backfill unexpectedly.
+
+For a second profile, repeat the same flow: select/create it, add clean samples,
+rebuild, label positives and negatives for that profile, validate, then build a
+new model set that contains both frozen profiles. A rebuild invalidates only
+that profile's calibration/evaluations; the old active set stays available
+until the new set is complete and activated.
 
 Enrollment and profile re-enrollment share a priority admission queue with
 diarization. When all diarizator slots are busy, the job remains **Waiting for
@@ -243,9 +282,10 @@ repair stays blocked for manual investigation.
 ## Purge
 
 Use `Preview purge`; compare document/embedding counts with the intended run.
-Enter the exact string `PURGE <runId>`. Only superseded/failed diarization
-documents are deleted. Audio, chunks, transcripts, profiles and annotations
-remain.
+Enter the exact string `PURGE <runId> <document-count>`. Preview and execution
+use the same lifecycle predicate and execution rechecks the preview under the
+activation lock. Only superseded/failed, non-active diarization documents are
+deleted. Audio, chunks, transcripts, profiles and annotations remain.
 
 ## Verification
 

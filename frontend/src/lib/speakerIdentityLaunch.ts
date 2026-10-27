@@ -13,11 +13,28 @@ export type SpeakerIdentityPreflightPartition = {
   generation?: number | null;
 };
 
+export type SpeakerIdentitySourceIndex = {
+  status: "counting" | "ready" | "blocked";
+  buildId: string | null;
+  revision: number;
+  membershipRevision: number;
+  dirtyEpoch: number;
+  builtAt: Date | string | null;
+  sourceSegments: number;
+  scannedSegments: number;
+  batchCount: number;
+  currentJobId: string | null;
+  recoveryWaiting: boolean;
+  lastProgressAt: Date | string | null;
+  error: string | null;
+};
+
 export type SpeakerIdentityPreflight = {
   canStart: boolean;
+  status: "counting" | "ready" | "blocked";
   blockers: string[];
   snapshotCutoff: Date | string;
-  preflightToken: string;
+  preflightToken: string | null;
   totals: {
     eligibleSegments: number;
     alreadyCurrent: number;
@@ -36,7 +53,28 @@ export type SpeakerIdentityPreflight = {
     maxRangeHours?: number | null;
   };
   coverageRepair?: EmptyActivationRepairPreview | null;
+  sourceIndex: SpeakerIdentitySourceIndex;
+  sourceSnapshot?: {
+    buildId: string;
+    revision: number;
+    membershipRevision: number;
+    builtAt: Date | string;
+    maxSegmentId: string | null;
+  } | null;
 };
+
+export function speakerIdentityPreflightState(
+  preflight?: SpeakerIdentityPreflight | null,
+) {
+  const sourcePreparing = preflight?.status === "counting";
+  return {
+    sourcePreparing,
+    noCompatibleSegments: Boolean(
+      preflight && !sourcePreparing && preflight.status === "ready" &&
+        preflight.totals.eligibleSegments === 0,
+    ),
+  };
+}
 
 export type SpeakerIdentityCampaignStart = {
   campaignId: string;
