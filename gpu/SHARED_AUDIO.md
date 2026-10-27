@@ -132,13 +132,15 @@ of the release commit and new immutable image tags for each changed image.
    services with the saved configuration and retained images. Keep the
    existing volumes and credentials; never use `down -v` for an update.
 
-`qwen-switch` is a separate host utility, not installed by these Compose files.
-The September 30 version found on faeon on October 27 does not provide the
-previously documented `diarization`, `memory`, or `processes` commands. Those
-controls require a separate tool installation and were not deployed or verified
-by this recovery. Inspect the actual containers and GPU usage for operational
-checks; live and file diarization are independent services. Short GPU samples
-do not establish the combined peak with every feature enabled.
+The maintained [qwen-switch](ops/qwen-switch/README.md) now reports active
+processes, RAM/VRAM and both diarization services. `qwen-switch big-audio` selects
+the verified faeon combination: 27B/32K Qwen, one GPU Whisper, bounded GPU file
+diarization and **CPU** live Sortformer. It requires the existing CPU WLK
+deployment; the base WLK Compose above requests a GPU. The utility preserves
+separate live/file start/stop controls and does not recreate audio containers.
+Use `~/.local/bin/qwen-switch` in noninteractive SSH; `/usr/local/bin` contains a
+historical copy. See the [short combined verification](ops/qwen-switch/VERIFICATION-2026-10-27.md)
+for measured memory and limits; a short check is not a combined peak guarantee.
 
 ## Model disk and boot recovery on faeon
 

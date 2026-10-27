@@ -100,9 +100,11 @@ of container working usage, not total host RAM or peak demand.
 This short sample is not a capacity guarantee, a
 measurement of every service's combined peak, or a sustained-load test.
 
-The installed September 30 `qwen-switch` version lacks the `diarization`,
-`memory` and `processes` commands previously described in the shared-audio
-guide. Installing those controls remains separate work; this recovery did not
-deploy them. The [earlier Omi rotation verification](VERIFICATION-2026-10-23-ROTATION.md)
+The September30 root-owned `/usr/local/bin/qwen-switch` is a historical copy.
+A later inspection found the maintained user-owned command in `~/.local/bin`;
+its canonical file-container selection and controls were updated in the
+[separate qwen-switch verification](ops/qwen-switch/VERIFICATION-2026-10-27.md).
+This recovery's resource sample above still excludes WLK.
+The [earlier Omi rotation verification](VERIFICATION-2026-10-23-ROTATION.md)
 retains its own live-session failures and limits; these file-pipeline results
 do not replace that evidence.
