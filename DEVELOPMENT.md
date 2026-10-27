@@ -5,6 +5,47 @@ development mode with hot reload.
 
 ## Development Setup
 
+### Verification and source guard
+
+Use Deno 2.9.5 and uv 0.7.3 (Python 3.12 for the worker). `deno.lock` is the
+authoritative TypeScript dependency graph; use `deno install --frozen`, not npm
+install, in backend/frontend. The frontend npm lockfile has been retired.
+
+```sh
+deno task verify --list
+deno task verify sdk repo
+deno task verify
+deno task doctor --expected-root "$PWD" --probe-readiness
+```
+
+Verification uses the same groups in CI and stops on failure. Backend integration
+tests need a local Docker engine. The parent runner owns one disposable
+MongoDB/Redis pair, uses a private session manifest and sequential test modules,
+and awaits cleanup after success, failure or interruption. Each database fixture
+uses a unique database. Published test ports are bound to 127.0.0.1 and checked
+against Docker inspect. Application connection settings are not test targets.
+Run integration tests through `deno task verify backend` or the wrapper below;
+direct `deno test` remains suitable for tests without database fixtures. All
+verification groups clear inherited service credentials and paths, retain only
+explicit tool/runtime settings and request Python 3.12. RAG uses an explicit
+`RAG_ENV_FILE` during verification; see its README for deployment configuration.
+The doctor is read-only and exits nonzero for source mismatch or public
+Mongo exposure; running/healthy/readiness are reported separately. Resolve a
+checkout mismatch before deploying application changes. Do not automatically
+replace the running worktree's bind mounts.
+
+Mongo host access now requires the explicit loopback-only
+`docker-compose.mongo-local.yml` overlay. The separate RAG stack connects through
+the shared private Docker network. See [Mongo migration](docs/MONGO_AUTH.md) and
+[hardening contracts](docs/HARDENING.md) before changing existing deployments.
+
+Python notebook/debug dependencies are separate from runtime; use
+`uv run --extra notebooks ...`, `uv run --extra recorder ...`, or
+`uv run --group dev pytest` for the corresponding role. Explicit
+`MYCELIA_ENV_FILE`, `MYCELIA_IMPORTERS_FILE`, and `MYCELIA_LOG_DIR` avoid cwd and
+host-log coupling in isolated tests. Trust local TLS CAs instead of disabling
+HTTPS verification.
+
 ### Shared GPU audio service
 
 The optional [shared audio deployment](gpu/SHARED_AUDIO.md) adds WhisperLiveKit
@@ -1126,6 +1167,10 @@ deno task dev
 
 # Create an API token
 deno run -A server.ts token-create
+
+# Run selected integration tests with an owned temporary MongoDB/Redis pair
+deno run --frozen -A --deny-read=.env,../.env app/tests/run-backend-tests.ts \
+  app/tests/data.audio.test.ts
 ```
 
 ## Inference Stack (GPU)
@@ -1220,7 +1265,8 @@ Targeted checks for this feature:
 
 ```bash
 cd backend
-deno test -A app/lib/chat/tools.server.test.ts \
+deno run --frozen -A --deny-read=.env,../.env app/tests/run-backend-tests.ts \
+  app/lib/chat/tools.server.test.ts \
   app/lib/chat/resource.server.test.ts app/lib/chat/runs.server.test.ts \
   app/routes/api.chat.test.ts \
   app/services/updates.websocket.server.test.ts
@@ -1562,3 +1608,23 @@ mycelia/
 5. Submit a PR
 
 Join the [Discord](https://discord.gg/hPfYbpp2am) for discussions.
+
+### Guarded application updates
+
+Use `deno task deploy --project mycelia backend` to inspect the source guard;
+it is read-only by default. A different mounted checkout blocks the command.
+The fully resolved candidate Compose configuration is checked too, including
+application/SDK mounts and build contexts, without printing resolved secrets.
+After reviewing configuration and rollout, append `--apply` to rebuild/recreate
+only the named application services and restart nginx. Pass every deployment
+overlay explicitly with repeated `--file` options. The wrapper does not restart
+MongoDB/Redis, migrate authentication or switch worktrees. First installations
+and database/network migrations use their separate runbooks.
+Application readiness and configured health checks have a shared 180-second
+post-update deadline; a timeout or unhealthy selected service is a failure.
+
+Browser acceptance tests use fictional intercepted APIs and an isolated
+browser profile. Install Chromium once with
+`cd frontend && node node_modules/@playwright/test/cli.js install chromium`, then
+run `deno task verify e2e` from the repository root. CI installs Chromium itself.
+For a locally installed Chrome, set `PLAYWRIGHT_CHANNEL=chrome`.

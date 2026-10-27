@@ -10,6 +10,13 @@ your own words.
 
 ## Features
 
+For current guides, see the [documentation index](docs/README.md). Repository
+hardening and its deployment gates are documented in [HARDENING.md](docs/HARDENING.md).
+Run `deno task verify` for the shared local/CI checks and `deno task doctor` for
+read-only runtime-source diagnostics. MongoDB is internal to Docker by default;
+host maintenance and authentication migration are explicit opt-ins described in
+[MONGO_AUTH.md](docs/MONGO_AUTH.md).
+
 ### Audio Ingestion & Processing
 
 - Staged import from Apple Voice Memos plus continuous Google Drive and local
@@ -290,10 +297,13 @@ cd mycelia
 The setup script automatically:
 
 - Creates `.env` from `.env.example`
-- Generates a secure `SECRET_KEY`
+- Generates local session, bootstrap and service secrets in a private `.env`
 - Starts all services with Docker Compose
 
-Open [http://localhost:3210](http://localhost:3210) in your browser.
+Open [https://localhost:4433](https://localhost:4433) in your browser. On first
+enrollment, enter `MYCELIA_BOOTSTRAP_TOKEN` from the local `.env` into the setup
+form. Do not share this token or put it in a URL. Existing installations with
+API keys use their existing credentials; bootstrap cannot create another admin.
 
 #### Optional Qdrant RAG stack
 

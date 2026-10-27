@@ -1,4 +1,7 @@
+<!-- historical-plan -->
 # Mycelia User Onboarding Flow - Decision Tree
+
+Historical design proposal. See [current documentation](README.md) for setup.
 
 **Version**: 1.0
 **Last Updated**: 2025-11-27

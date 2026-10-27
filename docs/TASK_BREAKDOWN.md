@@ -1,4 +1,8 @@
+<!-- historical-plan -->
 # Mycelia Developer Experience - Task Breakdown
+
+Historical proposal; paths below describe a proposed implementation. See the
+[current documentation](README.md) for supported behavior and commands.
 
 **Version**: 1.0
 **Last Updated**: 2025-11-27

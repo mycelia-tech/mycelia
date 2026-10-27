@@ -1,5 +1,7 @@
 # Mycelia Backup Operations and Restore Implementation Plan
 
+> Historical planning document. Example paths and SSH destinations are placeholders; use local deployment configuration.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` (recommended) or
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
@@ -1086,7 +1088,7 @@ complete PBM base, contiguous PITR, and current protected copies.
   docker compose ps
   curl -fkSs https://localhost:4433/health
   curl -fkSs https://localhost:4433/readiness
-  ./scripts/backupctl status --compose-root /Users/pk/repo/mycelia --json
+  ./scripts/backupctl status --compose-root /path/to/mycelia --json
   git diff --check
   ```
 

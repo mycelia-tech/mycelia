@@ -1,4 +1,7 @@
+<!-- historical-plan -->
 # Mycelia Developer Experience Roadmap
+
+Historical proposal, not a completion report. See [current documentation](README.md).
 
 **Version**: 1.0
 **Last Updated**: 2025-11-29

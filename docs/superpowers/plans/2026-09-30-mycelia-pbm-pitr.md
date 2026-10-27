@@ -1,5 +1,7 @@
 # Mycelia PBM and PITR Implementation Plan
 
+> Historical planning document. Example paths and SSH destinations are placeholders; use local deployment configuration.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` (recommended) or
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
@@ -892,10 +894,10 @@ credential swapping.
 - [ ] Run final evidence commands:
 
   ```bash
-  ./scripts/backupctl verify --compose-root /Users/pk/repo/mycelia --stage mongo-full
-  ./scripts/backupctl mongo-rpo --compose-root /Users/pk/repo/mycelia --json
-  ./scripts/backupctl protected-copy-status --compose-root /Users/pk/repo/mycelia --json
-  ./scripts/backupctl retention-dry-run --compose-root /Users/pk/repo/mycelia --json
+  ./scripts/backupctl verify --compose-root /path/to/mycelia --stage mongo-full
+  ./scripts/backupctl mongo-rpo --compose-root /path/to/mycelia --json
+  ./scripts/backupctl protected-copy-status --compose-root /path/to/mycelia --json
+  ./scripts/backupctl retention-dry-run --compose-root /path/to/mycelia --json
   docker compose --profile backup ps
   ```
 

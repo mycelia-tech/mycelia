@@ -1,5 +1,7 @@
 # Mycelia Backup Foundation Implementation Plan
 
+> Historical planning document. Example paths and SSH destinations are placeholders; use local deployment configuration.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` (recommended) or
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
@@ -41,7 +43,7 @@ PBM/PITR plan starts.
   `superpowers:verification-before-completion` before each completion claim.
 - Use `apply_patch` for tracked edits. Stage only the files named by the current
   task and inspect `git diff --cached` before every commit.
-- Accept `--compose-root /Users/pk/repo/mycelia` so an implementation in an
+- Accept `--compose-root /path/to/mycelia` so an implementation in an
   isolated worktree can inspect the live Compose project without pretending the
   worktree is deployed.
 - Do not source `.env`. Parse it with `parseEnvText` from
@@ -427,7 +429,7 @@ PBM/PITR plan starts.
 - [ ] Write failing source tests using a temporary Git repository. Cover tracked
       files, a reviewed explicit untracked allowlist, configured media roots,
       the default Voice Memos archive root `/Volumes/TM_data/iCloudArchive`, and
-      `/Users/pk/Pictures/Mycelia-Import` only when present. Verify exclusion of
+      `/path/to/Mycelia-Import` only when present. Verify exclusion of
       `.git`, `.env.backup-*`, dependency/build caches, Qdrant, Redis, Mongo
       data, model caches, test media, and Voice Memos staging.
 
@@ -579,7 +581,7 @@ PBM/PITR plan starts.
 
   ```bash
   deno test --allow-read --allow-write --allow-run --allow-env scripts/backup/{preflight,remote}.test.ts
-  ./scripts/backupctl preflight --compose-root /Users/pk/repo/mycelia --remote-mode skip --json
+  ./scripts/backupctl preflight --compose-root /path/to/mycelia --remote-mode skip --json
   ```
 
   Expected: tests pass; the fixture/local report is valid JSON and explicitly
@@ -904,7 +906,7 @@ PBM/PITR plan starts.
       exit status of:
 
   ```bash
-  ssh -o BatchMode=yes -p 22126 pk@77.51.198.164 true
+  ssh -o BatchMode=yes -p "$BACKUP_SSH_PORT" "$BACKUP_SSH_TARGET" true
   rclone lsf pk-backup:
   ```
 
@@ -912,14 +914,14 @@ PBM/PITR plan starts.
 
 - [ ] From that same visible terminal, initialize the restic Keychain item with
       `./scripts/backupctl bootstrap --initialize-keychain --compose-root
-  /Users/pk/repo/mycelia`,
+  /path/to/mycelia`,
       export its recovery credential to the approved offline kit, and record
       only the non-secret receipt ID.
 
 - [ ] Run the non-mutating gate and save the redacted output:
 
   ```bash
-  ./scripts/backupctl preflight --compose-root /Users/pk/repo/mycelia --json
+  ./scripts/backupctl preflight --compose-root /path/to/mycelia --json
   ```
 
   Expected: `ok: true`, `remoteVerified: true`, `sourceCoverage.complete: true`,
@@ -930,8 +932,8 @@ PBM/PITR plan starts.
 - [ ] Reserve the namespace, initialize restic, then validate both:
 
   ```bash
-  ./scripts/backupctl bootstrap --initialize-repository --compose-root /Users/pk/repo/mycelia
-  ./scripts/backupctl bootstrap --check --compose-root /Users/pk/repo/mycelia
+  ./scripts/backupctl bootstrap --initialize-repository --compose-root /path/to/mycelia
+  ./scripts/backupctl bootstrap --check --compose-root /path/to/mycelia
   ```
 
   Expected: one owned marker, one repository ID, and readable empty snapshots.
@@ -939,8 +941,8 @@ PBM/PITR plan starts.
 - [ ] Create and verify the files/config snapshot:
 
   ```bash
-  ./scripts/backupctl files --compose-root /Users/pk/repo/mycelia
-  ./scripts/backupctl verify --compose-root /Users/pk/repo/mycelia --stage files
+  ./scripts/backupctl files --compose-root /path/to/mycelia
+  ./scripts/backupctl verify --compose-root /path/to/mycelia --stage files
   ```
 
   Expected: a complete snapshot ID, complete source coverage, and successful
@@ -949,8 +951,8 @@ PBM/PITR plan starts.
 - [ ] Stream and verify the one-time Mongo bootstrap:
 
   ```bash
-  ./scripts/backupctl mongo-bootstrap --compose-root /Users/pk/repo/mycelia
-  ./scripts/backupctl verify --compose-root /Users/pk/repo/mycelia --stage mongo-bootstrap
+  ./scripts/backupctl mongo-bootstrap --compose-root /path/to/mycelia
+  ./scripts/backupctl verify --compose-root /path/to/mycelia --stage mongo-bootstrap
   ```
 
   Expected: complete snapshot ID, producer and consumer exit zero, readable full
@@ -960,7 +962,7 @@ PBM/PITR plan starts.
 - [ ] Run final read-only repository evidence:
 
   ```bash
-  ./scripts/backupctl status --compose-root /Users/pk/repo/mycelia --json
+  ./scripts/backupctl status --compose-root /path/to/mycelia --json
   restic snapshots --json
   rclone lsf pk-backup:mycelia --max-depth 2
   ```

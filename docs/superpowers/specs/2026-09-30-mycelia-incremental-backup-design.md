@@ -1,5 +1,7 @@
 # Mycelia Incremental Backup and Restore Design
 
+> Historical planning document. Example paths and SSH destinations are placeholders; use local deployment configuration.
+
 **Status:** approved in conversation on 2026-09-30; implementation pending
 
 **Goal:** Protect Mycelia's canonical MongoDB data, configuration, and
@@ -84,7 +86,7 @@ Restic snapshots use an explicit, resolved allowlist:
 
 - configured `MEDIA_SOURCE_HOST_PATH` and `MEDIA_SOURCE_EXTRA_HOST_PATH` roots;
 - the verified Voice Memos archive, not its bounded staging projection;
-- `/Users/pk/Pictures/Mycelia-Import` when present and readable;
+- `/path/to/Mycelia-Import` when present and readable;
 - tracked working-tree files resolved through Git, plus a reviewed explicit list
   of untracked operational files; `.git`, dependency/build caches, temporary
   exports, large test media, runtime data, and unrelated untracked files are

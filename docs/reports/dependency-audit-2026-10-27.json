@@ -1,0 +1,2395 @@
+{
+  "checkedPackages": 1936,
+  "findings": [
+    {
+      "package": {
+        "name": "@ai-sdk/provider-utils",
+        "version": "4.0.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-866g-f22w-33x8"
+      ]
+    },
+    {
+      "package": {
+        "name": "@grpc/grpc-js",
+        "version": "1.14.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-5375-pq7m-f5r2",
+        "GHSA-99f4-grh7-6pcq",
+        "GHSA-f596-whhp-79r4",
+        "GHSA-m9gg-hp2v-232j"
+      ]
+    },
+    {
+      "package": {
+        "name": "@isaacs/brace-expansion",
+        "version": "5.0.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-7h2j-956f-4vf2"
+      ]
+    },
+    {
+      "package": {
+        "name": "@modelcontextprotocol/sdk",
+        "version": "1.24.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-22jm-h49p-29qw",
+        "GHSA-345p-7cg4-v4c7",
+        "GHSA-46jr-4wx8-v453",
+        "GHSA-6prh-2h8m-c8cw",
+        "GHSA-6qxp-vccf-f47h",
+        "GHSA-8r9q-7v3j-jr4g",
+        "GHSA-rvq5-wwqv-78pq"
+      ]
+    },
+    {
+      "package": {
+        "name": "@opentelemetry/core",
+        "version": "2.1.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-8988-4f7v-96qf"
+      ]
+    },
+    {
+      "package": {
+        "name": "@opentelemetry/core",
+        "version": "2.2.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-8988-4f7v-96qf"
+      ]
+    },
+    {
+      "package": {
+        "name": "@opentelemetry/exporter-prometheus",
+        "version": "0.205.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-q7rr-3cgh-j5r3"
+      ]
+    },
+    {
+      "package": {
+        "name": "@opentelemetry/propagator-jaeger",
+        "version": "2.1.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-45rx-2jwx-cxfr"
+      ]
+    },
+    {
+      "package": {
+        "name": "@opentelemetry/sdk-node",
+        "version": "0.205.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-q7rr-3cgh-j5r3"
+      ]
+    },
+    {
+      "package": {
+        "name": "@protobufjs/utf8",
+        "version": "1.1.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-q6x5-8v7m-xcrf"
+      ]
+    },
+    {
+      "package": {
+        "name": "@vitest/mocker",
+        "version": "4.1.10",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-82fw-gwwq-j7x9",
+        "GHSA-qxg6-89mg-rqv8"
+      ]
+    },
+    {
+      "package": {
+        "name": "ajv",
+        "version": "6.12.6",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2g4f-4pwh-qvx6"
+      ]
+    },
+    {
+      "package": {
+        "name": "ajv",
+        "version": "8.17.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2g4f-4pwh-qvx6"
+      ]
+    },
+    {
+      "package": {
+        "name": "body-parser",
+        "version": "1.20.4",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-27r3-jxmh-p828",
+        "GHSA-v422-hmwv-36x6"
+      ]
+    },
+    {
+      "package": {
+        "name": "body-parser",
+        "version": "2.2.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-27r3-jxmh-p828",
+        "GHSA-v422-hmwv-36x6"
+      ]
+    },
+    {
+      "package": {
+        "name": "brace-expansion",
+        "version": "1.1.12",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-3jxr-9vmj-r5cp",
+        "GHSA-6j4f-fj2g-mc7p",
+        "GHSA-f886-m6hf-6m8v",
+        "GHSA-mh99-v99m-4gvg",
+        "GHSA-q2hr-2g5m-vwhr",
+        "GHSA-qhr7-859c-m2p7",
+        "GHSA-rgw5-rvv9-x895"
+      ]
+    },
+    {
+      "package": {
+        "name": "brace-expansion",
+        "version": "2.0.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-3jxr-9vmj-r5cp",
+        "GHSA-6j4f-fj2g-mc7p",
+        "GHSA-f886-m6hf-6m8v",
+        "GHSA-mh99-v99m-4gvg",
+        "GHSA-q2hr-2g5m-vwhr",
+        "GHSA-qhr7-859c-m2p7",
+        "GHSA-rgw5-rvv9-x895"
+      ]
+    },
+    {
+      "package": {
+        "name": "fast-uri",
+        "version": "3.1.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-333x-w4r6-6crp",
+        "GHSA-4c8g-83qw-93j6",
+        "GHSA-7p8r-x3mc-p8w7",
+        "GHSA-f65p-4m7j-42xc",
+        "GHSA-hrr3-gc8f-f4qj",
+        "GHSA-jqff-g426-hqxp",
+        "GHSA-q3j6-qgpj-74h6",
+        "GHSA-qw65-cvwx-89v3",
+        "GHSA-v2hh-gcrm-f6hx",
+        "GHSA-v39h-62p7-jpjc",
+        "GHSA-w74x-v6f9-j3xg",
+        "GHSA-xhq7-xmqj-769h"
+      ]
+    },
+    {
+      "package": {
+        "name": "fast-xml-parser",
+        "version": "4.5.7",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-gh4j-gqv2-49f6"
+      ]
+    },
+    {
+      "package": {
+        "name": "flatted",
+        "version": "3.3.3",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-25h7-pfq9-p65f",
+        "GHSA-rf6f-7fwh-wjgh"
+      ]
+    },
+    {
+      "package": {
+        "name": "js-yaml",
+        "version": "4.1.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2883-xcg3-v3hh",
+        "GHSA-52cp-r559-cp3m",
+        "GHSA-5p4m-2wfm-xmqj",
+        "GHSA-h67p-54hq-rp68"
+      ]
+    },
+    {
+      "package": {
+        "name": "jws",
+        "version": "3.2.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-869p-cjfg-cm3x"
+      ]
+    },
+    {
+      "package": {
+        "name": "lodash",
+        "version": "4.17.21",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-f23m-r3pf-42rh",
+        "GHSA-r5fr-rjxr-66jc",
+        "GHSA-xxjr-mmjv-4gpg"
+      ]
+    },
+    {
+      "package": {
+        "name": "minimatch",
+        "version": "10.1.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-23c5-xmqv-rm74",
+        "GHSA-3ppc-4f35-3m26",
+        "GHSA-7r86-cg39-jmmj"
+      ]
+    },
+    {
+      "package": {
+        "name": "minimatch",
+        "version": "3.1.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-23c5-xmqv-rm74",
+        "GHSA-3ppc-4f35-3m26",
+        "GHSA-7r86-cg39-jmmj"
+      ]
+    },
+    {
+      "package": {
+        "name": "minimatch",
+        "version": "5.1.6",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-23c5-xmqv-rm74",
+        "GHSA-3ppc-4f35-3m26",
+        "GHSA-7r86-cg39-jmmj"
+      ]
+    },
+    {
+      "package": {
+        "name": "minimatch",
+        "version": "9.0.3",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-23c5-xmqv-rm74",
+        "GHSA-3ppc-4f35-3m26",
+        "GHSA-7r86-cg39-jmmj"
+      ]
+    },
+    {
+      "package": {
+        "name": "minimatch",
+        "version": "9.0.5",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-23c5-xmqv-rm74",
+        "GHSA-3ppc-4f35-3m26",
+        "GHSA-7r86-cg39-jmmj"
+      ]
+    },
+    {
+      "package": {
+        "name": "moment",
+        "version": "2.30.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-4p3w-j4w9-5jqw"
+      ]
+    },
+    {
+      "package": {
+        "name": "morgan",
+        "version": "1.10.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-4vj7-5mj6-jm8m",
+        "GHSA-9f6g-j8ch-79g4",
+        "GHSA-jxfw-x594-9x9m"
+      ]
+    },
+    {
+      "package": {
+        "name": "nanoid",
+        "version": "3.3.16",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2v37-7h3g-55p8"
+      ]
+    },
+    {
+      "package": {
+        "name": "path-to-regexp",
+        "version": "0.1.12",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-37ch-88jc-xwx2"
+      ]
+    },
+    {
+      "package": {
+        "name": "path-to-regexp",
+        "version": "8.3.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-27v5-c462-wpq7",
+        "GHSA-j3q9-mxjg-w52f"
+      ]
+    },
+    {
+      "package": {
+        "name": "picomatch",
+        "version": "2.3.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-3v7f-55p6-f55p",
+        "GHSA-c2c7-rcm5-vvqj"
+      ]
+    },
+    {
+      "package": {
+        "name": "protobufjs",
+        "version": "7.5.4",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2pr8-phx7-x9h3",
+        "GHSA-66ff-xgx4-vchm",
+        "GHSA-685m-2w69-288q",
+        "GHSA-75px-5xx7-5xc7",
+        "GHSA-f38q-mgvj-vph7",
+        "GHSA-fx83-v9x8-x52w",
+        "GHSA-j3f2-48v5-ccww",
+        "GHSA-jggg-4jg4-v7c6",
+        "GHSA-jvwf-75h9-cwgg",
+        "GHSA-q6x5-8v7m-xcrf",
+        "GHSA-wcpc-wj8m-hjx6",
+        "GHSA-xq3m-2v4x-88gg"
+      ]
+    },
+    {
+      "package": {
+        "name": "proxy-addr",
+        "version": "2.0.7",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-jqcg-44mw-7w3h"
+      ]
+    },
+    {
+      "package": {
+        "name": "qs",
+        "version": "6.14.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-4mjr-xmp4-gh2g",
+        "GHSA-6rw7-vpxm-498p",
+        "GHSA-q8mj-m7cp-5q26",
+        "GHSA-w7fw-mjwx-w883"
+      ]
+    },
+    {
+      "package": {
+        "name": "source-map-js",
+        "version": "1.2.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-68fv-2mgg-jv7q"
+      ]
+    },
+    {
+      "package": {
+        "name": "tar",
+        "version": "6.2.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-23hp-3jrh-7fpw",
+        "GHSA-34x7-hfp2-rc4v",
+        "GHSA-83g3-92jg-28cx",
+        "GHSA-8qq5-rm4j-mr97",
+        "GHSA-8x88-c5mf-7j5w",
+        "GHSA-9ppj-qmqm-q256",
+        "GHSA-gvwx-54wh-qm9j",
+        "GHSA-qffp-2rhf-9h96",
+        "GHSA-r292-9mhp-454m",
+        "GHSA-r6q2-hw4h-h46w",
+        "GHSA-vmf3-w455-68vh",
+        "GHSA-w8wr-v893-vjvp"
+      ]
+    },
+    {
+      "package": {
+        "name": "tmp",
+        "version": "0.2.5",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-ph9p-34f9-6g65"
+      ]
+    },
+    {
+      "package": {
+        "name": "undici",
+        "version": "7.16.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2gqq-gqf2-x968",
+        "GHSA-2jfj-6hjv-fm6j",
+        "GHSA-2mjp-6q6p-2qxm",
+        "GHSA-35p6-xmwp-9g52",
+        "GHSA-3xpg-4rpp-hhhm",
+        "GHSA-4992-7rv2-5pvq",
+        "GHSA-4cwx-7wf7-3272",
+        "GHSA-4qv8-2p9j-2685",
+        "GHSA-8436-99hf-9mmv",
+        "GHSA-8xcm-r25x-g524",
+        "GHSA-f269-vfmq-vjvj",
+        "GHSA-f72v-6w45-q472",
+        "GHSA-g8m3-5g58-fq7m",
+        "GHSA-g9mf-h72j-4rw9",
+        "GHSA-jr45-8vmc-qm54",
+        "GHSA-m8rv-5g2x-5cg5",
+        "GHSA-p88m-4jfj-68fv",
+        "GHSA-pmjh-fq2x-6v4x",
+        "GHSA-pr7r-676h-xcf6",
+        "GHSA-r53p-7pc4-xj5r",
+        "GHSA-rfgv-xxqx-mfg5",
+        "GHSA-rx4f-c7p8-82vq",
+        "GHSA-v3r7-h72x-cjcm",
+        "GHSA-v9p9-hfj2-hcw8",
+        "GHSA-vrm6-8vpv-qv8q",
+        "GHSA-vxpw-j846-p89q"
+      ]
+    },
+    {
+      "package": {
+        "name": "uuid",
+        "version": "10.0.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-w5hq-g745-h8pq"
+      ]
+    },
+    {
+      "package": {
+        "name": "uuid",
+        "version": "9.0.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-w5hq-g745-h8pq"
+      ]
+    },
+    {
+      "package": {
+        "name": "vite",
+        "version": "8.1.5",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-587h-7wmj-h5pm",
+        "GHSA-698v-4r3x-3vcv",
+        "GHSA-9jrq-w75r-8gcw",
+        "GHSA-r825-w8mm-5pxw",
+        "GHSA-rq7h-c2jc-7f22"
+      ]
+    },
+    {
+      "package": {
+        "name": "vitest",
+        "version": "4.1.10",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-82fw-gwwq-j7x9"
+      ]
+    },
+    {
+      "package": {
+        "name": "ws",
+        "version": "8.18.3",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-58qx-3vcg-4xpx",
+        "GHSA-96hv-2xvq-fx4p"
+      ]
+    },
+    {
+      "package": {
+        "name": "yaml",
+        "version": "2.6.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-48c2-rrv3-qjmp"
+      ]
+    },
+    {
+      "package": {
+        "name": "zod",
+        "version": "4.3.5",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-mrhx-c7xc-m3w5"
+      ]
+    },
+    {
+      "package": {
+        "name": "@ai-sdk/provider-utils",
+        "version": "4.0.0-beta.40",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-866g-f22w-33x8"
+      ]
+    },
+    {
+      "package": {
+        "name": "@babel/core",
+        "version": "7.28.5",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-4x5r-pxfx-6jf8"
+      ]
+    },
+    {
+      "package": {
+        "name": "@fastify/busboy",
+        "version": "2.1.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-gxm5-99cw-xjw9",
+        "GHSA-x8mw-p69m-v3mx"
+      ]
+    },
+    {
+      "package": {
+        "name": "@humanfs/node",
+        "version": "0.16.7",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-p498-v437-472g"
+      ]
+    },
+    {
+      "package": {
+        "name": "@langchain/core",
+        "version": "1.1.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-r399-636x-v7f6"
+      ]
+    },
+    {
+      "package": {
+        "name": "@ranfdev/deepobj",
+        "version": "1.0.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-x7q7-fchv-8h2j"
+      ]
+    },
+    {
+      "package": {
+        "name": "@vitest/mocker",
+        "version": "3.2.4",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-82fw-gwwq-j7x9",
+        "GHSA-qxg6-89mg-rqv8"
+      ]
+    },
+    {
+      "package": {
+        "name": "baseline-browser-mapping",
+        "version": "2.8.32",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-w5vr-8v7q-w6rv"
+      ]
+    },
+    {
+      "package": {
+        "name": "browserslist",
+        "version": "4.28.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-73wf-gq98-2v4g",
+        "GHSA-c83g-rgw3-j3cx"
+      ]
+    },
+    {
+      "package": {
+        "name": "dompurify",
+        "version": "3.3.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-39q2-94rc-95cp",
+        "GHSA-55q2-fjhq-7xh7",
+        "GHSA-6688-9rhm-gjv2",
+        "GHSA-76mc-f452-cxcm",
+        "GHSA-c2j3-45gr-mqc4",
+        "GHSA-c6gr-qvv4-5v3f",
+        "GHSA-cj63-jhhr-wcxv",
+        "GHSA-cjmm-f4jc-qw8r",
+        "GHSA-cmwh-pvxp-8882",
+        "GHSA-crv5-9vww-q3g8",
+        "GHSA-gvmj-g25r-r7wr",
+        "GHSA-h7mw-gpvr-xq4m",
+        "GHSA-h8r8-wccr-v5f2",
+        "GHSA-hpcv-96wg-7vj8",
+        "GHSA-mrv2-3pqr-j5jr",
+        "GHSA-r47g-fvhr-h676",
+        "GHSA-rp9w-3fw7-7cwq",
+        "GHSA-v2wj-7wpq-c8vv",
+        "GHSA-v9jr-rg53-9pgp",
+        "GHSA-vxr8-fq34-vvx9",
+        "GHSA-x4vx-rjvf-j5p4"
+      ]
+    },
+    {
+      "package": {
+        "name": "katex",
+        "version": "0.16.25",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-238p-pmpm-9mq7"
+      ]
+    },
+    {
+      "package": {
+        "name": "langchain",
+        "version": "1.1.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-r399-636x-v7f6"
+      ]
+    },
+    {
+      "package": {
+        "name": "langsmith",
+        "version": "0.3.82",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-3644-q5cj-c5c7",
+        "GHSA-fw9q-39r9-c252",
+        "GHSA-rr7j-v2q5-chgv",
+        "GHSA-v34v-rq6j-cj6p"
+      ]
+    },
+    {
+      "package": {
+        "name": "lodash-es",
+        "version": "4.17.21",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-f23m-r3pf-42rh",
+        "GHSA-r5fr-rjxr-66jc",
+        "GHSA-xxjr-mmjv-4gpg"
+      ]
+    },
+    {
+      "package": {
+        "name": "mermaid",
+        "version": "11.12.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2v8p-3f2j-5mp7",
+        "GHSA-3rrr-jr9j-h3q3",
+        "GHSA-6m6c-36f7-fhxh",
+        "GHSA-6x64-9x62-f2gx",
+        "GHSA-87f9-hvmw-gh4p",
+        "GHSA-c4c3-pg64-4m4v",
+        "GHSA-ghcm-xqfw-q4vr",
+        "GHSA-rhh3-jpg6-66xh",
+        "GHSA-xcj9-5m2h-648r"
+      ]
+    },
+    {
+      "package": {
+        "name": "nanoid",
+        "version": "3.3.11",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-28wg-ghj8-5hjv",
+        "GHSA-2v37-7h3g-55p8",
+        "GHSA-xwg4-73v4-xw9w"
+      ]
+    },
+    {
+      "package": {
+        "name": "nanoid",
+        "version": "5.1.6",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-28wg-ghj8-5hjv",
+        "GHSA-xwg4-73v4-xw9w"
+      ]
+    },
+    {
+      "package": {
+        "name": "picomatch",
+        "version": "4.0.3",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-3v7f-55p6-f55p",
+        "GHSA-c2c7-rcm5-vvqj"
+      ]
+    },
+    {
+      "package": {
+        "name": "postcss",
+        "version": "8.5.6",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-6g55-p6wh-862q",
+        "GHSA-fxqj-rqcc-2cmp",
+        "GHSA-qx2v-qp2m-jg93",
+        "GHSA-r28c-9q8g-f849"
+      ]
+    },
+    {
+      "package": {
+        "name": "react-router",
+        "version": "7.10.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2j2x-hqr9-3h42",
+        "GHSA-2w69-qvjg-hvjx",
+        "GHSA-337j-9hxr-rhxg",
+        "GHSA-49rj-9fvp-4h2h",
+        "GHSA-8646-j5j9-6r62",
+        "GHSA-8v8x-cx79-35w7",
+        "GHSA-8x6r-g9mw-2r78",
+        "GHSA-chx6-hx7r-mcp5",
+        "GHSA-f22v-gfqf-p8f3",
+        "GHSA-h5cw-625j-3rxh",
+        "GHSA-jjmj-jmhj-qwj2",
+        "GHSA-rxv8-25v2-qmq8",
+        "GHSA-wrjc-x8rr-h8h6"
+      ]
+    },
+    {
+      "package": {
+        "name": "rollup",
+        "version": "4.53.3",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-mw96-cpmx-2vgc"
+      ]
+    },
+    {
+      "package": {
+        "name": "tinypool",
+        "version": "1.1.1",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-5gmw-xhrv-c9v3",
+        "GHSA-85c8-ppgw-ccpr"
+      ]
+    },
+    {
+      "package": {
+        "name": "undici",
+        "version": "5.29.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-2mjp-6q6p-2qxm",
+        "GHSA-35p6-xmwp-9g52",
+        "GHSA-4992-7rv2-5pvq",
+        "GHSA-8xcm-r25x-g524",
+        "GHSA-g8m3-5g58-fq7m",
+        "GHSA-g9mf-h72j-4rw9",
+        "GHSA-m8rv-5g2x-5cg5",
+        "GHSA-p88m-4jfj-68fv",
+        "GHSA-r53p-7pc4-xj5r",
+        "GHSA-v3r7-h72x-cjcm",
+        "GHSA-v9p9-hfj2-hcw8",
+        "GHSA-vrm6-8vpv-qv8q",
+        "GHSA-vxpw-j846-p89q"
+      ]
+    },
+    {
+      "package": {
+        "name": "uuid",
+        "version": "11.1.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-w5hq-g745-h8pq"
+      ]
+    },
+    {
+      "package": {
+        "name": "uuid",
+        "version": "13.0.0",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-w5hq-g745-h8pq"
+      ]
+    },
+    {
+      "package": {
+        "name": "vitest",
+        "version": "3.2.4",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-5xrq-8626-4rwp",
+        "GHSA-82fw-gwwq-j7x9"
+      ]
+    },
+    {
+      "package": {
+        "name": "yaml",
+        "version": "2.8.2",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-48c2-rrv3-qjmp"
+      ]
+    },
+    {
+      "package": {
+        "name": "zod",
+        "version": "4.1.13",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-mrhx-c7xc-m3w5"
+      ]
+    },
+    {
+      "package": {
+        "name": "zod",
+        "version": "4.1.12",
+        "ecosystem": "npm"
+      },
+      "advisories": [
+        "GHSA-mrhx-c7xc-m3w5"
+      ]
+    },
+    {
+      "package": {
+        "name": "aiohttp",
+        "version": "3.11.18",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-2fqr-mr3j-6wp8",
+        "GHSA-2g87-pp6c-29x5",
+        "GHSA-2vrm-gr82-f7m5",
+        "GHSA-3wq7-rqq7-wx6j",
+        "GHSA-494j-54xm-rwp3",
+        "GHSA-4fvr-rgm6-gqmc",
+        "GHSA-4m7w-qmgq-4wj5",
+        "GHSA-54jq-c3m8-4m76",
+        "GHSA-5wr8-gcqf-gqf3",
+        "GHSA-63hf-3vf5-4wqf",
+        "GHSA-63hw-fmq6-xxg2",
+        "GHSA-69f9-5gxw-wvc2",
+        "GHSA-6cjc-53gc-5rqm",
+        "GHSA-6jhg-hg63-jvvf",
+        "GHSA-6mq8-rvhq-8wgg",
+        "GHSA-9548-qrrj-x5pj",
+        "GHSA-966j-vmvw-g2g9",
+        "GHSA-9x8q-7h8h-wcw9",
+        "GHSA-9xw5-w5jj-pvcg",
+        "GHSA-c427-h43c-vf67",
+        "GHSA-cq5v-8q36-5273",
+        "GHSA-f9xw-jh8m-3mwq",
+        "GHSA-fh55-r93g-j68g",
+        "GHSA-g3cq-j2xw-wf74",
+        "GHSA-g84x-mcqj-x9qq",
+        "GHSA-gx76-c99x-2c96",
+        "GHSA-hcc4-c3v8-rx92",
+        "GHSA-hg6j-4rv6-33pg",
+        "GHSA-hpj7-wq8m-9hgp",
+        "GHSA-jg22-mg44-37j8",
+        "GHSA-jj3x-wxrx-4x23",
+        "GHSA-m5qp-6w8w-w647",
+        "GHSA-m6qw-4cw2-hm4m",
+        "GHSA-mfx4-hv73-q22v",
+        "GHSA-mq44-7p77-q5h7",
+        "GHSA-mqqc-3gqh-h2x8",
+        "GHSA-mwh4-6h8g-pg8w",
+        "GHSA-p998-jp59-783m",
+        "GHSA-pqxq-w44r-73xw",
+        "GHSA-w2fm-2cpv-w7v5",
+        "GHSA-xcgm-r5h9-7989",
+        "PYSEC-2026-1097",
+        "PYSEC-2026-1099",
+        "PYSEC-2026-1100",
+        "PYSEC-2026-1101",
+        "PYSEC-2026-1104",
+        "PYSEC-2026-1105",
+        "PYSEC-2026-1106",
+        "PYSEC-2026-1107",
+        "PYSEC-2026-1109",
+        "PYSEC-2026-2094",
+        "PYSEC-2026-2095",
+        "PYSEC-2026-2096",
+        "PYSEC-2026-2097",
+        "PYSEC-2026-2098",
+        "PYSEC-2026-2099",
+        "PYSEC-2026-2100",
+        "PYSEC-2026-2101",
+        "PYSEC-2026-2102",
+        "PYSEC-2026-2103",
+        "PYSEC-2026-2104",
+        "PYSEC-2026-2105",
+        "PYSEC-2026-2106",
+        "PYSEC-2026-2107",
+        "PYSEC-2026-2108",
+        "PYSEC-2026-2109",
+        "PYSEC-2026-2110",
+        "PYSEC-2026-2111",
+        "PYSEC-2026-2112",
+        "PYSEC-2026-2113",
+        "PYSEC-2026-237",
+        "PYSEC-2026-3545",
+        "PYSEC-2026-3546",
+        "PYSEC-2026-3547"
+      ]
+    },
+    {
+      "package": {
+        "name": "anyio",
+        "version": "4.9.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-5p39-cfhj-2xmp",
+        "GHSA-82r6-8w77-94w6",
+        "PYSEC-2026-4024",
+        "PYSEC-2026-4025"
+      ]
+    },
+    {
+      "package": {
+        "name": "certifi",
+        "version": "2025.4.26",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-6q48-6c7w-9gw2",
+        "PYSEC-2026-4320"
+      ]
+    },
+    {
+      "package": {
+        "name": "cryptography",
+        "version": "46.0.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-537c-gmf6-5ccf",
+        "GHSA-g6cj-pr64-35w5",
+        "GHSA-jwv3-5hgf-82ww",
+        "GHSA-m2h6-j472-rp4c",
+        "GHSA-m959-cc7f-wv43",
+        "GHSA-p423-j2cm-9vmq",
+        "GHSA-r6ph-v2qm-q3c2",
+        "PYSEC-2026-2141",
+        "PYSEC-2026-35",
+        "PYSEC-2026-3552",
+        "PYSEC-2026-3553",
+        "PYSEC-2026-3554",
+        "PYSEC-2026-36"
+      ]
+    },
+    {
+      "package": {
+        "name": "filelock",
+        "version": "3.18.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qmgc-5h2g-mvrw",
+        "GHSA-w853-jp5j-5j7f",
+        "PYSEC-2026-1374",
+        "PYSEC-2026-1375"
+      ]
+    },
+    {
+      "package": {
+        "name": "fonttools",
+        "version": "4.58.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-768j-98cg-p3fv",
+        "PYSEC-2026-1389"
+      ]
+    },
+    {
+      "package": {
+        "name": "fsspec",
+        "version": "2025.3.2",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-27vj-qcqg-25rc",
+        "PYSEC-2026-4217"
+      ]
+    },
+    {
+      "package": {
+        "name": "gitpython",
+        "version": "3.1.44",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-239g-whfq-7xj9",
+        "GHSA-284h-m62q-gf8w",
+        "GHSA-2f96-g7mh-g2hx",
+        "GHSA-3f7w-8rr8-f37f",
+        "GHSA-3rp5-jjmw-4wv2",
+        "GHSA-3wxw-xv34-2frg",
+        "GHSA-4gmw-gg2m-w46p",
+        "GHSA-539m-9xh6-q6rr",
+        "GHSA-59cr-6r3x-644w",
+        "GHSA-5xxx-qhh7-9287",
+        "GHSA-6p8h-3wgx-97gf",
+        "GHSA-7545-fcxq-7j24",
+        "GHSA-7833-fr7j-v32q",
+        "GHSA-83vg-56qc-22m7",
+        "GHSA-8mcc-hrx5-hvxc",
+        "GHSA-94p4-4cq8-9g67",
+        "GHSA-956x-8gvw-wg5v",
+        "GHSA-9rj7-rf2p-w77r",
+        "GHSA-fjr4-x663-mwxc",
+        "GHSA-g5vv-9gxw-82hx",
+        "GHSA-hh9p-6wh2-4mfc",
+        "GHSA-hmq2-w58f-27jc",
+        "GHSA-jm78-9fvv-mhgr",
+        "GHSA-mv93-w799-cj2w",
+        "GHSA-p538-c434-8v24",
+        "GHSA-r9mr-m37c-5fr3",
+        "GHSA-rpm5-65cw-6hj4",
+        "GHSA-rwj8-pgh3-r573",
+        "GHSA-v87r-6q3f-2j67",
+        "GHSA-wvpp-8hx9-p66j",
+        "GHSA-x2qx-6953-8485",
+        "PYSEC-2026-2160",
+        "PYSEC-2026-2161",
+        "PYSEC-2026-2162",
+        "PYSEC-2026-2163",
+        "PYSEC-2026-3783",
+        "PYSEC-2026-3784",
+        "PYSEC-2026-3785",
+        "PYSEC-2026-3786",
+        "PYSEC-2026-3787",
+        "PYSEC-2026-3788",
+        "PYSEC-2026-3836",
+        "PYSEC-2026-3837",
+        "PYSEC-2026-3838",
+        "PYSEC-2026-3839",
+        "PYSEC-2026-3840",
+        "PYSEC-2026-3841",
+        "PYSEC-2026-3842",
+        "PYSEC-2026-3843",
+        "PYSEC-2026-3948",
+        "PYSEC-2026-3949",
+        "PYSEC-2026-3950",
+        "PYSEC-2026-3951",
+        "PYSEC-2026-3952",
+        "PYSEC-2026-3953",
+        "PYSEC-2026-3980",
+        "PYSEC-2026-3981",
+        "PYSEC-2026-3982",
+        "PYSEC-2026-3984",
+        "PYSEC-2026-3995"
+      ]
+    },
+    {
+      "package": {
+        "name": "idna",
+        "version": "3.10",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-65pc-fj4g-8rjx",
+        "PYSEC-2026-215"
+      ]
+    },
+    {
+      "package": {
+        "name": "jupyter-core",
+        "version": "5.7.2",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-33p9-3p43-82vq",
+        "PYSEC-2026-1477"
+      ]
+    },
+    {
+      "package": {
+        "name": "langchain",
+        "version": "0.3.26",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-3644-q5cj-c5c7",
+        "GHSA-gr75-jv2w-4656",
+        "PYSEC-2026-2192",
+        "PYSEC-2026-2555"
+      ]
+    },
+    {
+      "package": {
+        "name": "langchain-community",
+        "version": "0.3.26",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-pc6w-59fv-rh23",
+        "PYSEC-2026-1515"
+      ]
+    },
+    {
+      "package": {
+        "name": "langchain-core",
+        "version": "0.3.79",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-2g6r-c272-w58r",
+        "GHSA-6qv9-48xg-fc7f",
+        "GHSA-926x-3r5x-gfhw",
+        "GHSA-c67j-w6g6-q2cm",
+        "GHSA-pjwx-r37v-7724",
+        "GHSA-qh6h-p6c9-ff54",
+        "PYSEC-2026-1518",
+        "PYSEC-2026-2193",
+        "PYSEC-2026-2562",
+        "PYSEC-2026-2563",
+        "PYSEC-2026-2564",
+        "PYSEC-2026-373"
+      ]
+    },
+    {
+      "package": {
+        "name": "langchain-openai",
+        "version": "0.3.35",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-r7w7-9xr2-qq2r",
+        "PYSEC-2026-76"
+      ]
+    },
+    {
+      "package": {
+        "name": "langchain-text-splitters",
+        "version": "0.3.8",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-fv5p-p927-qmxr",
+        "GHSA-m42m-m8cr-8m58",
+        "PYSEC-2026-1520",
+        "PYSEC-2026-77"
+      ]
+    },
+    {
+      "package": {
+        "name": "langgraph",
+        "version": "0.5.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-g48c-2wqr-h844",
+        "PYSEC-2026-83"
+      ]
+    },
+    {
+      "package": {
+        "name": "langgraph-checkpoint",
+        "version": "2.1.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-fjqc-hq36-qh5p",
+        "GHSA-mhr3-j7m5-c7c9",
+        "GHSA-wwqv-p2pp-99h5",
+        "PYSEC-2026-1527",
+        "PYSEC-2026-2573",
+        "PYSEC-2026-2574"
+      ]
+    },
+    {
+      "package": {
+        "name": "langgraph-sdk",
+        "version": "0.1.72",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-fvww-7h3r-vfhp",
+        "GHSA-w39p-vh2g-g8g5",
+        "PYSEC-2026-2575",
+        "PYSEC-2026-4240"
+      ]
+    },
+    {
+      "package": {
+        "name": "langsmith",
+        "version": "0.4.4",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-3644-q5cj-c5c7",
+        "GHSA-f4xh-w4cj-qxq8",
+        "GHSA-rr7j-v2q5-chgv",
+        "PYSEC-2026-2582",
+        "PYSEC-2026-2583"
+      ]
+    },
+    {
+      "package": {
+        "name": "lightning",
+        "version": "2.5.1.post0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qqmf-gpg7-g8gw",
+        "PYSEC-2026-3624",
+        "PYSEC-2026-3972"
+      ]
+    },
+    {
+      "package": {
+        "name": "lxml",
+        "version": "6.0.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-vfmq-68hx-4jfw",
+        "PYSEC-2026-87"
+      ]
+    },
+    {
+      "package": {
+        "name": "mako",
+        "version": "1.3.10",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-2h4p-vjrc-8xpq",
+        "GHSA-5639-2j2p-m4mx",
+        "GHSA-v92g-xgxw-vvmm",
+        "PYSEC-2026-2617",
+        "PYSEC-2026-4243",
+        "PYSEC-2026-88"
+      ]
+    },
+    {
+      "package": {
+        "name": "marshmallow",
+        "version": "3.26.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-428g-f7cq-pgp5",
+        "PYSEC-2026-1605"
+      ]
+    },
+    {
+      "package": {
+        "name": "oauthlib",
+        "version": "3.3.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-hj66-6f7g-4r5v",
+        "GHSA-xpv3-w29h-x7cv",
+        "PYSEC-2026-4113",
+        "PYSEC-2026-4114"
+      ]
+    },
+    {
+      "package": {
+        "name": "orjson",
+        "version": "3.10.18",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-hx9q-6w63-j58v",
+        "PYSEC-2026-107"
+      ]
+    },
+    {
+      "package": {
+        "name": "paramiko",
+        "version": "4.0.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-r374-rxx8-8654",
+        "PYSEC-2026-2858"
+      ]
+    },
+    {
+      "package": {
+        "name": "pillow",
+        "version": "11.2.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-22hg-r758-rrw9",
+        "GHSA-24rc-8hj2-v98c",
+        "GHSA-254f-3936-288h",
+        "GHSA-27h8-gf7j-v5hc",
+        "GHSA-332p-7hrc-92wf",
+        "GHSA-3j72-p6qg-6xp7",
+        "GHSA-4558-3h8r-v8xp",
+        "GHSA-45hq-cxwh-f6vc",
+        "GHSA-462x-pgg6-55fp",
+        "GHSA-4rm8-3hmm-39fg",
+        "GHSA-4x4j-2g7c-83w6",
+        "GHSA-58r4-6rv3-gfh8",
+        "GHSA-5x8w-8jj5-q52h",
+        "GHSA-5x94-69rx-g8h2",
+        "GHSA-5xm2-6676-qcp9",
+        "GHSA-5xmw-vc9v-4wf2",
+        "GHSA-62p4-gmf7-7g93",
+        "GHSA-654x-cwwv-5j9c",
+        "GHSA-65qm-jvmh-6pqg",
+        "GHSA-6r8x-57c9-28j4",
+        "GHSA-74r2-7ff9-mjj2",
+        "GHSA-78g4-xqwv-q3g8",
+        "GHSA-7mwm-ghpf-9vrm",
+        "GHSA-8g5g-8vmr-9782",
+        "GHSA-8v84-f9pq-wr9x",
+        "GHSA-9hw9-ch79-4vh6",
+        "GHSA-9v9v-9qvf-h2hj",
+        "GHSA-c6hw-5grf-ff96",
+        "GHSA-cfh3-3jmp-rvhc",
+        "GHSA-f2g6-542v-9j58",
+        "GHSA-fc9g-5qg7-mf45",
+        "GHSA-fj7v-r99m-22gq",
+        "GHSA-g4qv-2jxx-769h",
+        "GHSA-g7cr-3p24-7wf7",
+        "GHSA-g842-9rc4-69pw",
+        "GHSA-gg2r-wvfm-q9rx",
+        "GHSA-j4m9-6w36-pw47",
+        "GHSA-jg86-v3jv-hrpm",
+        "GHSA-jjj6-mw9f-p565",
+        "GHSA-mrfp-p49p-3hf2",
+        "GHSA-p4wg-p73j-c528",
+        "GHSA-p8hx-v2p6-rp84",
+        "GHSA-pchr-8j38-3x4p",
+        "GHSA-phj9-mv4w-65pm",
+        "GHSA-pwv6-vv43-88gr",
+        "GHSA-q45j-58j2-45rg",
+        "GHSA-r73j-pqj5-w3x7",
+        "GHSA-rfgq-q3w2-pmv2",
+        "GHSA-v9pv-5gc8-w2m6",
+        "GHSA-vjc4-5qp5-m44j",
+        "GHSA-vx6w-vv9f-6gvg",
+        "GHSA-w889-685w-c8fh",
+        "GHSA-whj4-6x5x-4v2j",
+        "GHSA-wjx4-4jcj-g98j",
+        "GHSA-xg8h-j46f-w952",
+        "GHSA-xgh8-jp6q-p5x8",
+        "GHSA-xj96-63gp-2gmr",
+        "GHSA-xvh5-g6gv-559v",
+        "PYSEC-2025-61",
+        "PYSEC-2026-165",
+        "PYSEC-2026-2249",
+        "PYSEC-2026-2250",
+        "PYSEC-2026-2251",
+        "PYSEC-2026-2252",
+        "PYSEC-2026-2253",
+        "PYSEC-2026-2254",
+        "PYSEC-2026-2255",
+        "PYSEC-2026-2256",
+        "PYSEC-2026-2257",
+        "PYSEC-2026-2874",
+        "PYSEC-2026-3451",
+        "PYSEC-2026-3453",
+        "PYSEC-2026-3454",
+        "PYSEC-2026-3493",
+        "PYSEC-2026-3494",
+        "PYSEC-2026-3495",
+        "PYSEC-2026-3496",
+        "PYSEC-2026-4326",
+        "PYSEC-2026-4327"
+      ]
+    },
+    {
+      "package": {
+        "name": "protobuf",
+        "version": "6.31.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-7gcm-g887-7qv7",
+        "GHSA-8qvm-5x2c-j2w7",
+        "PYSEC-2026-1805",
+        "PYSEC-2026-1806"
+      ]
+    },
+    {
+      "package": {
+        "name": "pyarrow",
+        "version": "20.0.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-rgxp-2hwp-jwgg",
+        "PYSEC-2026-113"
+      ]
+    },
+    {
+      "package": {
+        "name": "pygments",
+        "version": "2.19.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-5239-wwwm-4pmq",
+        "PYSEC-2026-2987"
+      ]
+    },
+    {
+      "package": {
+        "name": "pymongo",
+        "version": "4.13.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-8fvv-fgr5-f8ch",
+        "GHSA-qx36-8mw2-4r3x",
+        "GHSA-v4x9-3549-crwv",
+        "GHSA-vp6j-j7w5-5xjj",
+        "PYSEC-2026-4294",
+        "PYSEC-2026-4295",
+        "PYSEC-2026-4296",
+        "PYSEC-2026-4297"
+      ]
+    },
+    {
+      "package": {
+        "name": "pynacl",
+        "version": "1.6.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-mrfv-m5wm-5w6w",
+        "PYSEC-2026-3002"
+      ]
+    },
+    {
+      "package": {
+        "name": "pytest",
+        "version": "8.4.2",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-6w46-j5rx-g56g",
+        "PYSEC-2026-1845"
+      ]
+    },
+    {
+      "package": {
+        "name": "python-dotenv",
+        "version": "1.1.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-mf9w-mj56-hr94",
+        "PYSEC-2026-2270"
+      ]
+    },
+    {
+      "package": {
+        "name": "pytorch-lightning",
+        "version": "2.5.1.post0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-75m9-98v2-hjpm",
+        "PYSEC-2026-3043",
+        "PYSEC-2026-3967"
+      ]
+    },
+    {
+      "package": {
+        "name": "requests",
+        "version": "2.32.3",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-9hjg-9r4m-mvj7",
+        "GHSA-gc5v-m9x4-r6x2",
+        "PYSEC-2026-1872",
+        "PYSEC-2026-2275"
+      ]
+    },
+    {
+      "package": {
+        "name": "sentence-transformers",
+        "version": "5.1.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-jhr6-gm9c-rqjv",
+        "PYSEC-2026-4164"
+      ]
+    },
+    {
+      "package": {
+        "name": "sentencepiece",
+        "version": "0.2.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-38vq-g6vr-w8wf",
+        "PYSEC-2026-1909"
+      ]
+    },
+    {
+      "package": {
+        "name": "setuptools",
+        "version": "80.7.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-h35f-9h28-mq5c",
+        "GHSA-xmj3-9gf7-h52w",
+        "PYSEC-2026-3447"
+      ]
+    },
+    {
+      "package": {
+        "name": "starlette",
+        "version": "0.50.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-82w8-qh3p-5jfq",
+        "GHSA-86qp-5c8j-p5mr",
+        "GHSA-jp82-jpqv-5vv3",
+        "GHSA-wqp7-x3pw-xc5r",
+        "GHSA-x746-7m8f-x49c",
+        "PYSEC-2026-161",
+        "PYSEC-2026-2280",
+        "PYSEC-2026-2281",
+        "PYSEC-2026-248",
+        "PYSEC-2026-249"
+      ]
+    },
+    {
+      "package": {
+        "name": "streamlit",
+        "version": "1.46.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-7p48-42j8-8846",
+        "GHSA-vqwp-45wm-r9r5",
+        "PYSEC-2026-212",
+        "PYSEC-2026-2285"
+      ]
+    },
+    {
+      "package": {
+        "name": "torch",
+        "version": "2.7.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-3749-ghw9-m3mg",
+        "GHSA-887c-mr87-cxwp",
+        "GHSA-qfhq-4f3w-5fph",
+        "GHSA-rrmf-rvhw-rf47",
+        "GHSA-vgrw-7cvw-pwgx",
+        "PYSEC-2025-203",
+        "PYSEC-2025-204",
+        "PYSEC-2025-205",
+        "PYSEC-2025-206",
+        "PYSEC-2025-207",
+        "PYSEC-2025-208",
+        "PYSEC-2025-209",
+        "PYSEC-2026-139",
+        "PYSEC-2026-1970",
+        "PYSEC-2026-2286"
+      ]
+    },
+    {
+      "package": {
+        "name": "tornado",
+        "version": "6.4.2",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-3hv7-mjh2-fv65",
+        "GHSA-3x9g-8vmp-wqvf",
+        "GHSA-78cv-mqj4-43f7",
+        "GHSA-7cx3-6m66-7c5m",
+        "GHSA-8423-8fgw-73vq",
+        "GHSA-c2m8-h5v5-343r",
+        "GHSA-c98p-7wgm-6p64",
+        "GHSA-chx6-46f5-w4vp",
+        "GHSA-cx3h-4qpv-8hc9",
+        "GHSA-fqwm-6jpj-5wxc",
+        "GHSA-jhmp-mqwm-3gq8",
+        "GHSA-mgf9-4vpg-hj56",
+        "GHSA-mpf4-983q-p7j4",
+        "GHSA-pr2v-jx2c-wg9f",
+        "GHSA-pw6j-qg29-8w7f",
+        "GHSA-qjxf-f2mg-c6mc",
+        "PYSEC-2025-265",
+        "PYSEC-2025-266",
+        "PYSEC-2025-267",
+        "PYSEC-2026-140",
+        "PYSEC-2026-1974",
+        "PYSEC-2026-2287",
+        "PYSEC-2026-3387",
+        "PYSEC-2026-3388",
+        "PYSEC-2026-3389",
+        "PYSEC-2026-3928"
+      ]
+    },
+    {
+      "package": {
+        "name": "transformers",
+        "version": "4.56.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-29pf-2h5f-8g72",
+        "GHSA-69w3-r845-3855",
+        "GHSA-fgcw-684q-jj6r",
+        "GHSA-x9r9-c232-4q39",
+        "GHSA-xrqw-3rrv-vx5w",
+        "PYSEC-2025-214",
+        "PYSEC-2025-215",
+        "PYSEC-2025-216",
+        "PYSEC-2025-217",
+        "PYSEC-2025-218",
+        "PYSEC-2026-2288",
+        "PYSEC-2026-2289",
+        "PYSEC-2026-2290",
+        "PYSEC-2026-3929",
+        "PYSEC-2026-4174"
+      ]
+    },
+    {
+      "package": {
+        "name": "urllib3",
+        "version": "2.4.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-2xpw-w6gg-jr37",
+        "GHSA-38jv-5279-wg99",
+        "GHSA-48p4-8xcf-vxj5",
+        "GHSA-8988-9cw3-xx77",
+        "GHSA-gm62-xv2j-4w53",
+        "GHSA-pq67-6m6q-mj2v",
+        "GHSA-qccp-gfcp-xxvc",
+        "GHSA-vxq7-64xx-v4gw",
+        "PYSEC-2026-141",
+        "PYSEC-2026-1994",
+        "PYSEC-2026-1996",
+        "PYSEC-2026-1997",
+        "PYSEC-2026-1998",
+        "PYSEC-2026-1999",
+        "PYSEC-2026-4175",
+        "PYSEC-2026-4177"
+      ]
+    },
+    {
+      "package": {
+        "name": "certifi",
+        "version": "2026.7.22",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-6q48-6c7w-9gw2",
+        "PYSEC-2026-4320"
+      ]
+    },
+    {
+      "package": {
+        "name": "filelock",
+        "version": "3.32.4",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-567q-5qvw-pf92",
+        "GHSA-9vhv-jxww-xfm5",
+        "GHSA-v4x8-3wr5-3wq8"
+      ]
+    },
+    {
+      "package": {
+        "name": "pillow",
+        "version": "12.3.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-22hg-r758-rrw9",
+        "GHSA-24rc-8hj2-v98c",
+        "GHSA-254f-3936-288h",
+        "GHSA-27h8-gf7j-v5hc",
+        "GHSA-332p-7hrc-92wf",
+        "GHSA-3j72-p6qg-6xp7",
+        "GHSA-4558-3h8r-v8xp",
+        "GHSA-462x-pgg6-55fp",
+        "GHSA-4rm8-3hmm-39fg",
+        "GHSA-4rr5-89j8-mwwm",
+        "GHSA-58r4-6rv3-gfh8",
+        "GHSA-5x8w-8jj5-q52h",
+        "GHSA-5xm2-6676-qcp9",
+        "GHSA-654x-cwwv-5j9c",
+        "GHSA-65qm-jvmh-6pqg",
+        "GHSA-74r2-7ff9-mjj2",
+        "GHSA-78g4-xqwv-q3g8",
+        "GHSA-7mwm-ghpf-9vrm",
+        "GHSA-8g5g-8vmr-9782",
+        "GHSA-9v9v-9qvf-h2hj",
+        "GHSA-c6hw-5grf-ff96",
+        "GHSA-cp9v-662q-vvx9",
+        "GHSA-f2g6-542v-9j58",
+        "GHSA-fc9g-5qg7-mf45",
+        "GHSA-g4qv-2jxx-769h",
+        "GHSA-g7cr-3p24-7wf7",
+        "GHSA-g842-9rc4-69pw",
+        "GHSA-gg2r-wvfm-q9rx",
+        "GHSA-j4m9-6w36-pw47",
+        "GHSA-jg86-v3jv-hrpm",
+        "GHSA-mrfp-p49p-3hf2",
+        "GHSA-p4wg-p73j-c528",
+        "GHSA-p8hx-v2p6-rp84",
+        "GHSA-pchr-8j38-3x4p",
+        "GHSA-q45j-58j2-45rg",
+        "GHSA-rfgq-q3w2-pmv2",
+        "GHSA-v9pv-5gc8-w2m6",
+        "GHSA-vx6w-vv9f-6gvg",
+        "GHSA-w889-685w-c8fh",
+        "GHSA-xgh8-jp6q-p5x8",
+        "GHSA-xvh5-g6gv-559v",
+        "PYSEC-2026-4326",
+        "PYSEC-2026-4327",
+        "PYSEC-2026-4328"
+      ]
+    },
+    {
+      "package": {
+        "name": "pymongo",
+        "version": "4.17.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-8fvv-fgr5-f8ch",
+        "GHSA-qx36-8mw2-4r3x",
+        "GHSA-v4x9-3549-crwv",
+        "GHSA-vp6j-j7w5-5xjj",
+        "PYSEC-2026-4294",
+        "PYSEC-2026-4295",
+        "PYSEC-2026-4296",
+        "PYSEC-2026-4297"
+      ]
+    },
+    {
+      "package": {
+        "name": "urllib3",
+        "version": "2.7.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-8988-9cw3-xx77",
+        "GHSA-gh4c-6fx4-qh6g",
+        "GHSA-vxq7-64xx-v4gw",
+        "PYSEC-2026-4175",
+        "PYSEC-2026-4176",
+        "PYSEC-2026-4177"
+      ]
+    },
+    {
+      "package": {
+        "name": "aiohttp",
+        "version": "3.13.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-2fqr-mr3j-6wp8",
+        "GHSA-2g87-pp6c-29x5",
+        "GHSA-2vrm-gr82-f7m5",
+        "GHSA-3wq7-rqq7-wx6j",
+        "GHSA-494j-54xm-rwp3",
+        "GHSA-4fvr-rgm6-gqmc",
+        "GHSA-4m7w-qmgq-4wj5",
+        "GHSA-54jq-c3m8-4m76",
+        "GHSA-5wr8-gcqf-gqf3",
+        "GHSA-63hf-3vf5-4wqf",
+        "GHSA-63hw-fmq6-xxg2",
+        "GHSA-69f9-5gxw-wvc2",
+        "GHSA-6cjc-53gc-5rqm",
+        "GHSA-6jhg-hg63-jvvf",
+        "GHSA-6mq8-rvhq-8wgg",
+        "GHSA-966j-vmvw-g2g9",
+        "GHSA-9x8q-7h8h-wcw9",
+        "GHSA-9xw5-w5jj-pvcg",
+        "GHSA-c427-h43c-vf67",
+        "GHSA-cq5v-8q36-5273",
+        "GHSA-f9xw-jh8m-3mwq",
+        "GHSA-fh55-r93g-j68g",
+        "GHSA-g3cq-j2xw-wf74",
+        "GHSA-g84x-mcqj-x9qq",
+        "GHSA-gx76-c99x-2c96",
+        "GHSA-hcc4-c3v8-rx92",
+        "GHSA-hg6j-4rv6-33pg",
+        "GHSA-hpj7-wq8m-9hgp",
+        "GHSA-jg22-mg44-37j8",
+        "GHSA-jj3x-wxrx-4x23",
+        "GHSA-m5qp-6w8w-w647",
+        "GHSA-m6qw-4cw2-hm4m",
+        "GHSA-mfx4-hv73-q22v",
+        "GHSA-mq44-7p77-q5h7",
+        "GHSA-mqqc-3gqh-h2x8",
+        "GHSA-mwh4-6h8g-pg8w",
+        "GHSA-p998-jp59-783m",
+        "GHSA-pqxq-w44r-73xw",
+        "GHSA-w2fm-2cpv-w7v5",
+        "GHSA-xcgm-r5h9-7989",
+        "PYSEC-2026-1097",
+        "PYSEC-2026-1099",
+        "PYSEC-2026-1100",
+        "PYSEC-2026-1101",
+        "PYSEC-2026-1105",
+        "PYSEC-2026-1106",
+        "PYSEC-2026-1107",
+        "PYSEC-2026-1109",
+        "PYSEC-2026-2094",
+        "PYSEC-2026-2095",
+        "PYSEC-2026-2096",
+        "PYSEC-2026-2097",
+        "PYSEC-2026-2098",
+        "PYSEC-2026-2099",
+        "PYSEC-2026-2100",
+        "PYSEC-2026-2101",
+        "PYSEC-2026-2102",
+        "PYSEC-2026-2103",
+        "PYSEC-2026-2104",
+        "PYSEC-2026-2105",
+        "PYSEC-2026-2106",
+        "PYSEC-2026-2107",
+        "PYSEC-2026-2108",
+        "PYSEC-2026-2109",
+        "PYSEC-2026-2110",
+        "PYSEC-2026-2111",
+        "PYSEC-2026-2112",
+        "PYSEC-2026-2113",
+        "PYSEC-2026-237",
+        "PYSEC-2026-3545",
+        "PYSEC-2026-3546",
+        "PYSEC-2026-3547"
+      ]
+    },
+    {
+      "package": {
+        "name": "anyio",
+        "version": "4.11.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-5p39-cfhj-2xmp",
+        "GHSA-82r6-8w77-94w6",
+        "PYSEC-2026-4024",
+        "PYSEC-2026-4025"
+      ]
+    },
+    {
+      "package": {
+        "name": "black",
+        "version": "25.9.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-3936-cmfr-pm3m",
+        "GHSA-cg8m-r9f2-5wm2",
+        "PYSEC-2026-2120",
+        "PYSEC-2026-2121"
+      ]
+    },
+    {
+      "package": {
+        "name": "certifi",
+        "version": "2025.10.5",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-6q48-6c7w-9gw2",
+        "PYSEC-2026-4320"
+      ]
+    },
+    {
+      "package": {
+        "name": "filelock",
+        "version": "3.20.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qmgc-5h2g-mvrw",
+        "GHSA-w853-jp5j-5j7f",
+        "PYSEC-2026-1374",
+        "PYSEC-2026-1375"
+      ]
+    },
+    {
+      "package": {
+        "name": "fonttools",
+        "version": "4.60.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-768j-98cg-p3fv",
+        "PYSEC-2026-1389"
+      ]
+    },
+    {
+      "package": {
+        "name": "fsspec",
+        "version": "2025.9.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-27vj-qcqg-25rc",
+        "PYSEC-2026-4217"
+      ]
+    },
+    {
+      "package": {
+        "name": "idna",
+        "version": "3.11",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-65pc-fj4g-8rjx",
+        "PYSEC-2026-215"
+      ]
+    },
+    {
+      "package": {
+        "name": "lightning",
+        "version": "2.5.5",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qqmf-gpg7-g8gw",
+        "PYSEC-2026-3624",
+        "PYSEC-2026-3972"
+      ]
+    },
+    {
+      "package": {
+        "name": "multidict",
+        "version": "6.7.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-54p9-h82j-f925",
+        "PYSEC-2026-4244"
+      ]
+    },
+    {
+      "package": {
+        "name": "opentelemetry-api",
+        "version": "1.37.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-xcq7-p3pf-p88h"
+      ]
+    },
+    {
+      "package": {
+        "name": "pillow",
+        "version": "11.3.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-22hg-r758-rrw9",
+        "GHSA-24rc-8hj2-v98c",
+        "GHSA-254f-3936-288h",
+        "GHSA-27h8-gf7j-v5hc",
+        "GHSA-332p-7hrc-92wf",
+        "GHSA-3j72-p6qg-6xp7",
+        "GHSA-4558-3h8r-v8xp",
+        "GHSA-45hq-cxwh-f6vc",
+        "GHSA-462x-pgg6-55fp",
+        "GHSA-4rm8-3hmm-39fg",
+        "GHSA-4rr5-89j8-mwwm",
+        "GHSA-4x4j-2g7c-83w6",
+        "GHSA-58r4-6rv3-gfh8",
+        "GHSA-5x8w-8jj5-q52h",
+        "GHSA-5x94-69rx-g8h2",
+        "GHSA-5xm2-6676-qcp9",
+        "GHSA-5xmw-vc9v-4wf2",
+        "GHSA-62p4-gmf7-7g93",
+        "GHSA-654x-cwwv-5j9c",
+        "GHSA-65qm-jvmh-6pqg",
+        "GHSA-6r8x-57c9-28j4",
+        "GHSA-74r2-7ff9-mjj2",
+        "GHSA-78g4-xqwv-q3g8",
+        "GHSA-7mwm-ghpf-9vrm",
+        "GHSA-8g5g-8vmr-9782",
+        "GHSA-8v84-f9pq-wr9x",
+        "GHSA-9hw9-ch79-4vh6",
+        "GHSA-9v9v-9qvf-h2hj",
+        "GHSA-c6hw-5grf-ff96",
+        "GHSA-cfh3-3jmp-rvhc",
+        "GHSA-f2g6-542v-9j58",
+        "GHSA-fc9g-5qg7-mf45",
+        "GHSA-fj7v-r99m-22gq",
+        "GHSA-g4qv-2jxx-769h",
+        "GHSA-g7cr-3p24-7wf7",
+        "GHSA-g842-9rc4-69pw",
+        "GHSA-gg2r-wvfm-q9rx",
+        "GHSA-j4m9-6w36-pw47",
+        "GHSA-jg86-v3jv-hrpm",
+        "GHSA-jjj6-mw9f-p565",
+        "GHSA-mrfp-p49p-3hf2",
+        "GHSA-p4wg-p73j-c528",
+        "GHSA-p8hx-v2p6-rp84",
+        "GHSA-pchr-8j38-3x4p",
+        "GHSA-phj9-mv4w-65pm",
+        "GHSA-pwv6-vv43-88gr",
+        "GHSA-q45j-58j2-45rg",
+        "GHSA-r73j-pqj5-w3x7",
+        "GHSA-rfgq-q3w2-pmv2",
+        "GHSA-v9pv-5gc8-w2m6",
+        "GHSA-vjc4-5qp5-m44j",
+        "GHSA-vx6w-vv9f-6gvg",
+        "GHSA-w889-685w-c8fh",
+        "GHSA-whj4-6x5x-4v2j",
+        "GHSA-wjx4-4jcj-g98j",
+        "GHSA-xgh8-jp6q-p5x8",
+        "GHSA-xj96-63gp-2gmr",
+        "GHSA-xvh5-g6gv-559v",
+        "PYSEC-2026-165",
+        "PYSEC-2026-2249",
+        "PYSEC-2026-2250",
+        "PYSEC-2026-2251",
+        "PYSEC-2026-2252",
+        "PYSEC-2026-2253",
+        "PYSEC-2026-2254",
+        "PYSEC-2026-2255",
+        "PYSEC-2026-2256",
+        "PYSEC-2026-2257",
+        "PYSEC-2026-2874",
+        "PYSEC-2026-3451",
+        "PYSEC-2026-3453",
+        "PYSEC-2026-3454",
+        "PYSEC-2026-3493",
+        "PYSEC-2026-3494",
+        "PYSEC-2026-3495",
+        "PYSEC-2026-3496",
+        "PYSEC-2026-4326",
+        "PYSEC-2026-4327",
+        "PYSEC-2026-4328"
+      ]
+    },
+    {
+      "package": {
+        "name": "protobuf",
+        "version": "6.32.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-7gcm-g887-7qv7",
+        "PYSEC-2026-1805"
+      ]
+    },
+    {
+      "package": {
+        "name": "pygments",
+        "version": "2.19.2",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-5239-wwwm-4pmq",
+        "PYSEC-2026-2987"
+      ]
+    },
+    {
+      "package": {
+        "name": "python-dotenv",
+        "version": "1.2.1",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-mf9w-mj56-hr94",
+        "PYSEC-2026-2270"
+      ]
+    },
+    {
+      "package": {
+        "name": "python-multipart",
+        "version": "0.0.20",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-5rvq-cxj2-64vf",
+        "GHSA-6jv3-5f52-599m",
+        "GHSA-mj87-hwqh-73pj",
+        "GHSA-pp6c-gr5w-3c5g",
+        "GHSA-v9pg-7xvm-68hf",
+        "GHSA-vffw-93wf-4j4q",
+        "GHSA-wp53-j4wj-2cfg",
+        "PYSEC-2026-1852",
+        "PYSEC-2026-3036",
+        "PYSEC-2026-3037",
+        "PYSEC-2026-3038",
+        "PYSEC-2026-3039",
+        "PYSEC-2026-3040",
+        "PYSEC-2026-3041"
+      ]
+    },
+    {
+      "package": {
+        "name": "pytorch-lightning",
+        "version": "2.5.5",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-75m9-98v2-hjpm",
+        "PYSEC-2026-3043",
+        "PYSEC-2026-3967"
+      ]
+    },
+    {
+      "package": {
+        "name": "requests",
+        "version": "2.32.5",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-gc5v-m9x4-r6x2",
+        "PYSEC-2026-2275"
+      ]
+    },
+    {
+      "package": {
+        "name": "setuptools",
+        "version": "80.9.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-h35f-9h28-mq5c",
+        "GHSA-xmj3-9gf7-h52w",
+        "PYSEC-2026-3447"
+      ]
+    },
+    {
+      "package": {
+        "name": "starlette",
+        "version": "0.48.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-7f5h-v6xp-fcq8",
+        "GHSA-82w8-qh3p-5jfq",
+        "GHSA-86qp-5c8j-p5mr",
+        "GHSA-jp82-jpqv-5vv3",
+        "GHSA-wqp7-x3pw-xc5r",
+        "GHSA-x746-7m8f-x49c",
+        "PYSEC-2026-161",
+        "PYSEC-2026-1942",
+        "PYSEC-2026-2280",
+        "PYSEC-2026-2281",
+        "PYSEC-2026-248",
+        "PYSEC-2026-249"
+      ]
+    },
+    {
+      "package": {
+        "name": "torch",
+        "version": "2.8.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qfhq-4f3w-5fph",
+        "GHSA-rrmf-rvhw-rf47",
+        "GHSA-vgrw-7cvw-pwgx",
+        "PYSEC-2025-203",
+        "PYSEC-2025-204",
+        "PYSEC-2025-206",
+        "PYSEC-2026-139",
+        "PYSEC-2026-2286"
+      ]
+    },
+    {
+      "package": {
+        "name": "torch",
+        "version": "2.8.0+cpu",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qfhq-4f3w-5fph",
+        "GHSA-rrmf-rvhw-rf47",
+        "GHSA-vgrw-7cvw-pwgx",
+        "PYSEC-2025-203",
+        "PYSEC-2025-204",
+        "PYSEC-2025-206",
+        "PYSEC-2026-139",
+        "PYSEC-2026-2286"
+      ]
+    },
+    {
+      "package": {
+        "name": "torch",
+        "version": "2.8.0+cu126",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qfhq-4f3w-5fph",
+        "GHSA-rrmf-rvhw-rf47",
+        "GHSA-vgrw-7cvw-pwgx",
+        "PYSEC-2025-203",
+        "PYSEC-2025-204",
+        "PYSEC-2025-206",
+        "PYSEC-2026-139",
+        "PYSEC-2026-2286"
+      ]
+    },
+    {
+      "package": {
+        "name": "torch",
+        "version": "2.8.0+cu128",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qfhq-4f3w-5fph",
+        "GHSA-rrmf-rvhw-rf47",
+        "GHSA-vgrw-7cvw-pwgx",
+        "PYSEC-2025-203",
+        "PYSEC-2025-204",
+        "PYSEC-2025-206",
+        "PYSEC-2026-139",
+        "PYSEC-2026-2286"
+      ]
+    },
+    {
+      "package": {
+        "name": "torch",
+        "version": "2.9.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-qfhq-4f3w-5fph",
+        "GHSA-rrmf-rvhw-rf47",
+        "GHSA-vgrw-7cvw-pwgx",
+        "PYSEC-2026-139",
+        "PYSEC-2026-2286"
+      ]
+    },
+    {
+      "package": {
+        "name": "urllib3",
+        "version": "2.5.0",
+        "ecosystem": "PyPI"
+      },
+      "advisories": [
+        "GHSA-2xpw-w6gg-jr37",
+        "GHSA-38jv-5279-wg99",
+        "GHSA-8988-9cw3-xx77",
+        "GHSA-gm62-xv2j-4w53",
+        "GHSA-qccp-gfcp-xxvc",
+        "GHSA-vxq7-64xx-v4gw",
+        "PYSEC-2026-141",
+        "PYSEC-2026-1994",
+        "PYSEC-2026-1996",
+        "PYSEC-2026-1998",
+        "PYSEC-2026-4175",
+        "PYSEC-2026-4177"
+      ]
+    }
+  ]
+}

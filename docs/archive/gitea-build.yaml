@@ -1,3 +1,5 @@
+# Historical, disabled: referenced Dockerfile and scripts/redeploy.py no longer exist.
+# Kept for provenance; supported builds use .github/workflows/build.yaml.
 name: Build and Push Docker Image
 on:
   push:

@@ -744,6 +744,6 @@ curl -X POST http://localhost:3000/api/resource/jobs \
 ## See Also
 
 - [VAD_TRIGGERING.md](./VAD_TRIGGERING.md) - VAD auto-triggering system
-- [WORKER_SERVER.md](../python/WORKER_SERVER.md) - Python FastAPI details
+- [Python worker guide](../python/README.md) - Python FastAPI details
 - [BullMQ Docs](https://docs.bullmq.io/) - Queue documentation
 - [FastAPI Docs](https://fastapi.tiangolo.com/) - Python framework
