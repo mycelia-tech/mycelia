@@ -48,6 +48,11 @@ import { MediaEventsPanel } from "@/components/media/MediaEventsPanel";
 import { MediaBatchPanel } from "@/components/media/MediaBatchPanel";
 import { MediaSectionNav } from "@/components/media/MediaSectionNav";
 import { MediaHint } from "@/components/media/MediaHint";
+import {
+  type InventoryFilter,
+  type MediaSortBy,
+  useMediaInventory,
+} from "@/modules/media/useMediaInventory";
 
 const MAX_MANAGED_UPLOAD_FILES = 50;
 const MAX_MANAGED_UPLOAD_TOTAL_BYTES = 48_000_000;
@@ -58,20 +63,6 @@ const DESCRIPTION_REQUESTABLE_STATUSES = new Set([
   "recognition_disabled",
 ]);
 
-type InventoryFilter =
-  | "all"
-  | "unprocessed"
-  | "processing"
-  | "ready"
-  | "errors"
-  | "ignored";
-type MediaSortBy =
-  | "capturedAt"
-  | "createdAt"
-  | "fileName"
-  | "status"
-  | "byteLength"
-  | "updatedAt";
 const MEDIA_SORTS = new Set<MediaSortBy>([
   "capturedAt",
   "createdAt",
@@ -238,10 +229,6 @@ function MediaPlacementEditor({
 export default function MediaPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [status, setStatus] = useState<any>();
-  const [assets, setAssets] = useState<any[]>([]);
-  const [assetTotal, setAssetTotal] = useState(0);
-  const [nextCursor, setNextCursor] = useState<string>();
   const [placementFilter, setPlacementFilter] = useState<
     "all" | "missing_time" | "missing_location"
   >((searchParams.get("placement") as any) ?? "all");
@@ -262,9 +249,6 @@ export default function MediaPage() {
     : "desc";
   const [preview, setPreview] = useState<any>();
   const [busy, setBusy] = useState(false);
-  const [inventoryLoading, setInventoryLoading] = useState(true);
-  const [inventoryRefreshing, setInventoryRefreshing] = useState(false);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date>();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>();
@@ -280,10 +264,6 @@ export default function MediaPage() {
     setReleasingOriginalDeletionAssetIds,
   ] = useState<Set<string>>(() => new Set());
   const [storagePanelOpen, setStoragePanelOpen] = useState(false);
-  const inventoryRequestGeneration = useRef(0);
-  const inventoryRequestActive = useRef(false);
-  const nextCursorRef = useRef<string | undefined>(undefined);
-  const loadedAssetCountRef = useRef(0);
   const selectedAssetIdRef = useRef("");
   const originalDeletionRequestGeneration = useRef(0);
   const deletionPreviewRef = useRef<
@@ -293,118 +273,25 @@ export default function MediaPage() {
     new Map<string, Promise<boolean>>(),
   );
 
-  const load = useCallback(async (
-    options: { append?: boolean; silent?: boolean } = {},
-  ) => {
-    if (options.silent && inventoryRequestActive.current) return;
-    const generation = ++inventoryRequestGeneration.current;
-    const cursor = options.append ? nextCursorRef.current : undefined;
-    if (options.append && !cursor) return;
-    inventoryRequestActive.current = true;
-    if (!options.silent) setInventoryLoading(true);
-    setInventoryRefreshing(true);
-    try {
-      const backendFilter = inventoryFilter === "errors"
-        ? "needs_attention"
-        : inventoryFilter;
-      const loadAssetPage = (pageCursor?: string, limit = 100) =>
-        callResource("media", {
-          action: "listAssets",
-          limit,
-          inventoryFilter: backendFilter,
-          placement: placementFilter,
-          sortBy,
-          sortDirection,
-          ...(pageCursor ? { cursor: pageCursor } : {}),
-        });
-      const loadRefreshedPrefix = async () => {
-        const target = loadedAssetCountRef.current > 0
-          ? loadedAssetCountRef.current
-          : 100;
-        const refreshed: any[] = [];
-        let refreshCursor: string | undefined;
-        let total = 0;
-        do {
-          const page = await loadAssetPage(
-            refreshCursor,
-            Math.min(500, Math.max(1, target - refreshed.length)),
-          );
-          refreshed.push(...(page.assets ?? []));
-          total = Number(page.total ?? total);
-          refreshCursor = page.nextCursor ? String(page.nextCursor) : undefined;
-        } while (refreshCursor && refreshed.length < target);
-        return { assets: refreshed, total, nextCursor: refreshCursor };
-      };
-      const [nextStatus, nextAssets] = await Promise.all([
-        callResource("media", { action: "status" }),
-        options.silent ? loadRefreshedPrefix() : loadAssetPage(cursor),
-      ]);
-      if (generation !== inventoryRequestGeneration.current) return;
-      setStatus(nextStatus);
-      if (options.append) {
-        loadedAssetCountRef.current += (nextAssets.assets ?? []).length;
-      } else {
-        loadedAssetCountRef.current = (nextAssets.assets ?? []).length;
-      }
-      setAssets((current) => {
-        if (!options.append) {
-          return nextAssets.assets ?? [];
-        }
-        const byId = new Map(
-          [...current, ...(nextAssets.assets ?? [])].map((asset: any) => [
-            String(asset._id),
-            asset,
-          ]),
-        );
-        const merged = [...byId.values()];
-        return merged;
-      });
-      nextCursorRef.current = nextAssets.nextCursor;
-      setNextCursor(nextAssets.nextCursor);
-      setAssetTotal(Number(nextAssets.total ?? nextAssets.assets?.length ?? 0));
-      setLastUpdatedAt(new Date());
-    } catch (error) {
-      if (generation !== inventoryRequestGeneration.current) return;
-      toast.error(
-        error instanceof Error ? error.message : "Failed to load Media Library",
-      );
-    } finally {
-      if (generation === inventoryRequestGeneration.current) {
-        inventoryRequestActive.current = false;
-        setInventoryLoading(false);
-        setInventoryRefreshing(false);
-      }
-    }
-  }, [inventoryFilter, placementFilter, sortBy, sortDirection]);
-
-  useEffect(() => {
-    nextCursorRef.current = undefined;
-    loadedAssetCountRef.current = 0;
-    setNextCursor(undefined);
+  const resetInventorySelection = useCallback(() => {
     setSelectedAssetIds([]);
     setAllMatchingSelected(false);
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (globalThis.document?.visibilityState === "visible") {
-        void load({ silent: true });
-      }
-    };
-    const timer = globalThis.setInterval(refreshWhenVisible, 5_000);
-    globalThis.document?.addEventListener(
-      "visibilitychange",
-      refreshWhenVisible,
-    );
-    return () => {
-      globalThis.clearInterval(timer);
-      globalThis.document?.removeEventListener(
-        "visibilitychange",
-        refreshWhenVisible,
-      );
-    };
-  }, [load]);
+  }, []);
+  const {
+    status,
+    assets,
+    assetTotal,
+    nextCursor,
+    inventoryLoading,
+    inventoryRefreshing,
+    lastUpdatedAt,
+    load,
+  } = useMediaInventory({
+    inventoryFilter,
+    placementFilter,
+    sortBy,
+    sortDirection,
+  }, resetInventorySelection);
 
   const searchProfile = useMemo(
     () =>
