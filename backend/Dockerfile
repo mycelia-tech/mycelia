@@ -8,7 +8,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY ./backend/deno.lock /app/deno.lock
 COPY ./backend/deno.json /app/deno.json
-RUN DENO_FUTURE=1 deno install --lock=deno.lock
+COPY ./backend/package.json /app/package.json
+RUN deno install --frozen
 COPY ./myceliasdk /myceliasdk
 COPY ./backend/. /app/
 CMD ["deno", "run", "-A", "server.ts", "serve", "--prod"]

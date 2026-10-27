@@ -1,5 +1,5 @@
 # Development Dockerfile - watches and rebuilds with hot reload
-FROM denoland/deno:2.6.3
+FROM denoland/deno:2.9.5@sha256:b429777c3dcff34a6488f365a1537db1640b2d48379b60f5e6206be034472463
 
 ENV DENO_DIR=/deno-dir
 ENV NODE_ENV=development
@@ -7,7 +7,7 @@ ENV NODE_ENV=development
 WORKDIR /app
 
 # Copy lockfiles and config first for better caching
-COPY ./frontend/deno.json ./frontend/deno.lock ./frontend/package.json ./frontend/package-lock.json ./
+COPY ./frontend/deno.json ./frontend/deno.lock ./frontend/package.json ./
 
 # Resolve the complete locked dependency graph before the bind-mounted source
 # starts Vite so container recreation does not reinstall application packages.

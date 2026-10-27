@@ -2,17 +2,6 @@ import { z } from "zod";
 import { ObjectId } from "bson";
 import { zIcon } from "./icon.ts";
 
-const zCustomFieldPrimitive = z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-]);
-
-const zCustomFieldValue = z.union([
-  zCustomFieldPrimitive,
-  z.array(zCustomFieldPrimitive),
-]);
-
 // Base schema without .loose() for clean type inference
 const zObjectBase = z.object({
   _id: z.instanceof(ObjectId),

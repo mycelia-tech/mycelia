@@ -8,7 +8,7 @@
     "build": "deno run -A npm:vite build",
     "preview": "deno run -A npm:vite preview",
     "lint": "deno lint",
-    "type-check": "deno check src/**/*.ts src/**/*.tsx",
+    "type-check": "deno check --frozen src/**/*.ts src/**/*.tsx",
     "test": "deno run -A npm:vitest",
     "test:ui": "deno run -A npm:vitest --ui",
     "test:coverage": "deno run -A npm:vitest --coverage"
@@ -47,7 +47,7 @@
     "@types/leaflet": "^1.9.21",
     "@xyflow/react": "^12.9.0",
     "ai": "^6.0.0-beta.129",
-    "bson": "^7.0.0",
+    "bson": "^6.10.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -84,6 +84,8 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
     "@eslint/js": "^9.37.0",
     "@tailwindcss/postcss": "^4.0.14",
     "@testing-library/jest-dom": "^6.9.1",
@@ -105,7 +107,7 @@
     "tailwindcss": "^4.1.5",
     "typescript": "^5.1.6",
     "typescript-eslint": "^8.46.1",
-    "vite": "^6.3.5",
+    "vite": "6.4.5",
     "vitest": "^3.2.4"
   }
 }

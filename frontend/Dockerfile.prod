@@ -1,5 +1,5 @@
 # ---------- Builder (Deno) ----------
-FROM denoland/deno:2.6.3 AS builder
+FROM denoland/deno:2.9.5@sha256:b429777c3dcff34a6488f365a1537db1640b2d48379b60f5e6206be034472463 AS builder
 
 ENV DENO_DIR=/deno-dir
 ENV NODE_ENV=production
@@ -7,7 +7,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 # Copy lockfiles and config first for better caching
-COPY ./frontend/deno.json ./frontend/deno.lock ./frontend/package.json ./frontend/package-lock.json ./
+COPY ./frontend/deno.json ./frontend/deno.lock ./frontend/package.json ./
 
 # Resolve the complete locked dependency graph before source is copied so
 # ordinary application edits keep this expensive layer cached.

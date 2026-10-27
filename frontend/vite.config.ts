@@ -15,6 +15,9 @@ const interfacesPath = existsSync("../myceliasdk")
 // Two zods in one bundle break the v4-only `_zod` internals the SDK writes to,
 // so pin every zod import to this package's copy.
 const zodPath = fileURLToPath(new URL("./node_modules/zod", import.meta.url));
+// Deno resolves npm imports with Node conditions. Explicitly select BSON's
+// browser entry so the production bundle uses Web Crypto rather than node:crypto.
+const bsonPath = fileURLToPath(new URL("./node_modules/bson/lib/bson.mjs", import.meta.url));
 const frontendLifecycleAt = new Date().toISOString();
 
 export default defineConfig({
@@ -51,8 +54,9 @@ export default defineConfig({
       "@": "./src",
       "@myceliasdk/": interfacesPath,
       "zod": zodPath,
+      "bson": bsonPath,
     },
-    dedupe: ["zod"],
+    dedupe: ["zod", "bson"],
   },
   server: {
     watch: {

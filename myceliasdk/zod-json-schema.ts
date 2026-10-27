@@ -6,10 +6,10 @@ function withJsonSchema<T extends z.ZodType>(
   schema: T,
   jsonSchema: Record<string, unknown>
 ): T {
-  (schema as any)._zod.toJSONSchema = () => jsonSchema;
+  Object.assign(schema._zod, { toJSONSchema: () => jsonSchema });
   // Zod 4's .describe()/.meta() clone the instance (new _zod) but share the
   // same def object, so the schema must also live on the def to survive them.
-  (schema as any)._zod.def.myceliaJsonSchema = jsonSchema;
+  Object.assign(schema._zod.def, { myceliaJsonSchema: jsonSchema });
   return schema;
 }
 
@@ -36,8 +36,7 @@ export const parseDateOrRelativeTime = (expr: string | Date): Date | undefined =
   }
 
   try {
-    // @ts-ignore
-    const relativeMs = ms(expr);
+    const relativeMs = ms(expr as Parameters<typeof ms>[0]);
     if (relativeMs) {
       return new Date(Date.now() - relativeMs);
     }
