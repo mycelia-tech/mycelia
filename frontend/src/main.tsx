@@ -3,12 +3,34 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { router } from "./router";
 import "./index.css";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { ActionDialogProvider } from "@/components/ActionDialogProvider";
 import { wsClient } from "@/lib/websocket";
+import { queryClient } from "@/lib/queryClient";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { resetPrivateClientState } from "@/lib/privateClientState";
 
-const queryClient = new QueryClient();
+useSettingsStore.subscribe((next, previous) => {
+  const identityChanged = next.apiEndpoint !== previous.apiEndpoint ||
+    next.clientId !== previous.clientId;
+  if (
+    identityChanged ||
+    (next.sessionStatus === "anonymous" &&
+      previous.sessionStatus !== "anonymous")
+  ) {
+    resetPrivateClientState();
+    wsClient.disconnect({ preserveSubscriptions: true });
+  }
+  if (
+    next.sessionStatus === "authenticated" &&
+    (identityChanged || previous.sessionStatus !== "authenticated")
+  ) {
+    void wsClient.connect().catch(() => {
+      // Subscriptions retry with backoff; no anonymous socket is opened.
+    });
+  }
+});
 
 // Redis Pub/Sub cannot replay messages that occurred during a reconnect. The
 // backend reports that delivery gap explicitly; invalidate canonical API state

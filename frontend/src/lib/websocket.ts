@@ -33,6 +33,8 @@ export class WebSocketClient {
   private isIntentionalClose = false;
   private isApplicationReady = false;
   private connectionPromise: Promise<void> | null = null;
+  private connectionEpoch = 0;
+  private cancelConnection: (() => void) | null = null;
 
   async connect(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN && this.isApplicationReady) {
@@ -45,24 +47,42 @@ export class WebSocketClient {
 
     this.isConnecting = true;
     this.isIntentionalClose = false;
-    this.connectionPromise = this._connect();
+    const epoch = ++this.connectionEpoch;
+    const connection = this._connect(epoch);
+    this.connectionPromise = connection;
 
     try {
-      await this.connectionPromise;
+      await connection;
+    } catch (error) {
+      if (
+        epoch === this.connectionEpoch && !this.isIntentionalClose &&
+        this.subscriptions.size > 0
+      ) {
+        this.scheduleReconnect();
+      }
+      throw error;
     } finally {
-      this.isConnecting = false;
-      this.connectionPromise = null;
+      if (this.connectionPromise === connection) {
+        this.isConnecting = false;
+        this.connectionPromise = null;
+      }
     }
   }
 
-  private async _connect(): Promise<void> {
+  private async _connect(epoch: number): Promise<void> {
+    const endpoint = apiClient.baseURL;
     const jwt = await apiClient.getJWT();
-    const wsUrl = new URL(apiClient.baseURL + "/ws");
-    wsUrl.protocol = wsUrl.protocol.replace("http", "ws");
-
-    if (jwt) {
-      wsUrl.searchParams.set("token", jwt);
+    if (
+      epoch !== this.connectionEpoch || this.isIntentionalClose ||
+      endpoint !== apiClient.baseURL
+    ) {
+      throw new Error("WebSocket connection was cancelled");
     }
+    if (!jwt) {
+      throw new Error("Authentication is required for WebSocket updates");
+    }
+    const wsUrl = new URL(endpoint + "/ws");
+    wsUrl.protocol = wsUrl.protocol.replace("http", "ws");
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -71,17 +91,24 @@ export class WebSocketClient {
         if (settled) return;
         settled = true;
         if (timeout !== null) clearTimeout(timeout);
+        this.cancelConnection = null;
         resolve();
       };
       const settleError = (error: Error) => {
         if (settled) return;
         settled = true;
         if (timeout !== null) clearTimeout(timeout);
+        this.cancelConnection = null;
         reject(error);
       };
+      this.cancelConnection = () =>
+        settleError(new Error("WebSocket connection was cancelled"));
 
       try {
-        const socket = new WebSocket(wsUrl.toString());
+        const socket = new WebSocket(wsUrl.toString(), [
+          "mycelia",
+          `mycelia.jwt.${jwt}`,
+        ]);
         this.ws = socket;
         this.isApplicationReady = false;
 
@@ -154,8 +181,13 @@ export class WebSocketClient {
     }
   }
 
-  disconnect(): void {
+  disconnect(options: { preserveSubscriptions?: boolean } = {}): void {
+    this.connectionEpoch++;
     this.isIntentionalClose = true;
+    this.cancelConnection?.();
+    this.cancelConnection = null;
+    this.isConnecting = false;
+    this.connectionPromise = null;
     this.isApplicationReady = false;
     this.pendingEpochSubscriptions.clear();
     this.awaitingEpochResync = false;
@@ -170,7 +202,7 @@ export class WebSocketClient {
       this.ws = null;
     }
 
-    this.subscriptions.clear();
+    if (!options.preserveSubscriptions) this.subscriptions.clear();
   }
 
   subscribe(channel: string, callback: EventCallback): () => void {

@@ -37,19 +37,14 @@ Deno.test(
 );
 
 Deno.test(
-  "getServerAuth falls back to system permissions if MYCELIA_JWT is invalid",
+  "getServerAuth refuses system permissions if MYCELIA_JWT is invalid",
   withFixtures([], async () => {
     const originalJwt = Deno.env.get("MYCELIA_JWT");
     try {
       // 1. Set an invalid token
       Deno.env.set("MYCELIA_JWT", "invalid-token");
       
-      // 2. Call getServerAuth
-      const auth = await getServerAuth();
-      
-      // 3. Verify fallback to system permissions
-      expect(auth.principal).toBe("server");
-      expect(auth.policies).toEqual([{ resource: "**", action: "*", effect: "allow" }]);
+      await expect(getServerAuth()).rejects.toBeInstanceOf(Response);
     } finally {
       if (originalJwt) {
         Deno.env.set("MYCELIA_JWT", originalJwt);

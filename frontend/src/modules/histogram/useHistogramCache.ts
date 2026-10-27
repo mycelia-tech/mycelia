@@ -11,6 +11,7 @@ export interface HistogramItem {
   start: Date;
   end: Date;
   stale: boolean;
+  topics?: unknown[];
   totals: {
     seconds: number;
     audio_chunks?: {
@@ -294,6 +295,7 @@ export const useHistogramCache = create<HistogramCacheStore>((set, get) => ({
             start: new Date(doc.start),
             end: new Date(new Date(doc.start).getTime() + binSize),
             stale: doc.stale || false,
+            topics: Array.isArray(doc.topics) ? doc.topics : undefined,
             totals: {
               seconds: binSize / 1000,
               ...doc.totals,

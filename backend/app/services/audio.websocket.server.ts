@@ -1,4 +1,5 @@
 import { type Auth, authenticate } from "@/lib/auth/core.server.ts";
+import { createWebSocketAuthRequest } from "@/lib/auth/websocket.ts";
 import { type WyomingHeader } from "@/lib/audio/wyoming.ts";
 import { Buffer } from "node:buffer";
 import type { IncomingMessage } from "node:http";
@@ -859,46 +860,17 @@ function handlePing(ws: WebSocket | any): void {
   );
 }
 
-async function createRequestFromUpgrade(
-  upgrade: IncomingMessage,
-): Promise<Request> {
-  const url = upgrade.url || "/";
-  const headers = new Headers();
-
-  for (const [key, value] of Object.entries(upgrade.headers)) {
-    if (value) {
-      if (Array.isArray(value)) {
-        headers.set(key, value.join(", "));
-      } else {
-        headers.set(key, value);
-      }
-    }
-  }
-
-  const urlObj = new URL(url, `http://${upgrade.headers.host || "localhost"}`);
-  const tokenParam = urlObj.searchParams.get("token");
-
-  if (tokenParam && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${tokenParam}`);
-  }
-
-  return new Request(urlObj.toString(), {
-    method: "GET",
-    headers,
-  });
-}
-
 export async function handlePcmWebSocket(
   ws: WebSocket | any,
   upgrade: IncomingMessage,
 ): Promise<void> {
+  const request = createWebSocketAuthRequest(upgrade);
   log("INFO", `[AUDIO_WS] WebSocket connection attempt`, {
-    url: upgrade.url,
+    path: request ? new URL(request.url).pathname : "invalid",
     remoteAddress: upgrade.socket?.remoteAddress,
   });
 
-  const request = await createRequestFromUpgrade(upgrade);
-  const auth = await authenticate(request);
+  const auth = request ? await authenticate(request) : null;
 
   if (ws.readyState !== WS_OPEN) {
     log("INFO", `[AUDIO_WS] WebSocket closed during authentication`);
@@ -906,7 +878,7 @@ export async function handlePcmWebSocket(
   }
 
   if (!auth) {
-    log("WARN", `[AUDIO_WS] WebSocket auth failed`, { url: upgrade.url });
+    log("WARN", `[AUDIO_WS] WebSocket auth failed`);
     closeWebSocket(
       ws,
       1008,

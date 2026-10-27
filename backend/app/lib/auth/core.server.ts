@@ -12,6 +12,7 @@ import {
 import { EJSON } from "bson";
 import { redis } from "@/lib/redis.ts";
 import { env } from "#/env.ts";
+import { type CredentialBinding, isActiveBrowserSession, readCredential, validateCredentialBindings } from "./credentials.ts";
 
 export interface APIKey {
   hashedKey: string;
@@ -60,12 +61,15 @@ export const accessLogger = new AccessLogger();
 export class Auth {
   policies: Policy[];
   principal: string;
+  credentialBindings?: CredentialBinding[];
   constructor(options: {
     policies?: Policy[];
     principal: string;
+    credentialBindings?: CredentialBinding[];
   }) {
     this.policies = options.policies || [];
     this.principal = options.principal;
+    this.credentialBindings = options.credentialBindings;
   }
 
   getResource<Input, Output>(
@@ -106,14 +110,31 @@ export class Auth {
   }
 }
 
-export const verifyToken = async (token: string): Promise<null | Auth> => {
+export const verifyToken = async (token: string, dependencies: {
+  readCredential?: typeof readCredential;
+  activeSession?: typeof isActiveBrowserSession;
+} = {}): Promise<null | Auth> => {
   try {
     const { payload } = await jwtVerify(
       token,
       new TextEncoder().encode(env.SECRET_KEY),
+      { algorithms: ["HS256"] },
     );
     if (typeof payload === "string") {
       permissionDenied();
+    }
+    if (typeof payload.principal !== "string" || !Array.isArray(payload.policies)) {
+      return null;
+    }
+    // Legacy unbound user JWTs must be exchanged again; accepting them would
+    // retain their old privileges after a key was revoked or downgraded.
+    if (payload.tokenKind === "credential") {
+      if (!await validateCredentialBindings(payload.credentialBindings, dependencies.readCredential)) return null;
+      if (payload.browserSessionId !== undefined &&
+        (typeof payload.browserSessionId !== "string" ||
+          !await (dependencies.activeSession ?? isActiveBrowserSession)(payload.browserSessionId))) return null;
+    } else if (payload.tokenKind !== "internal") {
+      return null;
     }
     return new Auth(EJSON.deserialize(payload));
   } catch (error) {
@@ -142,7 +163,7 @@ export const authenticate = async (
     return null;
   }
 
-  const token = authHeader.split(" ")[1];
+  const token = /^Bearer\s+(\S+)$/i.exec(authHeader)?.[1];
   if (!token) {
     return null;
   }
@@ -168,11 +189,15 @@ export const getServerAuth = async (): Promise<Auth> => {
   if (token) {
     const auth = await verifyToken(token);
     if (auth) return auth;
-    console.warn("MYCELIA_JWT found but invalid, falling back to system permissions");
+    permissionDenied("Worker token is invalid or expired");
   }
+  return getSystemAuth();
+};
 
+/** Internal server operations only; never use as a request-auth fallback. */
+export function getSystemAuth(): Auth {
   return new Auth({
     principal: "server",
     policies: [{ resource: "**", action: "*", effect: "allow" }],
   });
-};
+}

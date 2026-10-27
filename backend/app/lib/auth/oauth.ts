@@ -47,17 +47,15 @@ function parseRequestParams(req: ExpressRequest): URLSearchParams {
     }
   }
 
-  // Also check query params
-  for (const [k, v] of Object.entries(req.query || {})) {
-    if (v) params.set(k, String(v));
-  }
-
   return params;
 }
 
 export async function extractClientCredentials(
   req: ExpressRequest,
 ): Promise<ClientCredentials> {
+  if (["client_secret", "password", "access_token", "token"].some((name) => req.query?.[name] !== undefined)) {
+    return { clientId: "", clientSecret: "", grantType: null, scope: null };
+  }
   const authHeader = req.headers.authorization;
   const basic = parseBasicAuthHeader(authHeader);
   const params = parseRequestParams(req);
@@ -65,12 +63,12 @@ export async function extractClientCredentials(
   const scope = params.get("scope");
   const clientIdFromHeader = basic?.clientId || "";
   const clientSecretFromHeader = basic?.clientSecret || "";
-  const clientIdFromQuery = params.get("client_id") || params.get("username") ||
+  const clientIdFromBody = params.get("client_id") || params.get("username") ||
     "";
-  const clientSecretFromQuery = params.get("client_secret") ||
+  const clientSecretFromBody = params.get("client_secret") ||
     params.get("password") || "";
-  const clientId = clientIdFromQuery || clientIdFromHeader;
-  const clientSecret = clientSecretFromQuery || clientSecretFromHeader;
+  const clientId = clientIdFromBody || clientIdFromHeader;
+  const clientSecret = clientSecretFromBody || clientSecretFromHeader;
   return { clientId, clientSecret, grantType, scope };
 }
 

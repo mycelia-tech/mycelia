@@ -10,6 +10,7 @@ import { Filter } from "mongodb";
 import { Auth } from "../auth/index.ts";
 import { env } from "#/env.ts";
 import { withObjectListCategories } from "@/lib/objects/list-categories.ts";
+import { aggregateResourceActions } from "./pipeline-policy.ts";
 import {
   TIMELINE_DENSITY_SOURCE_WRITE_TIMEOUT_MS,
   withTimelineDensityWrite,
@@ -49,17 +50,20 @@ function createMongoClient(): MongoClient {
 interface CursorEntry {
   cursor: any;
   expiresAt: number;
-  principal: string;
+  collection: string;
+  authorizationScope: string;
 }
 
 const cursorMap = new Map<string, CursorEntry>();
 
 const CURSOR_TTL_MS = 30 * 60 * 1000;
 
-let cursorIdCounter = 0;
-
-function generateCursorId(principal: string): string {
-  return `${principal}:${Date.now()}:${++cursorIdCounter}`;
+function cursorAuthorizationScope(auth: Auth): string {
+  return JSON.stringify({
+    principal: auth.principal,
+    policies: auth.policies,
+    credentialBindings: auth.credentialBindings,
+  });
 }
 
 function cleanupExpiredCursors(): void {
@@ -375,10 +379,11 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
 
   private async executeFindWithCursor(
     collection: any,
+    collectionName: string,
     query: Record<string, any>,
     options: any,
     batchSize: number,
-    principal: string,
+    auth: Auth,
   ): Promise<{ cursorId: string; data: any[]; hasMore: boolean }> {
     cleanupExpiredCursors();
 
@@ -410,11 +415,12 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
       };
     }
 
-    const cursorId = generateCursorId(principal);
+    const cursorId = crypto.randomUUID();
     cursorMap.set(cursorId, {
       cursor,
       expiresAt: Date.now() + CURSOR_TTL_MS,
-      principal,
+      collection: collectionName,
+      authorizationScope: cursorAuthorizationScope(auth),
     });
 
     return { cursorId, data: results, hasMore };
@@ -424,7 +430,7 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
     collection: string,
     cursorId: string,
     batchSize: number,
-    principal: string,
+    auth: Auth,
   ): Promise<{ data: any[]; hasMore: boolean }> {
     cleanupExpiredCursors();
 
@@ -434,7 +440,10 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
       return { data: [], hasMore: false };
     }
 
-    if (cursorEntry.principal !== principal) {
+    if (
+      cursorEntry.collection !== collection ||
+      cursorEntry.authorizationScope !== cursorAuthorizationScope(auth)
+    ) {
       return { data: [], hasMore: false };
     }
 
@@ -479,13 +488,17 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
   }
 
   private async closeCursor(
+    collection: string,
     cursorId: string,
-    principal: string,
+    auth: Auth,
   ): Promise<{ closed: boolean }> {
     cleanupExpiredCursors();
 
     const cursorEntry = cursorMap.get(cursorId);
-    if (!cursorEntry || cursorEntry.principal !== principal) {
+    if (
+      !cursorEntry || cursorEntry.collection !== collection ||
+      cursorEntry.authorizationScope !== cursorAuthorizationScope(auth)
+    ) {
       return { closed: false };
     }
 
@@ -551,6 +564,7 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
         `Database operation failed: ${
           error instanceof Error ? error.message : "Unknown error"
         }`,
+        { cause: error },
       );
     }
   }
@@ -581,10 +595,11 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
       case "getFirstBatch": {
         return this.executeFindWithCursor(
           collection,
+          input.collection,
           input.query,
           input.options,
           input.batchSize,
-          auth.principal,
+          auth,
         );
       }
       case "getMore": {
@@ -592,11 +607,11 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
           input.collection,
           input.cursorId,
           input.batchSize,
-          auth.principal,
+          auth,
         );
       }
       case "closeCursor":
-        return this.closeCursor(input.cursorId, auth.principal);
+        return this.closeCursor(input.collection, input.cursorId, auth);
       case "insertOne": {
         const doc = {
           ...normalizeInsertedDocument(input.collection, input.doc),
@@ -779,7 +794,7 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
         if (op.updateOne || op.updateMany || op.replaceOne) {
           actionSet.add("update");
           const updateOp = op.updateOne || op.updateMany || op.replaceOne;
-          if (updateOp.options?.upsert) {
+          if (updateOp.upsert || updateOp.options?.upsert) {
             actionSet.add("write");
           }
         }
@@ -790,10 +805,7 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
       // though bulkWrite with no ops is technically a no-op.
       if (actions.length === 0) actions.push("read");
     } else if (input.action === "aggregate") {
-      const isWrite = input.pipeline.some(
-        (stage) => "$out" in stage || "$merge" in stage,
-      );
-      actions = isWrite ? ["read", "write", "update", "delete"] : ["read"];
+      return aggregateResourceActions(input.collection, input.pipeline);
     } else {
       actions = [...actionMap[input.action]];
       if (
@@ -826,6 +838,11 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
         },
         next: (input: MongoRequest, auth: Auth) => Promise<MongoResponse>,
       ) => {
+        if (input.action === "aggregate" || input.action === "bulkWrite") {
+          permissionDenied(
+            "Filtered credentials cannot execute aggregation or bulk writes",
+          );
+        }
         if (input.action === "insertOne") {
           const matcher = sift(arg.filter);
           if (!matcher(input.doc)) {

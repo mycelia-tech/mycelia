@@ -51,7 +51,13 @@ async function readApiError(response: Response): Promise<string> {
 }
 
 export class ApiClient {
-  private jwtCache: { token: string | null; expiry: number } | null = null;
+  private jwtCache: {
+    token: string;
+    expiry: number;
+    endpoint: string;
+    clientId: string;
+    revision: number;
+  } | null = null;
 
   private getConfig() {
     const { apiEndpoint, clientId, clientSecret } = useSettingsStore.getState();
@@ -59,16 +65,35 @@ export class ApiClient {
   }
 
   async getJWT(): Promise<string | null> {
-    if (this.jwtCache && this.jwtCache.expiry > Date.now()) {
+    const current = useSettingsStore.getState();
+    if (current.sessionStatus === "anonymous") this.jwtCache = null;
+    if (
+      this.jwtCache && this.jwtCache.expiry > Date.now() &&
+      this.jwtCache.endpoint === current.apiEndpoint &&
+      this.jwtCache.clientId === current.clientId &&
+      this.jwtCache.revision === current.sessionRevision
+    ) {
       return this.jwtCache.token;
     }
 
     const jwt = await getCurrentJWT();
 
     if (jwt) {
+      let expiry = Date.now() + 60_000;
+      try {
+        const payload = JSON.parse(
+          atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+        );
+        if (typeof payload.exp === "number") {
+          expiry = payload.exp * 1000 - 30_000;
+        }
+      } catch { /* Opaque tokens cannot be cached beyond one minute. */ }
       this.jwtCache = {
         token: jwt,
-        expiry: Date.now() + 6 * 60 * 60 * 1000,
+        expiry,
+        endpoint: useSettingsStore.getState().apiEndpoint,
+        clientId: useSettingsStore.getState().clientId,
+        revision: useSettingsStore.getState().sessionRevision,
       };
     }
 
@@ -103,6 +128,12 @@ export class ApiClient {
     for (const [key, value] of Object.entries(await this.getAuthHeaders())) {
       headers.set(key, value);
     }
+    // Session restoration can await network I/O. Never send credentials from
+    // the newly selected endpoint to the URL captured before that await.
+    const session = useSettingsStore.getState();
+    if (session.apiEndpoint !== apiEndpoint) {
+      throw new Error("Session changed before the request");
+    }
     for (const [key, value] of Object.entries(options.headers || {})) {
       headers.set(key, value);
     }
@@ -113,10 +144,19 @@ export class ApiClient {
       headers.set("Content-Type", "application/json");
     }
 
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...options,
       headers,
     });
+    const current = useSettingsStore.getState();
+    if (
+      current.apiEndpoint !== session.apiEndpoint ||
+      current.clientId !== session.clientId ||
+      current.sessionRevision !== session.sessionRevision
+    ) {
+      throw new Error("Session changed while the request was pending");
+    }
+    return response;
   }
 
   async fetch(path: string, options: RequestInit = {}): Promise<Response> {

@@ -5,6 +5,7 @@ import {
   rootHandler,
 } from "@/routes/health.ts";
 import { setupHandler } from "@/routes/setup.ts";
+import { browserSessionHandler } from "@/lib/auth/browser-session.ts";
 import { dataAudioHandler } from "@/routes/data.audio.ts";
 import { dataAudioItemsHandler } from "@/routes/data.audio.items.ts";
 import { apiResourceHandler } from "@/routes/api.resource.$name.ts";
@@ -51,6 +52,13 @@ export function registerRoutes(app: Express): void {
   app.get("/health", healthHandler);
   app.get("/readiness", readinessHandler);
   app.post("/api/setup", asyncHandler(setupHandler));
+  app.get("/api/setup", asyncHandler(setupHandler));
+  app.get("/auth/session", asyncHandler(browserSessionHandler));
+  app.delete("/auth/session", asyncHandler(browserSessionHandler));
+  app.post("/auth/session", withRateLimit(
+    { keyGenerator: (req) => `session:${req.ip || "unknown"}`, limit: 10, windowSeconds: 60 },
+    browserSessionHandler,
+  ));
   app.get("/data/audio", dataAudioHandler);
   app.get("/data/audio/items", dataAudioItemsHandler);
   app.post("/api/resource/:name", asyncHandler(apiResourceHandler));

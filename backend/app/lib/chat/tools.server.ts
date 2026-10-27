@@ -9,6 +9,16 @@ import type {
   ChatToolCatalogEntry,
   ChatToolPolicy,
 } from "@myceliasdk/messengers.ts";
+import { aggregateResourceActions } from "@/lib/mongo/pipeline-policy.ts";
+
+export function validateChatToolInput(toolName: string, input: unknown): void {
+  if (toolName !== "mongo_aggregate") return;
+  const aggregate = input as {
+    collection: string;
+    pipeline: Record<string, unknown>[];
+  };
+  aggregateResourceActions(aggregate.collection, aggregate.pipeline, true);
+}
 
 export const CHAT_AI_RESOURCE_CODES = [
   "search",
@@ -65,6 +75,7 @@ export function createChatTools(auth: Auth): Record<string, Tool> {
     toolsRequiringApproval: CHAT_TOOLS_REQUIRING_APPROVAL,
     toolFilter: chatToolFilter,
     resourceManager: defaultResourceManager,
+    validateInput: validateChatToolInput,
   });
 }
 
@@ -93,6 +104,7 @@ export function listChatTools(auth: Auth): ChatToolCatalogEntry[] {
     toolsRequiringApproval: CHAT_TOOLS_REQUIRING_APPROVAL,
     toolFilter: chatToolFilter,
     resourceManager: defaultResourceManager,
+    validateInput: validateChatToolInput,
   });
 
   return Object.entries(tools).map(([name, tool]) => {

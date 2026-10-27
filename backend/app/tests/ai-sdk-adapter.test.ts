@@ -1,17 +1,31 @@
-import { assert, assertEquals } from "jsr:@std/assert";
+import { assert, assertEquals } from "jsr:@std/assert@^1.0.14";
 import { z } from "zod";
-import { convertToModelMessages, jsonSchema, tool, validateUIMessages } from "ai";
 import {
-  resourceToTools,
+  convertToModelMessages,
+  jsonSchema,
+  tool,
+  validateUIMessages,
+} from "ai";
+import {
+  resourceToTools as createResourceTools,
+  type ToolAdapterOptions,
   zodSchemaToJsonSchema,
 } from "@/lib/mcp/ai-sdk-adapter.ts";
-import {
-  zDateOrString,
-  zObjectId,
-} from "@myceliasdk/zod-json-schema.ts";
+import { zDateOrString, zObjectId } from "@myceliasdk/zod-json-schema.ts";
 import { ObjectsResource } from "@/lib/objects/resource.server.ts";
 import { MongoResource } from "@/lib/mongo/core.server.ts";
 import { Auth } from "@/lib/auth/core.server.ts";
+import { type Resource, ResourceManager } from "@/lib/auth/resources.ts";
+
+function resourceToTools(
+  resource: Resource<any, any>,
+  auth: Auth,
+  options: Partial<ToolAdapterOptions> = {},
+) {
+  const resourceManager = new ResourceManager();
+  resourceManager.registerResource(resource);
+  return createResourceTools(resource, auth, { resourceManager, ...options });
+}
 import { chatToolFilter, sanitizeUIMessages } from "@/routes/api.chat.ts";
 
 function hasEmptySubschema(schema: unknown): boolean {
@@ -20,11 +34,14 @@ function hasEmptySubschema(schema: unknown): boolean {
   }
   if (schema && typeof schema === "object") {
     const obj = schema as Record<string, unknown>;
-    if (Array.isArray(obj.anyOf) && obj.anyOf.some((s) => {
-      if (!s || typeof s !== "object") return false;
-      const keys = Object.keys(s as Record<string, unknown>);
-      return keys.length === 0 || (keys.length === 1 && keys[0] === "description");
-    })) {
+    if (
+      Array.isArray(obj.anyOf) && obj.anyOf.some((s) => {
+        if (!s || typeof s !== "object") return false;
+        const keys = Object.keys(s as Record<string, unknown>);
+        return keys.length === 0 ||
+          (keys.length === 1 && keys[0] === "description");
+      })
+    ) {
       return true;
     }
     return Object.values(obj).some(hasEmptySubschema);
@@ -121,7 +138,9 @@ Deno.test("sanitizeUIMessages strips null-valued fields from parts", () => {
   assertEquals("providerMetadata" in message.parts[1], false);
   assertEquals(message.parts[1].text, "hi");
   const toolPart = message.parts[2];
-  for (const field of ["title", "output", "rawInput", "errorText", "preliminary"]) {
+  for (
+    const field of ["title", "output", "rawInput", "errorText", "preliminary"]
+  ) {
     assertEquals(field in toolPart, false, `${field} should be stripped`);
   }
   assertEquals(toolPart.approval, { id: "a1", approved: true });
@@ -145,7 +164,12 @@ Deno.test("stream-shaped messages with null fields pass validation after sanitiz
       metadata: { model: "test" },
       parts: [
         { type: "step-start" },
-        { type: "text", text: "Создам событие.", providerMetadata: null, state: "done" },
+        {
+          type: "text",
+          text: "Создам событие.",
+          providerMetadata: null,
+          state: "done",
+        },
         {
           type: "tool-objects_create",
           toolCallId: "c1",
@@ -200,7 +224,7 @@ Deno.test("approval-responded UI parts survive conversion to model messages", as
     },
   ], { tools, ignoreIncompleteToolCalls: true });
 
-  const flatParts = modelMessages.flatMap((message) =>
+  const flatParts = modelMessages.flatMap<unknown>((message) =>
     Array.isArray(message.content) ? message.content : []
   );
   assert(
@@ -219,7 +243,8 @@ Deno.test("objects_create timeRanges.start is a proper date-time schema", () => 
   const resource = new ObjectsResource();
   const tools = resourceToTools(resource, {} as Auth);
   const json = zodSchemaToJsonSchema(tools.objects_create.inputSchema) as any;
-  const start = json.properties.object.properties.timeRanges.items.properties.start;
+  const start =
+    json.properties.object.properties.timeRanges.items.properties.start;
   assertEquals(start.type, "string");
   assertEquals(start.format, "date-time");
 });

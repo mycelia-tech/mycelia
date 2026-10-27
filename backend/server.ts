@@ -14,7 +14,11 @@ import yargs, { type ArgumentsCamelCase, type Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
 import { generateApiKeyWithId, verifyApiKey } from "@/lib/auth/tokens.ts";
 import process, { exit } from "node:process";
-import { verifyToken } from "@/lib/auth/core.server.ts";
+import { authenticate, verifyToken } from "@/lib/auth/core.server.ts";
+import {
+  createWebSocketAuthRequest,
+  selectWebSocketProtocol,
+} from "@/lib/auth/websocket.ts";
 import { env } from "#/env.ts";
 import { type Policy } from "@/lib/auth/resources.ts";
 import express from "express";
@@ -261,6 +265,10 @@ async function startServer(
   const httpServer = createHttpServer(app);
 
   app.disable("x-powered-by");
+  // Only trust forwarding headers from an explicitly configured reverse proxy.
+  if (Deno.env.get("MYCELIA_TRUST_PROXY")) {
+    app.set("trust proxy", Deno.env.get("MYCELIA_TRUST_PROXY"));
+  }
   const corsOrigins = [
     env.MYCELIA_FRONTEND_HOST,
     "https://localhost:4433",
@@ -269,6 +277,7 @@ async function startServer(
   ].filter(Boolean) as string[];
   app.use(cors({
     origin: corsOrigins,
+    credentials: true,
     exposedHeaders: [
       "X-Mycelia-Chat-Id",
       "X-Mycelia-Model",
@@ -277,13 +286,19 @@ async function startServer(
   }));
   // HTTP request logging - disable with LOG_HTTP=false
   if (Deno.env.get("LOG_HTTP") !== "false") {
-    app.use(morgan("tiny", {
-      skip: (req: Request) =>
-        req.url === "/health" ||
-        req.url === "/readiness" ||
-        req.url?.startsWith("/api/audio/pipeline") ||
-        req.url?.startsWith("/api/resource/"),
-    }));
+    morgan.token("url-path", (req: Request) => (req.url || "/").split("?")[0]);
+    app.use(
+      morgan(
+        ":method :url-path :status :res[content-length] - :response-time ms",
+        {
+          skip: (req: Request) =>
+            req.url === "/health" ||
+            req.url === "/readiness" ||
+            req.url?.startsWith("/api/audio/pipeline") ||
+            req.url?.startsWith("/api/resource/"),
+        },
+      ),
+    );
   }
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
@@ -298,25 +313,17 @@ async function startServer(
     next();
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: selectWebSocketProtocol,
+  });
   const webSocketSupervisor = new WebSocketSupervisor();
   const activeWebSocketHandlers = new Set<Promise<void>>();
   webSocketSupervisor.start();
 
   async function isUpgradeAuthenticated(request: any): Promise<boolean> {
-    const authHeader = request.headers["authorization"];
-    if (authHeader) {
-      const token = authHeader.split(" ")[1];
-      if (token && await verifyToken(token)) return true;
-    }
-    // URL token param — kept for IoT/hardware devices that cannot set headers
-    const url = new URL(
-      request.url || "/",
-      `http://${request.headers.host || "localhost"}`,
-    );
-    const tokenParam = url.searchParams.get("token");
-    if (tokenParam && await verifyToken(tokenParam)) return true;
-    return false;
+    const normalized = createWebSocketAuthRequest(request);
+    return normalized !== null && await authenticate(normalized) !== null;
   }
 
   const runWebSocketHandler = (
@@ -398,7 +405,11 @@ async function startServer(
   if (Deno.env.get("DEBUG_REQUESTS") === "true") {
     app.use((req: Request, _res: Response, next: () => void) => {
       if (req.url !== "/health" && req.url !== "/readiness") {
-        console.log(`Incoming request: ${req.method} ${req.url}`);
+        console.log(
+          `Incoming request: ${req.method} ${
+            new URL(req.url || "/", "http://localhost").pathname
+          }`,
+        );
       }
       next();
     });

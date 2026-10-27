@@ -1,5 +1,39 @@
 # Authentication & Authorization Model
 
+## Enrollment and browser sessions
+
+The first administrator requires the private one-time `MYCELIA_BOOTSTRAP_TOKEN`
+created by setup. Concurrent enrollment is claimed atomically. Browser login
+exchanges an API key once for an opaque HttpOnly, Secure, SameSite=Strict session
+cookie; persistent client secrets are removed from localStorage. Sessions last
+24 hours and mint 15-minute access tokens kept only in memory. Cookie mutations
+require the configured Origin and CSRF header. HTTP is limited to explicit local
+development. Existing device API keys remain supported.
+Browser UI and API must be same-site for the Strict cookie; the supplied nginx
+configuration serves them together. Separate cross-site browser/API deployments
+need a same-site reverse proxy rather than restoring persistent browser secrets.
+
+Credential-derived JWTs and sessions are bound to the key identity and current
+permissions. Revocation and policy changes invalidate them. Existing unbound
+JWTs require a new key exchange. Internal worker tokens are explicitly marked,
+scoped to the worker manifest, and never replaced with system privileges after
+failed validation. Previously accepted jobs remain independent durable work;
+cancel them explicitly in Jobs.
+
+All AI/MCP calls go through ResourceManager, including union schemas. Chat
+aggregation rejects write stages; restricted Mongo operations cannot bypass
+filters through cross-collection pipelines, bulk writes or reused cursors.
+WebSocket subscriptions and delivery are permission checked; clients fetch
+document contents through the protected API after receiving minimal changes.
+JWTs are never put in WebSocket URLs. Device clients send
+`Authorization: Bearer <JWT>`; browsers use subprotocols
+`['mycelia', 'mycelia.jwt.<JWT>']`, and the server echoes only `mycelia`.
+Legacy `?token=` connections are rejected, even alongside a valid header.
+Do not log the credential-bearing `Sec-WebSocket-Protocol` request header.
+
+See [hardening and rollout](HARDENING.md) for compatibility, proxy configuration,
+verification and the separate Mongo authorization migration.
+
 Mycelia Authorization Model revolves around three main entities:
 
 1.  **Principal**: An entity (user, service, or API key) that wants to perform an action.

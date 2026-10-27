@@ -26,20 +26,19 @@ export interface ToolAdapterOptions {
   /** When provided, only tools for which this returns true are exposed */
   toolFilter?: (toolName: string) => boolean;
   /** Execute through policy extraction, matching, modifiers, and auditing. */
-  resourceManager?: ResourceManager;
+  resourceManager: ResourceManager;
+  /** Additional restrictions imposed by the tool's execution context. */
+  validateInput?: (toolName: string, input: unknown) => void;
 }
 
 async function executeResource<Input, Output>(
   resource: Resource<Input, Output>,
   input: Input,
   auth: Auth,
-  resourceManager?: ResourceManager,
+  resourceManager: ResourceManager,
 ): Promise<Output | Response> {
-  if (resourceManager) {
-    const run = resourceManager.getResource<Input, Output>(resource.code, auth);
-    return await run(input);
-  }
-  return await resource.use(input, auth);
+  const run = resourceManager.getResource<Input, Output>(resource.code, auth);
+  return await run(input);
 }
 
 /**
@@ -106,7 +105,7 @@ function extractActionDescription(
 export function resourceToTools<Input, Output>(
   resource: Resource<Input, Output>,
   auth: Auth,
-  options?: ToolAdapterOptions,
+  options: ToolAdapterOptions,
 ): Record<
   string,
   {
@@ -116,6 +115,9 @@ export function resourceToTools<Input, Output>(
     needsApproval?: boolean;
   }
 > {
+  if (!options?.resourceManager) {
+    throw new Error("A ResourceManager is required to execute resource tools");
+  }
   const toolsRequiringApproval = new Set(options?.toolsRequiringApproval ?? []);
   const toolFilter = options?.toolFilter;
   const schema = resource.schemas.request;
@@ -132,14 +134,14 @@ export function resourceToTools<Input, Output>(
 
   if ((def?.type === "union")) {
     const discriminator = def.discriminator;
-    const options = def.optionsMap
+    const unionOptions = def.optionsMap
       ? Array.from(def.optionsMap.values())
       : def.options;
     // Distinguish "no union actions recognized" (→ fallback below) from
     // "actions recognized but excluded by toolFilter" (→ return what's left).
     let recognizedAnyAction = false;
 
-    for (const optionSchema of options as z.ZodObject<any>[]) {
+    for (const optionSchema of unionOptions as z.ZodObject<any>[]) {
       const shape = optionSchema.shape;
 
       if (shape && shape[discriminator]) {
@@ -191,6 +193,7 @@ export function resourceToTools<Input, Output>(
               };
               // Parse through schema to apply Zod transforms (e.g., string → Date)
               const input = resource.schemas.request.parse(rawInput);
+              options.validateInput?.(toolName, input);
               const result = await executeResource(
                 resource,
                 input as Input,
@@ -221,6 +224,7 @@ export function resourceToTools<Input, Output>(
     execute: async (args: any) => {
       // Parse through schema to apply Zod transforms (e.g., string → Date)
       const input = resource.schemas.request.parse(args);
+      options.validateInput?.(resource.code, input);
       const result = await executeResource(
         resource,
         input,
@@ -237,7 +241,7 @@ export function resourceToTools<Input, Output>(
 export function createMCPToolsFromResources(
   resources: Resource<any, any>[],
   auth: Auth,
-  options?: ToolAdapterOptions,
+  options: ToolAdapterOptions,
 ): Record<
   string,
   {
@@ -266,7 +270,7 @@ export function createMCPToolsFromResources(
 export function createAiSdkToolsFromResources(
   resources: Resource<any, any>[],
   auth: Auth,
-  options?: ToolAdapterOptions,
+  options: ToolAdapterOptions,
 ): Record<string, Tool> {
   const tools = createMCPToolsFromResources(resources, auth, options);
   const aiSdkTools: Record<string, Tool> = {};
@@ -292,7 +296,7 @@ export function createAiSdkToolsFromResources(
 export function resourceToAiSdkTools<Input, Output>(
   resource: Resource<Input, Output>,
   auth: Auth,
-  options?: ToolAdapterOptions,
+  options: ToolAdapterOptions,
 ): Record<string, Tool> {
   const tools = resourceToTools(resource, auth, options);
   const aiSdkTools: Record<string, Tool> = {};

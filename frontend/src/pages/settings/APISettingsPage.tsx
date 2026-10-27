@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { exchangeApiKeyForJWT } from "@/lib/auth";
+import { exchangeApiKeyForJWT, endBrowserSession } from "@/lib/auth";
 import { callResource } from "@/lib/api";
 import { APIEndpointField } from "@/components/forms/APIEndpointField";
 import { ClientCredentialsFields } from "@/components/forms/ClientCredentialsFields";
@@ -68,23 +68,40 @@ const APISettingsPage = () => {
   const [updating, setUpdating] = useState(false);
 
   // --- Client config handlers ---
-  const handleSave = () => {
-    setApiEndpoint(localEndpoint);
-    setClientId(localClientId);
-    setClientSecret(localClientSecret);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2000);
+  const handleSave = async () => {
+    setIsExchanging(true);
+    setExchangeResult(null);
+    try {
+      const result = await exchangeApiKeyForJWT(localEndpoint, localClientId, localClientSecret);
+      if (!result.jwt) throw new Error(result.error || "Unable to start session");
+      setApiEndpoint(localEndpoint);
+      setClientId(localClientId);
+      setClientSecret("");
+      setLocalClientSecret("");
+      useSettingsStore.getState().setSessionStatus("authenticated");
+      setIsSaved(true);
+      setExchangeResult("success");
+      setTimeout(() => setIsSaved(false), 2000);
+    } catch (error) {
+      setExchangeResult(error instanceof Error ? error.message : "Unable to start session");
+    } finally { setIsExchanging(false); }
   };
 
   const handleClear = async () => {
     if (
       await confirmAction({
-        title: "Reset API credentials?",
-        description: "The locally saved client ID and secret will be cleared.",
-        actionLabel: "Reset credentials",
+        title: "Sign out of this browser?",
+        description: "The browser session will end. Your device API keys remain active.",
+        actionLabel: "Sign out",
         destructive: true,
       })
     ) {
+      try {
+        await endBrowserSession();
+      } catch (error) {
+        setExchangeResult(error instanceof Error ? error.message : "Sign out failed");
+        return;
+      }
       clearSettings();
       setLocalEndpoint(useSettingsStore.getState().apiEndpoint);
       setLocalClientId("");
@@ -93,29 +110,7 @@ const APISettingsPage = () => {
     }
   };
 
-  const handleExchangeToken = async () => {
-    setIsExchanging(true);
-    setExchangeResult(null);
-
-    try {
-      const result = await exchangeApiKeyForJWT(
-        localEndpoint,
-        localClientId,
-        localClientSecret,
-      );
-      if (result.jwt) {
-        setExchangeResult("success");
-      } else {
-        setExchangeResult(result.error || "Token invalid");
-      }
-    } catch (err) {
-      setExchangeResult(
-        err instanceof Error ? err.message : "Connection failed",
-      );
-    } finally {
-      setIsExchanging(false);
-    }
-  };
+  const handleExchangeToken = handleSave;
 
   const hasChanges = localEndpoint !== apiEndpoint ||
     localClientId !== clientId || localClientSecret !== clientSecret;

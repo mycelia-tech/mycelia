@@ -323,8 +323,6 @@ async function publishMongoChange(
     collection: collectionName,
     operationType,
     documentId,
-    document,
-    updateDescription,
     changedFields: normalizeChangedFields(updateDescription),
     timestamp: new Date().toISOString(),
   };

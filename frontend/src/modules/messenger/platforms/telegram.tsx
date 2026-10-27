@@ -283,12 +283,7 @@ const TelegramMessageComponent: Platform["MessageComponent"] = ({ message }) => 
   }
 
   // Handle Text Messages (primary use case)
-  const hasText = message.text && (
-    typeof message.text === 'string' 
-      ? message.text.length > 0 
-      : (Array.isArray(message.text) && message.text.length > 0) || 
-        (typeof message.text === 'object' && message.text !== null)
-  );
+  const hasText = !!message.text?.length;
 
   if (hasText) {
     return (

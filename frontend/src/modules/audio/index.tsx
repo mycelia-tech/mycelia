@@ -9,6 +9,7 @@ import { PlayPauseButton } from "./PlayPauseButton.tsx";
 import GainSlider from "./GainSlider.tsx";
 import { useTranscripts } from "./useTranscripts.ts";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
+import { useHistogramItems } from "@/modules/histogram/useHistogramItems";
 
 export const AudioPlayerTool: Tool = {
   component: () => {
@@ -144,9 +145,9 @@ export const TopicsLayer: () => Layer = () => {
 
       const resolution = "5min";
 
-      const { items } = useAudioItems(start, end, resolution);
+      const { items } = useHistogramItems(start, end, resolution);
 
-      const sToShift = (s: any) => {
+      const sToShift = (s: { ts: number; siblingCount: number }) => {
         return (s.ts - centerMs) / 100 / (s.siblingCount) + width / 2;
       };
 

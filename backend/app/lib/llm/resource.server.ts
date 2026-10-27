@@ -1108,6 +1108,14 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
               );
             }
             baseUrl = baseUrl || profile.baseUrl;
+            if (
+              apiKey === undefined &&
+              new URL(baseUrl).origin !== new URL(profile.baseUrl).origin
+            ) {
+              throw new Error(
+                "Stored provider credentials cannot be sent to another origin; provide explicit credentials for this endpoint",
+              );
+            }
             apiKey = apiKey ?? profile.apiKey;
           }
           if (!baseUrl) {
@@ -1177,6 +1185,14 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
               );
             }
             baseUrl = baseUrl || profile.baseUrl;
+            if (
+              apiKey === undefined &&
+              new URL(baseUrl).origin !== new URL(profile.baseUrl).origin
+            ) {
+              throw new Error(
+                "Stored provider credentials cannot be sent to another origin; provide explicit credentials for this endpoint",
+              );
+            }
             apiKey = apiKey ?? profile.apiKey;
           }
           if (!baseUrl) throw new Error("LLM provider URL is required");
@@ -1288,8 +1304,14 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
 
   extractActions(input: LLMRequest) {
     if (
-      input.action === "list" || input.action === "models" ||
       input.action === "probe" ||
+      (input.action === "models" &&
+        (input.baseUrl !== undefined || input.apiKey !== undefined))
+    ) {
+      return [{ path: ["llm", "providers"], actions: ["probe"] }];
+    }
+    if (
+      input.action === "list" || input.action === "models" ||
       input.action === "environment_status"
     ) {
       return [{

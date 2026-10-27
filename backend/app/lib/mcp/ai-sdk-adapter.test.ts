@@ -1,11 +1,96 @@
 import { expect } from "@std/expect";
 import { z } from "zod";
 import {
-  createAiSdkToolsFromResources,
-  resourceToAiSdkTools,
+  createAiSdkToolsFromResources as createTools,
+  resourceToAiSdkTools as createResourceTools,
+  resourceToTools,
+  type ToolAdapterOptions,
 } from "./ai-sdk-adapter.ts";
 import { Resource, ResourceManager } from "@/lib/auth/resources.ts";
-import { Auth } from "@/lib/auth/core.server.ts";
+import { accessLogger, Auth } from "@/lib/auth/core.server.ts";
+
+// Exercise real policy enforcement without connecting the audit sink to Redis.
+accessLogger.log = async () => {};
+
+function managerFor(resources: Resource<any, any>[]) {
+  const manager = new ResourceManager();
+  resources.forEach((resource) => manager.registerResource(resource));
+  return manager;
+}
+
+function resourceToAiSdkTools(
+  resource: Resource<any, any>,
+  auth: Auth,
+  options: Partial<ToolAdapterOptions> = {},
+) {
+  return createResourceTools(resource, auth, {
+    resourceManager: managerFor([resource]),
+    ...options,
+  });
+}
+
+function createAiSdkToolsFromResources(
+  resources: Resource<any, any>[],
+  auth: Auth,
+  options: Partial<ToolAdapterOptions> = {},
+) {
+  return createTools(resources, auth, {
+    resourceManager: managerFor(resources),
+    ...options,
+  });
+}
+
+Deno.test("tool generation refuses missing policy manager", () => {
+  expect(() =>
+    resourceToTools(
+      new SimpleTestResource(),
+      mockAuth,
+      {} as ToolAdapterOptions,
+    )
+  ).toThrow("ResourceManager is required");
+});
+
+Deno.test("union tools enforce deny policies before resource use", async () => {
+  const resource = new DiscriminatedUnionResource();
+  let calls = 0;
+  resource.use = async () => {
+    calls++;
+    return { result: "forbidden" };
+  };
+  const auth = new Auth({ principal: "restricted", policies: [] });
+  const tools = resourceToTools(resource, auth, {
+    resourceManager: managerFor([resource]),
+  });
+  await expect(tools.test_discriminated_get.execute({ id: "one" })).rejects
+    .toBeInstanceOf(Response);
+  expect(calls).toBe(0);
+});
+
+Deno.test("union tool execution preserves policy modifiers", async () => {
+  const resource = new DiscriminatedUnionResource();
+  const scopedResource = Object.assign(resource, {
+    modifiers: {
+      scoped: {
+        use: async ({ input, auth }: any, next: any) =>
+          next({ ...input, id: "scoped" }, auth),
+      },
+    },
+  });
+  const auth = new Auth({
+    principal: "restricted",
+    policies: [{
+      resource: "test/**",
+      action: "*",
+      effect: "modify",
+      middleware: { code: "scoped" },
+    }],
+  });
+  const tools = resourceToTools(scopedResource, auth, {
+    resourceManager: managerFor([scopedResource]),
+  });
+  expect(await tools.test_discriminated_get.execute({ id: "untrusted" }))
+    .toEqual({ type: "json", value: { result: "Got scoped" } });
+});
 
 // Test resource with simple schema
 class SimpleTestResource

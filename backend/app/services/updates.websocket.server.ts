@@ -1,6 +1,11 @@
 import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "npm:ws@^8.18.0";
-import { authenticate } from "@/lib/auth/core.server.ts";
+import { type Auth, authenticate } from "@/lib/auth/core.server.ts";
+import {
+  defaultResourceManager,
+  type ResourceAction,
+  type ResourceManager,
+} from "@/lib/auth/resources.ts";
 import { getQueue } from "@/lib/jobs/queue.ts";
 import { jobRegistry } from "@/lib/jobs/job-registry.ts";
 import {
@@ -15,37 +20,7 @@ import {
   updatesPubSubHub,
 } from "@/services/updates-pubsub.server.ts";
 import { chatUserChannel } from "@/lib/chat/events.server.ts";
-
-export async function createRequestFromUpgrade(
-  upgrade: IncomingMessage,
-): Promise<Request> {
-  const url = upgrade.url || "/";
-  const headers = new Headers();
-
-  for (const [key, value] of Object.entries(upgrade.headers)) {
-    if (value) {
-      if (Array.isArray(value)) {
-        headers.set(key, value.join(", "));
-      } else {
-        headers.set(key, value);
-      }
-    }
-  }
-
-  const protocol = "http";
-  const host = upgrade.headers.host || "localhost";
-  const urlObject = new URL(url, `${protocol}://${host}`);
-  const token = urlObject.searchParams.get("token");
-
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  return new Request(urlObject, {
-    method: "GET",
-    headers,
-  });
-}
+import { createWebSocketAuthRequest } from "@/lib/auth/websocket.ts";
 
 interface ClientMessage {
   type: "subscribe" | "unsubscribe" | "ping";
@@ -70,6 +45,55 @@ interface ServerMessage {
 
 type SessionState = "new" | "open" | "closing" | "closed";
 
+export async function authorizeUpdatesChannel(
+  auth: Auth,
+  channel: string,
+  manager: ResourceManager = defaultResourceManager,
+): Promise<boolean> {
+  let actions: ResourceAction[];
+  const mongo = /^mongo:([a-zA-Z0-9_.-]+)(?::[a-zA-Z0-9_.-]+)?$/.exec(channel);
+  if (mongo) actions = [{ path: ["db", mongo[1]], actions: ["read"] }];
+  else if (/^jobs:(\*|[a-zA-Z0-9_.-]+)(:logs)?$/.test(channel)) {
+    actions = [{ path: ["jobs"], actions: ["read"] }];
+    if (channel.endsWith(":logs")) {
+      actions.push({ path: ["db", "job_logs"], actions: ["read"] });
+    }
+  } else if (channel === "objects:*") {
+    actions = [{ path: ["objects"], actions: ["read"] }];
+  } else if (channel === "timeline:*") {
+    actions = [{ path: ["timeline"], actions: ["read"] }];
+  } else if (channel === "chat:self") {
+    actions = [{ path: ["chat", "read"], actions: ["read"] }];
+  } else return false;
+  try {
+    // A row-filter modifier cannot safely authorize an unfiltered event stream.
+    await manager.ensureAllowed(auth, ...actions);
+    return true;
+  } catch (error) {
+    if (error instanceof Response && error.status === 403) return false;
+    throw error;
+  }
+}
+
+export function publicUpdatesData(channel: string, data: unknown): unknown {
+  if (!channel.startsWith("mongo:") && channel !== "objects:*") return data;
+  if (!data || typeof data !== "object") return {};
+  const source = data as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  const keys = channel.startsWith("mongo:")
+    ? ["collection", "operationType", "documentId", "timestamp"]
+    : ["objectId", "timestamp"];
+  for (const key of keys) {
+    if (typeof source[key] === "string") result[key] = source[key];
+  }
+  if (Array.isArray(source.changedFields)) {
+    result.changedFields = source.changedFields.filter((field) =>
+      typeof field === "string"
+    );
+  }
+  return result;
+}
+
 export class UpdatesWebSocketSession {
   private readonly subscriptions = new Set<string>();
   private readonly subscriptionAliases = new Map<string, string>();
@@ -81,7 +105,7 @@ export class UpdatesWebSocketSession {
   private resolveClosed: () => void = () => undefined;
   readonly closed: Promise<void>;
 
-  private readonly handlePubSubEvent = (event: UpdatesPubSubEvent) => {
+  private readonly handlePubSubEvent = async (event: UpdatesPubSubEvent) => {
     if (this.state !== "open") return;
 
     try {
@@ -89,11 +113,16 @@ export class UpdatesWebSocketSession {
       const clientChannel = [...this.subscriptionAliases.entries()].find(
         ([, serverChannel]) => serverChannel === event.channel,
       )?.[0] ?? event.channel;
+      if (
+        !await this.refreshAuthorization() || this.state !== "open" ||
+        !this.subscriptions.has(clientChannel) ||
+        !await authorizeUpdatesChannel(this.auth, clientChannel)
+      ) return;
       this.sendMessage({
         type: "event",
         channel: clientChannel,
         event: payload.event,
-        data: payload.data,
+        data: publicUpdatesData(clientChannel, payload.data),
       });
     } catch (error) {
       console.error(
@@ -105,8 +134,10 @@ export class UpdatesWebSocketSession {
 
   constructor(
     private readonly ws: WebSocket,
-    private readonly hub: UpdatesPubSubHub = updatesPubSubHub,
+    private readonly hub: UpdatesPubSubHub,
+    private auth: Auth,
     private readonly scopedChatChannel?: string,
+    private readonly refreshAuth?: () => Promise<Auth | null>,
   ) {
     this.closed = new Promise((resolve) => {
       this.resolveClosed = resolve;
@@ -115,6 +146,18 @@ export class UpdatesWebSocketSession {
 
   get isOpen(): boolean {
     return this.state === "open";
+  }
+
+  private async refreshAuthorization(): Promise<boolean> {
+    if (!this.refreshAuth) return true;
+    const auth = await this.refreshAuth();
+    if (auth && auth.principal === this.auth.principal) {
+      this.auth = auth;
+      return true;
+    }
+    closeWebSocket(this.ws, 1008, "Unauthorized", "/ws");
+    void this.cleanup();
+    return false;
   }
 
   initialize(): Promise<void> {
@@ -140,6 +183,7 @@ export class UpdatesWebSocketSession {
     const operation = this.commandTail.then(async () => {
       await this.initialize();
       if (this.state !== "open") return;
+      if (!await this.refreshAuthorization()) return;
       await this.handleMessage(rawMessage);
     });
 
@@ -183,6 +227,10 @@ export class UpdatesWebSocketSession {
             type: "error",
             message: "Chat channel is unavailable",
           });
+          return;
+        }
+        if (!await authorizeUpdatesChannel(this.auth, message.channel)) {
+          this.sendMessage({ type: "error", message: "Channel access denied" });
           return;
         }
         await this.subscribe(message.channel);
@@ -340,8 +388,8 @@ export async function handleUpdatesWebSocket(
 ): Promise<void> {
   console.log("[WS] /ws connection attempt");
 
-  const req = await createRequestFromUpgrade(request);
-  const auth = await authenticate(req);
+  const req = createWebSocketAuthRequest(request);
+  const auth = req ? await authenticate(req) : null;
   if (!auth) {
     console.log("[WS] /ws authentication failed");
     closeWebSocket(ws, 1008, "Unauthorized", "/ws");
@@ -352,7 +400,9 @@ export async function handleUpdatesWebSocket(
   const session = new UpdatesWebSocketSession(
     ws,
     updatesPubSubHub,
+    auth,
     await chatUserChannel(auth.principal),
+    () => req ? authenticate(req) : Promise.resolve(null),
   );
 
   const removeListeners = () => {

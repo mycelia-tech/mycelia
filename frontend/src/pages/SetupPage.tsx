@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { exchangeApiKeyForJWT } from "@/lib/auth";
+import { exchangeApiKeyForJWT, getCurrentJWT } from "@/lib/auth";
 import {
   getDockerSetupEndpoint,
   getDockerTokenCommand,
@@ -61,6 +61,7 @@ export default function SetupPage() {
     apiEndpoint,
     clientId,
     clientSecret,
+    sessionStatus,
     setApiEndpoint,
     setClientId,
     setClientSecret,
@@ -70,6 +71,8 @@ export default function SetupPage() {
   const [localEndpoint, setLocalEndpoint] = useState(apiEndpoint || serverEndpoints.docker);
   const [localClientId, setLocalClientId] = useState("");
   const [localToken, setLocalToken] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
+  const connectionRequest = useRef<AbortController | null>(null);
   const [pastedCredentials, setPastedCredentials] = useState("");
   const [status, setStatus] = useState<SetupStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -114,30 +117,31 @@ export default function SetupPage() {
       testServerConnection();
     }, 500);
 
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); connectionRequest.current?.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localEndpoint]);
 
   const testServerConnection = async () => {
+    connectionRequest.current?.abort();
+    const controller = new AbortController();
+    connectionRequest.current = controller;
     setServerTestStatus("testing");
     setServerTestError(null);
 
     try {
       const response = await fetch(`${localEndpoint}/api/setup`, {
         method: "GET",
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
       });
 
-      // Any response means server is reachable (even 4xx/5xx)
-      // 502 specifically means proxy can't reach backend
-      if (response.status === 502) {
-        setServerTestStatus("error");
-        setServerTestError("Backend server is not running.");
-      } else {
-        setServerTestStatus("success");
-        setServerTestError(null);
-      }
+      const body = await response.json().catch(() => null);
+      if (controller.signal.aborted) return;
+      if (!response.ok) throw new Error(`Server returned HTTP ${response.status}.`);
+      if (body?.service !== "mycelia") throw new Error("The address did not return a Mycelia setup response.");
+      setServerTestStatus("success");
+      setServerTestError(null);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setServerTestStatus("error");
       if (error instanceof Error) {
         if (error.name === "TimeoutError") {
@@ -178,10 +182,11 @@ export default function SetupPage() {
 
   // Redirect if already configured
   useEffect(() => {
-    if (clientId && clientSecret) {
+    if (sessionStatus === "unknown") void getCurrentJWT();
+    if (sessionStatus === "authenticated") {
       navigate("/setup/inference", { replace: true });
     }
-  }, [clientId, clientSecret, navigate]);
+  }, [sessionStatus, navigate]);
 
   const verifyAndSaveCredentials = async () => {
     if (!localClientId || !localToken) {
@@ -202,7 +207,8 @@ export default function SetupPage() {
 
       if (result.jwt) {
         setClientId(localClientId);
-        setClientSecret(localToken);
+        setClientSecret("");
+        setLocalToken("");
         setStatus("success");
 
         setTimeout(() => {
@@ -243,6 +249,7 @@ export default function SetupPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Mycelia-Bootstrap": bootstrapToken,
         },
         body: JSON.stringify({ create: true, name: tokenName }),
       });
@@ -270,8 +277,14 @@ export default function SetupPage() {
       }
 
       if (data.created && data.clientId && data.clientSecret) {
+        setLocalClientId(data.clientId);
+        setLocalToken(data.clientSecret);
+        const result = await exchangeApiKeyForJWT(localEndpoint, data.clientId, data.clientSecret);
+        if (!result.jwt) throw new Error(result.error || "Unable to start browser session");
         setClientId(data.clientId);
-        setClientSecret(data.clientSecret);
+        setClientSecret("");
+        setBootstrapToken("");
+        setLocalToken("");
         setStatus("success");
 
         setTimeout(() => {
@@ -470,7 +483,8 @@ export default function SetupPage() {
                         .then((result) => {
                           if (result.jwt) {
                             setClientId(foundClientId);
-                            setClientSecret(foundToken);
+                            setClientSecret("");
+                            setLocalToken("");
                             setStatus("success");
                             setTimeout(() => navigate("/setup/inference", { replace: true }), 1500);
                           } else {
@@ -575,7 +589,7 @@ export default function SetupPage() {
                       <span className="text-slate-400">Testing connection...</span>
                     )}
                     {serverTestStatus === "success" && (
-                      <span className="text-green-400">Server is reachable</span>
+                      <span className="text-green-400">Mycelia server recognized; sign in to verify access</span>
                     )}
                     {serverTestStatus === "error" && serverTestError && (
                       <span className="text-red-400">{serverTestError}</span>
@@ -672,10 +686,17 @@ export default function SetupPage() {
                   </div>
                 </div>
 
+                <Label htmlFor="bootstrapToken" className="text-slate-200 block">
+                  One-time bootstrap token (new installations only)
+                </Label>
+                <Input id="bootstrapToken" type="password" autoComplete="off"
+                  value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)}
+                  placeholder="MYCELIA_BOOTSTRAP_TOKEN from your local configuration"
+                  className="bg-white/10 border-white/20 text-white" />
                 <Button
                   type="button"
                   onClick={createNewCredentials}
-                  disabled={isLoading}
+                  disabled={isLoading || bootstrapToken.length < 32}
                   variant="outline"
                   className="w-full border-purple-500/50 text-purple-300 hover:bg-purple-500/20 hover:text-white py-5 rounded-xl disabled:opacity-50"
                 >

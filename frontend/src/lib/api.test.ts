@@ -19,10 +19,45 @@ describe("ApiClient", () => {
       apiEndpoint: "http://localhost:8000",
       clientId: "test-client",
       clientSecret: "test-secret",
+      sessionStatus: "authenticated",
+      sessionRevision: 0,
     });
   });
 
   describe("fetch", () => {
+    it("never forwards a newly restored token to the previously selected endpoint", async () => {
+      let finish!: (token: string) => void;
+      vi.mocked(auth.getCurrentJWT).mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const pending = client.fetch("/test");
+      useSettingsStore.getState().setApiEndpoint("https://different.test");
+      finish("new-endpoint-token");
+      await expect(pending).rejects.toThrow(
+        "Session changed before the request",
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects an old account response after logout", async () => {
+      let finish!: (response: Response) => void;
+      vi.mocked(fetch).mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+      vi.mocked(auth.getCurrentJWT).mockResolvedValue("old-token");
+      const pending = client.fetch("/test");
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+      useSettingsStore.getState().setSessionStatus("anonymous");
+      finish(new Response("private"));
+      await expect(pending).rejects.toThrow(
+        "Session changed while the request was pending",
+      );
+    });
+
     it("makes successful GET request", async () => {
       const mockResponse = {
         ok: true,

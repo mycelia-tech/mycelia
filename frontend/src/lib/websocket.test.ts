@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/api", () => ({
   apiClient: {
     baseURL: "http://localhost:5173",
-    getJWT: vi.fn().mockResolvedValue(null),
+    getJWT: vi.fn().mockResolvedValue("test-token"),
   },
 }));
 
 import { WebSocketClient } from "./websocket";
+import { apiClient } from "./api";
 
 class FakeWebSocket {
   static readonly CONNECTING = 0;
@@ -25,7 +26,7 @@ class FakeWebSocket {
   onerror: ((error: unknown) => void) | null = null;
   onclose: (() => void) | null = null;
 
-  constructor(readonly url: string) {
+  constructor(readonly url: string, readonly protocols?: string[]) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -51,11 +52,74 @@ class FakeWebSocket {
 describe("WebSocket application readiness", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
+    vi.mocked(apiClient.getJWT).mockReset().mockResolvedValue("test-token");
     vi.stubGlobal("WebSocket", FakeWebSocket);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("never opens an anonymous socket and allows retry after sign-in", async () => {
+    const client = new WebSocketClient();
+    vi.mocked(apiClient.getJWT).mockResolvedValueOnce(null);
+    await expect(client.connect()).rejects.toThrow(
+      "Authentication is required",
+    );
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    const connection = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    expect(new URL(socket.url).search).toBe("");
+    expect(socket.url).not.toContain("test-token");
+    expect(socket.protocols).toEqual(["mycelia", "mycelia.jwt.test-token"]);
+    socket.open();
+    socket.receive({ type: "ready" });
+    await connection;
+    client.disconnect();
+  });
+
+  it("ignores a token arriving after logout without blocking a new session", async () => {
+    const client = new WebSocketClient();
+    let finish!: (token: string | null) => void;
+    vi.mocked(apiClient.getJWT).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const previous = client.connect().catch((error) => error);
+    client.disconnect();
+    const next = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    finish("stale-token");
+    expect(await previous).toBeInstanceOf(Error);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "ready" });
+    await next;
+    client.disconnect();
+  });
+
+  it("cancels a pending handshake and restores preserved subscriptions after reauth", async () => {
+    const client = new WebSocketClient();
+    client.subscribe("jobs:*", vi.fn());
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const pending = client.connect().catch((error) => error);
+    client.disconnect({ preserveSubscriptions: true });
+    expect(await pending).toBeInstanceOf(Error);
+    const next = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    const socket = FakeWebSocket.instances[1];
+    socket.open();
+    socket.receive({ type: "ready" });
+    await next;
+    expect(socket.sent.map((message) => JSON.parse(message))).toContainEqual({
+      type: "subscribe",
+      channel: "jobs:*",
+    });
+    client.disconnect();
   });
 
   it("sends subscriptions only after the server ready message", async () => {

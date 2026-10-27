@@ -1,11 +1,16 @@
 import { useEffect, useMemo } from "react";
 import { getResolutionForDuration, RESOLUTION_TO_MS } from "@/lib/resolution";
+import type { Resolution } from "@/lib/resolution";
 import { type HistogramItem, useHistogramCache } from "./useHistogramCache";
 import { useWebSocketSubscription } from "@/hooks/useWebSocket";
 
 export type { HistogramItem };
 
-export function useHistogramItems(start: Date, end: Date) {
+export function useHistogramItems(
+  start: Date,
+  end: Date,
+  fixedResolution?: Resolution,
+) {
   const {
     data,
     generation,
@@ -15,7 +20,7 @@ export function useHistogramItems(start: Date, end: Date) {
   } = useHistogramCache();
 
   const duration = end.getTime() - start.getTime();
-  const resolution = getResolutionForDuration(duration);
+  const resolution = fixedResolution ?? getResolutionForDuration(duration);
 
   const binSize = RESOLUTION_TO_MS[resolution];
   const queryStart = start.getTime() - duration - binSize;

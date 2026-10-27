@@ -3,15 +3,22 @@ import type { IncomingMessage } from "node:http";
 import { assertEquals, assertStrictEquals } from "jsr:@std/assert@^1.0.14";
 import { expect } from "@std/expect";
 import type { WebSocket } from "npm:ws@^8.18.0";
-import { getAuthorizationHeader } from "@/lib/auth/core.server.ts";
+import { Auth } from "@/lib/auth/core.server.ts";
+import { createWebSocketAuthRequest } from "@/lib/auth/websocket.ts";
 import {
-  createRequestFromUpgrade,
+  authorizeUpdatesChannel,
+  publicUpdatesData,
   UpdatesWebSocketSession,
 } from "./updates.websocket.server.ts";
 import {
   UpdatesPubSubHub,
   type UpdatesRedisSubscriber,
 } from "./updates-pubsub.server.ts";
+
+const admin = new Auth({
+  principal: "test",
+  policies: [{ resource: "**", action: "*", effect: "allow" }],
+});
 
 class DeferredRedisSubscriber extends EventEmitter
   implements UpdatesRedisSubscriber {
@@ -83,23 +90,24 @@ function upgradeRequest(
   } as IncomingMessage;
 }
 
-Deno.test("updates websocket accepts JWT from the token query parameter", async () => {
-  const request = await createRequestFromUpgrade(
+Deno.test("updates websocket rejects JWT in the query even with a header", () => {
+  const request = createWebSocketAuthRequest(
     upgradeRequest("/ws?token=signed-jwt"),
   );
 
-  expect(request.headers.get("Authorization")).toBe("Bearer signed-jwt");
-  expect(getAuthorizationHeader(request)).toBe("Bearer signed-jwt");
+  expect(request).toBeNull();
 });
 
-Deno.test("updates websocket preserves an Authorization header", async () => {
-  const request = await createRequestFromUpgrade(
-    upgradeRequest("/ws?token=query-jwt", {
-      authorization: "Bearer header-jwt",
+Deno.test("updates websocket preserves a device Authorization header", () => {
+  const request = createWebSocketAuthRequest(
+    upgradeRequest("/ws", {
+      authorization: "Bearer header.jwt.signature",
     }),
   );
 
-  expect(request.headers.get("Authorization")).toBe("Bearer header-jwt");
+  expect(request?.headers.get("Authorization")).toBe(
+    "Bearer header.jwt.signature",
+  );
 });
 
 Deno.test("updates session queues subscribe until Redis application readiness", async () => {
@@ -109,6 +117,7 @@ Deno.test("updates session queues subscribe until Redis application readiness", 
   const session = new UpdatesWebSocketSession(
     socket as unknown as WebSocket,
     hub,
+    admin,
   );
 
   const initialization = session.initialize();
@@ -142,6 +151,7 @@ Deno.test("updates session cleanup is idempotent under concurrent close paths", 
   const session = new UpdatesWebSocketSession(
     socket as unknown as WebSocket,
     hub,
+    admin,
   );
 
   const initialization = session.initialize();
@@ -169,6 +179,7 @@ Deno.test("chat:self maps to a user-scoped Redis channel", async () => {
   const session = new UpdatesWebSocketSession(
     socket as unknown as WebSocket,
     hub,
+    admin,
     "chat:user:abc123",
   );
 
@@ -186,6 +197,7 @@ Deno.test("chat:self maps to a user-scoped Redis channel", async () => {
     "mycelia:chat:user:abc123",
     JSON.stringify({ event: "chat.updated", data: { chatId: "one" } }),
   );
+  await new Promise((resolve) => setTimeout(resolve, 0));
   const delivered = socket.sent.find((message) => message.type === "event");
   assertEquals(delivered?.channel, "chat:self");
 
@@ -198,6 +210,129 @@ Deno.test("chat:self maps to a user-scoped Redis channel", async () => {
     message: "Chat channel is scoped",
   });
 
+  await session.cleanup();
+  hub.stop();
+});
+
+Deno.test("updates channel policies reject private, unknown and filtered streams", async () => {
+  const reader = new Auth({
+    principal: "reader",
+    policies: [{ resource: "db/objects", action: "read", effect: "allow" }],
+  });
+  expect(await authorizeUpdatesChannel(reader, "mongo:objects")).toBe(true);
+  expect(await authorizeUpdatesChannel(reader, "mongo:configs")).toBe(false);
+  expect(await authorizeUpdatesChannel(reader, "jobs:*")).toBe(false);
+  expect(await authorizeUpdatesChannel(admin, "arbitrary:channel")).toBe(false);
+  expect(await authorizeUpdatesChannel(admin, "chat:user:another")).toBe(false);
+  const filtered = new Auth({
+    principal: "reader",
+    policies: [{
+      resource: "db/objects",
+      action: "read",
+      effect: "modify",
+      middleware: { code: "filter", arg: { filter: { owner: "reader" } } },
+    }],
+  });
+  expect(await authorizeUpdatesChannel(filtered, "mongo:objects")).toBe(false);
+});
+
+Deno.test("Mongo invalidations contain no documents or update values", () => {
+  expect(publicUpdatesData("mongo:configs", {
+    collection: "configs",
+    operationType: "update",
+    documentId: "one",
+    timestamp: "now",
+    changedFields: ["apiKey"],
+    document: { apiKey: "fake-secret" },
+    updateDescription: { updatedFields: { apiKey: "fake-secret" } },
+  })).toEqual({
+    collection: "configs",
+    operationType: "update",
+    documentId: "one",
+    timestamp: "now",
+    changedFields: ["apiKey"],
+  });
+  expect(
+    publicUpdatesData("objects:*", {
+      objectId: "one",
+      object: { private: "value" },
+    }),
+  ).toEqual({ objectId: "one" });
+});
+
+Deno.test("unauthorized subscriptions never reach Redis", async () => {
+  const redis = new DeferredRedisSubscriber();
+  const hub = new UpdatesPubSubHub(redis, quietLogger);
+  const socket = new FakeWebSocket();
+  const session = new UpdatesWebSocketSession(
+    socket as unknown as WebSocket,
+    hub,
+    new Auth({ principal: "restricted", policies: [] }),
+  );
+  const initialization = session.initialize();
+  redis.becomeReady();
+  await initialization;
+  await session.enqueueMessage(
+    JSON.stringify({ type: "subscribe", channel: "mongo:configs" }),
+  );
+  expect(redis.subscribeCalls).toEqual([]);
+  expect(socket.sent.at(-1)).toMatchObject({
+    type: "error",
+    message: "Channel access denied",
+  });
+  await session.cleanup();
+  hub.stop();
+});
+
+Deno.test("events revalidate the token and never deliver after revocation", async () => {
+  const redis = new DeferredRedisSubscriber();
+  const hub = new UpdatesPubSubHub(redis, quietLogger);
+  const socket = new FakeWebSocket();
+  let valid = true;
+  const session = new UpdatesWebSocketSession(
+    socket as unknown as WebSocket,
+    hub,
+    admin,
+    undefined,
+    async () => valid ? admin : null,
+  );
+  const initialization = session.initialize();
+  redis.becomeReady();
+  await initialization;
+  await session.enqueueMessage(
+    JSON.stringify({ type: "subscribe", channel: "mongo:objects" }),
+  );
+  redis.emit(
+    "message",
+    "mycelia:mongo:objects",
+    JSON.stringify({
+      event: "mongo.change",
+      data: {
+        collection: "objects",
+        documentId: "one",
+        document: { secret: "fake" },
+      },
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(socket.sent.at(-1)).toMatchObject({
+    type: "event",
+    data: { collection: "objects", documentId: "one" },
+  });
+  expect((socket.sent.at(-1)?.data as any).document).toBeUndefined();
+  valid = false;
+  const count = socket.sent.length;
+  redis.emit(
+    "message",
+    "mycelia:mongo:objects",
+    JSON.stringify({
+      event: "mongo.change",
+      data: { collection: "objects", documentId: "two" },
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(socket.sent.length).toBe(count);
+  expect(socket.readyState).toBe(3);
   await session.cleanup();
   hub.stop();
 });

@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { createHash, createSecretKey, randomBytes } from "node:crypto";
+import { createHash, createSecretKey, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT } from "jose";
 import { APIKey, Auth, getServerAuth } from "./core.server.ts";
 import { Policy } from "./resources.ts";
@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getMongoResource } from "@/lib/mongo/core.server.ts";
 import { ObjectId } from "bson";
 import { env } from "#/env.ts";
+import { type CredentialBinding, credentialFingerprint } from "./credentials.ts";
 
 const OPEN_PREFIX_LENGTH = 16;
 
@@ -23,7 +24,7 @@ const apiKeySchema = z.object({
   redirectUris: z.array(z.string()).optional(),
 });
 
-type APIKeyDocument = z.infer<typeof apiKeySchema>;
+export type APIKeyDocument = z.infer<typeof apiKeySchema>;
 
 function hashApiKey(apiKey: string, salt: Buffer): string {
   return createHash("sha256").update(salt).update(apiKey).digest("base64");
@@ -90,10 +91,14 @@ export async function verifyApiKey(apiKey: string): Promise<APIKey | null> {
     return null;
   }
 
+  if (typeof keyDoc.salt !== "string" || typeof keyDoc.hashedKey !== "string") return null;
+
   const salt = Buffer.from(keyDoc.salt, "base64");
   const hashedInput = hashApiKey(apiKey, salt);
 
-  if (hashedInput !== keyDoc.hashedKey) {
+  const expected = Buffer.from(keyDoc.hashedKey, "base64");
+  const actual = Buffer.from(hashedInput, "base64");
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     return null;
   }
 
@@ -105,11 +110,16 @@ export async function signJWT(
   principal: string,
   policies: Policy[],
   duration: string,
+  credentialBindings?: CredentialBinding[],
+  browserSessionId?: string,
 ) {
   return new SignJWT({
-    owner: principal,
+    owner,
     principal,
     policies: JSON.parse(JSON.stringify(policies)),
+    tokenKind: credentialBindings ? "credential" : "internal",
+    ...(credentialBindings && { credentialBindings }),
+    ...(browserSessionId && { browserSessionId }),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime(duration)
@@ -133,6 +143,7 @@ export async function decodeAccessToken(
     keyDoc.owner,
     keyDoc.policies,
     duration,
+    [{ id: keyDoc._id!.toString(), fingerprint: credentialFingerprint(keyDoc) }],
   );
 }
 

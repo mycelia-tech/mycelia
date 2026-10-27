@@ -1186,12 +1186,13 @@ export class ObjectsResource
     }
   }
 
-  async use(input: ObjectsRequest): Promise<ObjectsResponse> {
-    return stripObjectListInternals(await this.useInternal(input));
+  async use(input: ObjectsRequest, caller?: Auth): Promise<ObjectsResponse> {
+    return stripObjectListInternals(await this.useInternal(input, caller));
   }
 
-  private async useInternal(input: ObjectsRequest): Promise<ObjectsResponse> {
+  private async useInternal(input: ObjectsRequest, caller?: Auth): Promise<ObjectsResponse> {
     const auth = await getServerAuth(); // already checked objects permissions
+    const actor = caller?.principal ?? auth.principal;
     const mongo = await getMongoResource(auth);
 
     switch (input.action) {
@@ -1216,7 +1217,7 @@ export class ObjectsResource
           auth,
           result.insertedId,
           "create",
-          auth.principal,
+          actor,
           1,
           null,
           undefined,
@@ -1378,7 +1379,7 @@ export class ObjectsResource
           auth,
           objectId,
           "update",
-          auth.principal,
+          actor,
           result.version,
           input.field,
           oldValue,
@@ -1420,7 +1421,7 @@ export class ObjectsResource
           auth,
           objectId,
           "delete",
-          auth.principal,
+          actor,
           current.version ?? 0,
           null,
           current,
@@ -1547,7 +1548,7 @@ export class ObjectsResource
                 id: l._id,
                 name: l.name,
                 mergedAt: new Date(),
-                by: auth.principal,
+                by: actor,
               })),
           ],
         };
@@ -1687,7 +1688,7 @@ export class ObjectsResource
           auth,
           winnerId,
           "merge",
-          auth.principal,
+          actor,
           (winner.version ?? 0) + 1,
           null,
           winner,
@@ -1698,7 +1699,7 @@ export class ObjectsResource
             auth,
             loser._id,
             "merge",
-            auth.principal,
+            actor,
             loser.version ?? 0,
             "mergedInto",
             loser,
@@ -1830,7 +1831,7 @@ export class ObjectsResource
               id: sourceId,
               name: source.name,
               at: new Date(),
-              by: auth.principal,
+              by: actor,
             },
           },
           version: 1,
@@ -1850,7 +1851,7 @@ export class ObjectsResource
           auth,
           newId,
           "split",
-          auth.principal,
+          actor,
           1,
           null,
           undefined,
@@ -1900,7 +1901,7 @@ export class ObjectsResource
           auth,
           sourceId,
           "split",
-          auth.principal,
+          actor,
           (source.version ?? 0) + 1,
           "splitInto",
           undefined,
@@ -2732,8 +2733,8 @@ export class ObjectsResource
 
 export function getObjectsResource(
   auth: Auth,
-): (input: ObjectsRequest) => Promise<ObjectsResponse> {
-  return auth.getResource<ObjectsRequest, ObjectsResponse>(
+): (input: z.input<typeof objectsRequestSchema>) => Promise<ObjectsResponse> {
+  return auth.getResource<z.input<typeof objectsRequestSchema>, ObjectsResponse>(
     "objects",
   );
 }

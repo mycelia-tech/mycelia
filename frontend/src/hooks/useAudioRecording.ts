@@ -47,6 +47,74 @@ export interface AudioRecordingReturn {
   setSampleRate: (rate: number) => void;
 }
 
+export async function connectAudioRecordingWebSocket(
+  signal?: AbortSignal,
+): Promise<WebSocket> {
+  const session = useSettingsStore.getState();
+  const endpoint = apiClient.baseURL;
+  const jwt = await apiClient.getJWT();
+  const sessionChanged = () => {
+    const current = useSettingsStore.getState();
+    return signal?.aborted || endpoint !== apiClient.baseURL ||
+      current.apiEndpoint !== session.apiEndpoint ||
+      current.clientId !== session.clientId ||
+      current.sessionRevision !== session.sessionRevision;
+  };
+  if (sessionChanged()) {
+    throw new Error("Audio connection cancelled after a session change");
+  }
+  if (!jwt) throw new Error("Authentication is required for audio recording");
+  const wsUrl = new URL(endpoint + "/ws_pcm");
+  wsUrl.protocol = wsUrl.protocol.replace("http", "ws");
+
+  return new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(wsUrl.toString(), [
+      "mycelia",
+      `mycelia.jwt.${jwt}`,
+    ]);
+    let settled = false;
+    let readyTimer: ReturnType<typeof setTimeout> | undefined;
+    const dispose = () => {
+      clearTimeout(timeout);
+      clearTimeout(readyTimer);
+      signal?.removeEventListener("abort", cancel);
+      unsubscribe();
+    };
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      dispose();
+      ws.close();
+      reject(new Error(message));
+    };
+    const cancel = () =>
+      fail("Audio connection cancelled after a session change");
+    const unsubscribe = useSettingsStore.subscribe(() => {
+      if (sessionChanged()) cancel();
+    });
+    signal?.addEventListener("abort", cancel, { once: true });
+    const timeout = setTimeout(
+      () => fail("WebSocket connection timeout"),
+      10000,
+    );
+    ws.onopen = () => {
+      readyTimer = setTimeout(() => {
+        if (sessionChanged()) {
+          cancel();
+          return;
+        }
+        if (settled) return;
+        settled = true;
+        dispose();
+        resolve(ws);
+      }, 100);
+    };
+    ws.onerror = () => fail("WebSocket connection failed");
+    ws.onclose = () =>
+      fail("WebSocket closed before audio recording was ready");
+  });
+}
+
 export const useAudioRecording = (): AudioRecordingReturn => {
   const {
     preferredAudioDeviceId,
@@ -70,6 +138,7 @@ export const useAudioRecording = (): AudioRecordingReturn => {
   });
 
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingConnectionAbortRef = useRef<AbortController | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -104,6 +173,8 @@ export const useAudioRecording = (): AudioRecordingReturn => {
   }, []);
 
   const cleanup = useCallback(() => {
+    pendingConnectionAbortRef.current?.abort();
+    pendingConnectionAbortRef.current = null;
     audioProcessingStartedRef.current = false;
     isWebSocketReadyRef.current = false;
 
@@ -143,6 +214,20 @@ export const useAudioRecording = (): AudioRecordingReturn => {
     chunkCountRef.current = 0;
     sessionStartTimeRef.current = null;
   }, []);
+
+  useEffect(() =>
+    useSettingsStore.subscribe((next, previous) => {
+      if (
+        next.apiEndpoint !== previous.apiEndpoint ||
+        next.clientId !== previous.clientId ||
+        next.sessionRevision !== previous.sessionRevision
+      ) {
+        cleanup();
+        setIsRecording(false);
+        setCurrentStep("idle");
+        setRecordingDuration(0);
+      }
+    }), [cleanup]);
 
   const refreshDevices = useCallback(async () => {
     let realDevices: AudioDevice[] = [];
@@ -238,32 +323,9 @@ export const useAudioRecording = (): AudioRecordingReturn => {
   ]);
 
   const connectWebSocket = useCallback(async (): Promise<WebSocket> => {
-    const jwt = await apiClient.getJWT();
-    const wsUrl = new URL(apiClient.baseURL + "/ws_pcm");
-
-    if (jwt) {
-      wsUrl.searchParams.set("token", jwt);
-    }
-
-    return new Promise<WebSocket>((resolve, reject) => {
-      const ws = new WebSocket(wsUrl.toString());
-
-      ws.onopen = () => {
-        setTimeout(() => {
-          resolve(ws);
-        }, 100);
-      };
-
-      ws.onerror = (event) => {
-        reject(new Error("WebSocket connection failed"));
-      };
-
-      setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          reject(new Error("WebSocket connection timeout"));
-        }
-      }, 10000);
-    });
+    const controller = new AbortController();
+    pendingConnectionAbortRef.current = controller;
+    return await connectAudioRecordingWebSocket(controller.signal);
   }, []);
 
   const sendWyomingMessage = useCallback(
@@ -399,6 +461,7 @@ export const useAudioRecording = (): AudioRecordingReturn => {
 
   const startRecording = useCallback(async () => {
     try {
+      const initialSession = useSettingsStore.getState();
       setError(null);
       setCurrentStep("mic");
 
@@ -406,6 +469,15 @@ export const useAudioRecording = (): AudioRecordingReturn => {
       sessionStartTimeRef.current = sessionStartTime;
 
       const stream = await getMicrophoneAccess();
+      const currentSession = useSettingsStore.getState();
+      if (
+        currentSession.apiEndpoint !== initialSession.apiEndpoint ||
+        currentSession.clientId !== initialSession.clientId ||
+        currentSession.sessionRevision !== initialSession.sessionRevision
+      ) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("Audio recording cancelled after a session change");
+      }
 
       setIsRecording(true);
       setCurrentStep("websocket");

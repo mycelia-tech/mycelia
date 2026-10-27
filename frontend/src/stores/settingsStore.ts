@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { BROWSER_TIME_ZONE, type DefaultTimeZone } from "@/lib/timeZones";
 
 type Theme = "light" | "dark" | "system";
@@ -22,6 +22,9 @@ interface SettingsState {
   apiEndpoint: string;
   clientId: string;
   clientSecret: string;
+  sessionStatus: "unknown" | "authenticated" | "anonymous";
+  sessionRevision: number;
+  setSessionStatus: (status: "unknown" | "authenticated" | "anonymous") => void;
   theme: Theme;
   timeFormat: TimeFormat;
   defaultTimeZone: DefaultTimeZone;
@@ -77,6 +80,9 @@ export const useSettingsStore = create<SettingsState>()(
       apiEndpoint: DEFAULT_API_ENDPOINT,
       clientId: "",
       clientSecret: "",
+      sessionStatus: "unknown",
+      sessionRevision: 0,
+      setSessionStatus: (sessionStatus) => set((state) => ({ sessionStatus, sessionRevision: state.sessionRevision + 1 })),
       theme: "system",
       timeFormat: DEFAULT_TIME_FORMAT,
       defaultTimeZone: BROWSER_TIME_ZONE,
@@ -92,7 +98,8 @@ export const useSettingsStore = create<SettingsState>()(
       playbackRate: DEFAULT_PLAYBACK_RATE,
       volume: DEFAULT_VOLUME,
       autoSave: true,
-      setApiEndpoint: (endpoint) => set({ apiEndpoint: endpoint }),
+      setApiEndpoint: (endpoint) => set((state) => ({ apiEndpoint: endpoint,
+        ...(state.apiEndpoint !== endpoint && { sessionStatus: "unknown" as const, sessionRevision: state.sessionRevision + 1, clientSecret: "" }) })),
       setClientId: (id) => set({ clientId: id }),
       setClientSecret: (secret) => set({ clientSecret: secret }),
       setTheme: (theme) => set({ theme }),
@@ -124,6 +131,7 @@ export const useSettingsStore = create<SettingsState>()(
           apiEndpoint: DEFAULT_API_ENDPOINT,
           clientId: "",
           clientSecret: "",
+          sessionStatus: "anonymous",
           theme: "system",
           timeFormat: DEFAULT_TIME_FORMAT,
           defaultTimeZone: BROWSER_TIME_ZONE,
@@ -143,6 +151,15 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "mycelia-settings",
+      storage: createJSONStorage(() => window.localStorage),
+      version: 1,
+      // Discard the permanent key from older installations. The owner signs
+      // in once to replace it with a protected server-side browser session.
+      migrate: (persisted: any) => {
+        const { clientSecret: _secret, sessionStatus: _status, sessionRevision: _revision, ...settings } = persisted ?? {};
+        return settings;
+      },
+      partialize: ({ clientSecret: _secret, sessionStatus: _status, sessionRevision: _revision, ...settings }) => settings,
     },
   ),
 );

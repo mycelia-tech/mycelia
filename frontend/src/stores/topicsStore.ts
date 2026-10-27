@@ -16,6 +16,7 @@ interface TopicsState {
   error: string | null;
   fetchInitial: () => Promise<void>;
   loadMore: () => Promise<void>;
+  reset: () => void;
 }
 
 const PAGE_SIZE = 50;
@@ -24,13 +25,14 @@ const DEBOUNCE_MS = 300;
 
 const seenIds = new Set<string>();
 let lastLoadMs = 0;
+let generation = 0;
 
 function getIdKey(item: HistogramItem): string {
   return typeof item._id === "string" ? item._id : JSON.stringify(item._id);
 }
 
 async function fetchPage(beforeStart: Date | null): Promise<HistogramItem[]> {
-  const query: any = { topics: { $exists: true, $ne: [] } };
+  const query: Record<string, unknown> = { topics: { $exists: true, $ne: [] } };
   if (beforeStart) query.start = { $lt: beforeStart };
   const result = await callResource("mongo", {
     action: "find",
@@ -48,11 +50,20 @@ export const useTopicsStore = create<TopicsState>()(
     loadingMore: false,
     error: null,
 
+    reset: () => {
+      generation++;
+      seenIds.clear();
+      lastLoadMs = 0;
+      set({ items: [], loading: false, loadingMore: false, error: null });
+    },
+
     fetchInitial: async () => {
       if (get().loading || get().items.length > 0) return;
+      const requestGeneration = generation;
       set({ loading: true, error: null });
       try {
         const firstPage = await fetchPage(null);
+        if (requestGeneration !== generation) return;
         const deduped: HistogramItem[] = [];
         for (const it of firstPage) {
           const key = getIdKey(it);
@@ -63,16 +74,18 @@ export const useTopicsStore = create<TopicsState>()(
         }
         set({ items: deduped });
       } catch (err) {
+        if (requestGeneration !== generation) return;
         set({
           error: err instanceof Error ? err.message : "Failed to fetch topics",
         });
       } finally {
-        set({ loading: false });
+        if (requestGeneration === generation) set({ loading: false });
       }
     },
 
     loadMore: async () => {
       if (get().loadingMore) return;
+      const requestGeneration = generation;
       const now = Date.now();
       if (now - lastLoadMs < DEBOUNCE_MS) return;
       lastLoadMs = now;
@@ -90,6 +103,7 @@ export const useTopicsStore = create<TopicsState>()(
       set({ loadingMore: true });
       try {
         const page = await fetchPage(beforeStart);
+        if (requestGeneration !== generation) return;
         if (page.length === 0) return;
         const merged: HistogramItem[] = [...get().items];
         for (const it of page) {
@@ -104,7 +118,7 @@ export const useTopicsStore = create<TopicsState>()(
           : merged;
         set({ items: trimmed });
       } finally {
-        set({ loadingMore: false });
+        if (requestGeneration === generation) set({ loadingMore: false });
       }
     },
   }), { name: "topics-store" }),
