@@ -1,5 +1,9 @@
 # Mycelia encrypted file backups
 
+For the separate configurable encrypted MongoDB archive/restore CLI, see
+[MongoDB backups](BACKUP_MONGO.md). It preserves the existing restic workflow;
+neither a file snapshot nor a verified transfer alone proves database recovery.
+
 This runbook prepares the Keychain credential, reserves the remote
 `pk-backup:mycelia` namespace, and creates incremental file/config snapshots
 with restic. Mongo bootstrap/PITR and unattended schedules remain pending; a

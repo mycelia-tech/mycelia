@@ -1,0 +1,6 @@
+# Optional read-only config mount for the encrypted logical backup CLI.
+# JSON is accepted by mongodump --config as YAML; keep the host file private.
+services:
+  mongo:
+    volumes:
+      - ${MONGO_BACKUP_CONFIG_PATH:?Set the private backup configuration file}:/run/secrets/mongo-backup.json:ro
