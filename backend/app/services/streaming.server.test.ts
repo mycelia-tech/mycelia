@@ -1,4 +1,5 @@
 import { expect } from "@std/expect";
+import { stub } from "@std/testing/mock";
 import {
   createAudioChunk,
   createSourceFile,
@@ -163,33 +164,23 @@ Deno.test(
 Deno.test(
   "createAudioChunk should not write debug files to disk",
   withFixtures(["Admin", "Mongo", "ServerAuth"], async (_auth: Auth) => {
-    const cwd = Deno.cwd();
-    const debugPatterns = ["debug.pcm", "debug.opus", "debug.float32"];
-
-    // Capture files before
-    const before = new Set<string>();
-    for await (const entry of Deno.readDir(cwd)) {
-      if (debugPatterns.some((p) => entry.name === p)) {
-        before.add(entry.name);
-      }
-    }
-
-    const audioData = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-    const sourceFileId = new ObjectId();
-    await createAudioChunk(audioData, new Date(), 0, sourceFileId, "opus");
-
-    // Verify no new debug files appeared
-    for (const pattern of debugPatterns) {
-      if (!before.has(pattern)) {
-        let exists = false;
-        try {
-          await Deno.stat(`${cwd}/${pattern}`);
-          exists = true;
-        } catch {
-          // expected — file should not exist
-        }
-        expect(exists).toBe(false);
-      }
+    // Denying .env also prevents listing/chdir into the checkout. Reject
+    // unexpected writes directly so a regression cannot persist audio bytes.
+    const rejectWrite = () => { throw new Error("Unexpected audio file write"); };
+    const writes = [
+      stub(Deno, "writeFile", rejectWrite),
+      stub(Deno, "writeFileSync", rejectWrite),
+      stub(Deno, "writeTextFile", rejectWrite),
+      stub(Deno, "writeTextFileSync", rejectWrite),
+      stub(Deno, "create", rejectWrite),
+      stub(Deno, "createSync", rejectWrite),
+    ];
+    try {
+      const audioData = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+      await createAudioChunk(audioData, new Date(), 0, new ObjectId(), "opus");
+      expect(writes.every((write) => write.calls.length === 0)).toBe(true);
+    } finally {
+      for (const write of writes) write.restore();
     }
   }),
 );

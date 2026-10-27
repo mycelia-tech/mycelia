@@ -36,7 +36,7 @@ Deno.test("server config accepts diarization provider profiles", () => {
   assertEquals(parsed.diarizationProfiles?.profiles[0].id, "remote");
 });
 
-Deno.test("server config rejects diarization routing with no enabled route", () => {
+Deno.test("server config preserves an explicitly disabled diarization service", () => {
   const parsed = zServerConfig.safeParse({
     ...base,
     diarizationProfiles: {
@@ -51,5 +51,9 @@ Deno.test("server config rejects diarization routing with no enabled route", () 
     },
   });
 
-  assertEquals(parsed.success, false);
+  assertEquals(parsed.success, true);
+  if (parsed.success) {
+    assertEquals(parsed.data.diarizationProfiles?.includeEnvironment, false);
+    assertEquals(parsed.data.diarizationProfiles?.profiles[0].enabled, false);
+  }
 });

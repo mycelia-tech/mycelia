@@ -133,6 +133,17 @@ export const getRootDB = async (): Promise<Db> => {
   return client!.db(env.DATABASE_NAME);
 };
 
+/** Close the shared application pool after callers have finished their work. */
+export async function closeRootDB(): Promise<void> {
+  try {
+    await connectingPromise;
+  } finally {
+    const previous = client;
+    client = null;
+    await previous?.close();
+  }
+}
+
 export function sift(query: Filter<unknown>): (item: unknown) => boolean {
   const tester = (createDefaultQueryTester as any)(query);
   return (item: unknown) => tester(item);

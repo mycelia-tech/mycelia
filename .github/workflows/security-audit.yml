@@ -1,0 +1,24 @@
+name: Dependency advisory audit
+on:
+  pull_request:
+    paths: ['**/deno.lock', '**/uv.lock', 'scripts/audit-dependencies.ts', 'scripts/dependency-inventory*', '.github/workflows/security-audit.yml']
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: '2.9.5'
+      - run: deno task audit:dependencies > dependency-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-advisories
+          path: dependency-audit.json

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,15 +34,41 @@ STAGE1_PROFILE_CONTRACT: dict[str, object] = {
 }
 
 
+def _default_env_file() -> Path | None:
+    source = Path(__file__).resolve()
+    project_root = source.parents[2]
+    if (
+        source == project_root / "src" / "mycelia_rag" / "config.py"
+        and (project_root / "pyproject.toml").is_file()
+    ):
+        return project_root / ".env"
+    # A wheel installation has no stable project .env; use explicit selection
+    # or environment variables instead of searching the working directory.
+    return None
+
+
 class Settings(BaseSettings):
     """Runtime configuration; all public names are prefixed with ``RAG_``."""
 
     model_config = SettingsConfigDict(
         env_prefix="RAG_",
-        env_file=".env",
+        env_file=None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    def __init__(self, **values: Any) -> None:
+        # Explicit constructor settings win. Otherwise select one known file,
+        # never a working-directory-dependent dotenv search.
+        if "_env_file" not in values:
+            if "RAG_ENV_FILE" in os.environ:
+                selected = os.environ["RAG_ENV_FILE"]
+                if selected and not Path(selected).is_absolute():
+                    raise ValueError("RAG_ENV_FILE must be an absolute path or empty")
+                values["_env_file"] = selected or None
+            else:
+                values["_env_file"] = _default_env_file()
+        super().__init__(**values)
 
     mongo_url: str = "mongodb://localhost:27017/?replicaSet=rs0"
     mongo_database: str = "mycelia"

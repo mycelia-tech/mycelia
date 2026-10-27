@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.15";
 import { assertDiarizationGenerationReady } from "./generation-preflight.ts";
 
 Deno.test("build_generation requires a building run", () => {

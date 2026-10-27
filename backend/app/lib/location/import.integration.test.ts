@@ -80,7 +80,7 @@ Deno.test(
       { $set: { contentProfileVersion: 1 } },
     );
     const backfilled = await backfillLocationImport(auth, receipt.importId);
-    expect(backfilled.contentProfile.version).toBe(2);
+    expect(backfilled.contentProfile.version).toBe(3);
     expect(
       await db.collection("location_track_geometry").countDocuments({
         trackId: track?._id,
@@ -89,7 +89,7 @@ Deno.test(
     const backfilledImport = await db.collection("location_imports").findOne({
       _id: new ObjectId(receipt.importId),
     });
-    expect(backfilledImport?.receipt?.schemaVersion).toBe(2);
+    expect(backfilledImport?.receipt?.schemaVersion).toBe(3);
     expect(backfilledImport?.receipt?.timedCoordinates).toBe(2);
     expect(backfilledImport?.receipt?.file?.parserVersion).toBe(3);
 

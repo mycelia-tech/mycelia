@@ -102,6 +102,7 @@ Deno.test(
     const selection = {
       mode: "all_matching" as const,
       inventoryFilter: "all" as const,
+      placement: "all" as const,
       providerProfileId: "provider-a",
       importCampaignId: String(campaignId),
     };
@@ -112,7 +113,7 @@ Deno.test(
       selection,
     );
     assertEquals(
-      (await db.collection("media_assets").find(scope).toArray()).map((a) =>
+      (await db.collection("media_assets").find(scope).toArray()).map((a: { _id: ObjectId }) =>
         String(a._id)
       ),
       [String(selected)],

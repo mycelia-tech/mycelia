@@ -1,0 +1,58 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify-${{ matrix.group }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [repo, backend, frontend, sdk, python, rag, gpu, e2e, infra]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: '2.9.5'
+      - uses: actions/setup-node@v4
+        if: matrix.group == 'e2e'
+        with:
+          node-version: '26.7.0'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.7.3'
+          python-version: '3.12'
+      - name: System dependencies
+        if: matrix.group == 'backend' || matrix.group == 'python'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg portaudio19-dev
+      - name: Install isolated browser test runtime
+        if: matrix.group == 'e2e'
+        working-directory: frontend
+        run: |
+          deno install --frozen
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify the checked-out revision
+        run: deno task verify ${{ matrix.group }}
+      - name: Browser failure evidence
+        if: failure() && matrix.group == 'e2e'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-evidence
+          path: .cache/playwright
+          if-no-files-found: ignore
+
+  required:
+    name: required-verification
+    if: always()
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - run: test '${{ needs.verify.result }}' = success

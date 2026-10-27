@@ -9,6 +9,7 @@
 #   ./scripts/setup.sh --with-tokens --start  # Full setup with tokens and start
 
 set -e
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -92,6 +93,19 @@ else
 fi
 echo "  SECRET_KEY generated"
 
+# These values stay in the local .env, never terminal output or command URLs.
+for key in MYCELIA_BOOTSTRAP_TOKEN REDIS_PASSWORD MONGO_INITDB_ROOT_PASSWORD; do
+    generated_value=$(openssl rand -hex 32)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "s/^${key}=.*/${key}=${generated_value}/" "$ENV_FILE"
+    else
+        sed -i "s/^${key}=.*/${key}=${generated_value}/" "$ENV_FILE"
+    fi
+done
+unset generated_value
+chmod 600 "$ENV_FILE"
+echo "  Bootstrap and service secrets generated (stored only in .env)"
+
 # Generate API tokens if requested
 if [[ "$GENERATE_TOKENS" == true ]]; then
     echo ""
@@ -135,14 +149,12 @@ if [[ "$GENERATE_TOKENS" == true ]]; then
             echo "  MYCELIA_CLIENT_ID and MYCELIA_TOKEN generated"
         else
             echo "  Warning: Could not parse token output. You may need to generate tokens manually."
-            echo "  Token command output:"
-            echo "$TOKEN_OUTPUT" | head -20
+            echo "  Output was withheld because it may contain credentials."
         fi
         
         # Stop MongoDB if we're not starting services
         if [[ "$START_SERVICES" != true ]]; then
-            echo "  Stopping temporary containers..."
-            docker compose -f "$PROJECT_ROOT/docker-compose.yml" down 2>/dev/null
+            echo "  MongoDB/Redis are left running; no existing stack is stopped automatically."
         fi
     fi
 fi
@@ -159,7 +171,7 @@ if [[ "$START_SERVICES" == true ]]; then
     echo "Services started! Open https://localhost:4433 in your browser."
     if [[ "$GENERATE_TOKENS" != true ]]; then
         echo ""
-        echo "Note: Visit /setup to generate API credentials on first visit."
+        echo "Note: Visit /setup and enter MYCELIA_BOOTSTRAP_TOKEN from the local .env."
     fi
 else
     echo "Next steps:"
@@ -167,6 +179,6 @@ else
     echo "  2. Run: docker compose up -d"
     echo "  3. Open https://localhost:4433 in your browser"
     if [[ "$GENERATE_TOKENS" != true ]]; then
-        echo "  4. Visit /setup to generate API credentials"
+        echo "  4. Visit /setup and enter MYCELIA_BOOTSTRAP_TOKEN from the local .env"
     fi
 fi

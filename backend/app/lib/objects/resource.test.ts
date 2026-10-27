@@ -244,15 +244,13 @@ Deno.test(
 
     expect(deleteResult.deletedCount).toBe(1);
 
-    try {
-      await objectsResource({
-        action: "get",
-        id: createResult.insertedId.toString(),
-      });
-      expect(true).toBe(false);
-    } catch (error: any) {
-      expect(error.message).toContain("not found");
-    }
+    const tombstone = await objectsResource({
+      action: "get",
+      id: createResult.insertedId.toString(),
+    });
+    expect(tombstone.deleted).toBe(true);
+    expect(tombstone.name).toBe("To Delete");
+    expect(tombstone.deletedBy).toBe(admin.principal);
   }),
 );
 
@@ -384,7 +382,7 @@ Deno.test(
 
 Deno.test(
   "Timeline view returns a bounded compact relationship response",
-  withFixtures(["Admin", "Mongo"], async (admin: Auth) => {
+  withFixtures(["Admin", "Mongo", "Migrations"], async (admin: Auth) => {
     const objectsResource = await getObjectsResource(admin);
     const subject = await objectsResource({
       action: "create",
@@ -564,7 +562,7 @@ Deno.test(
 
     const createEntry = history.find((h: any) => h.action === "create");
     expect(createEntry).toBeDefined();
-    expect(createEntry.userId).toBe("server");
+    expect(createEntry.userId).toBe(admin.principal);
     expect(createEntry.version).toBe(1);
 
     const nameUpdate = history.find(
@@ -703,7 +701,7 @@ Deno.test(
 
     const deleteEntry = history.find((h: any) => h.action === "delete");
     expect(deleteEntry).toBeDefined();
-    expect(deleteEntry.userId).toBe("server");
+    expect(deleteEntry.userId).toBe(admin.principal);
     expect(deleteEntry.field).toBeNull();
   }),
 );
@@ -796,10 +794,12 @@ Deno.test(
     expect(winner.metadata.mergedFrom).toHaveLength(1);
     expect(winner.metadata.mergedFrom[0].name).toBe("igor");
 
-    await expect(objectsResource({
+    const tombstone = await objectsResource({
       action: "get",
       id: b.insertedId.toString(),
-    })).rejects.toThrow("Object not found");
+    });
+    expect(tombstone.deleted).toBe(true);
+    expect(tombstone.mergedInto).toBe(a.insertedId.toString());
   }),
 );
 

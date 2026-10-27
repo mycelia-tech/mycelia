@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "verify": "deno run --allow-run --allow-read --allow-env scripts/verify.ts",
+    "doctor": "deno run --allow-run --allow-read --allow-env scripts/doctor.ts",
+    "deploy": "deno run --allow-run --allow-read --allow-env scripts/deploy.ts",
+    "audit:dependencies": "deno run --allow-read --allow-net=api.osv.dev scripts/audit-dependencies.ts"
+  },
+  "fmt": { "exclude": ["docs/archive"] }
+}

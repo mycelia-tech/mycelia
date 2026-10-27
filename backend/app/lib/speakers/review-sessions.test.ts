@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "jsr:@std/assert@^1.0.15";
 import { groupReviewSegments } from "./review-sessions.ts";
 
 Deno.test("review grouping keeps only compatible nearby speaker segments together", () => {

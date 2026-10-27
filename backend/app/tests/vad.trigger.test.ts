@@ -13,6 +13,7 @@ Deno.test(
   withFixtures([
     "Admin",
     "Mongo",
+    "Migrations",
   ], async (admin) => {
     // Start only the VAD trigger worker (mocking the change stream via Redis)
     await triggerManager.start();
@@ -48,17 +49,19 @@ Deno.test(
       };
       await redis.publish(channel, JSON.stringify(payload));
 
-      // 3. Wait for debounce and processing
-      // DEBOUNCE_MS is 100ms in test environment
+      // 3. Wait within a bounded budget for debounce and indexed discovery.
       console.log("[Test] Waiting for VAD trigger...");
-      await delay(1000); 
-
-      // 4. Check if a VAD job was created in the 'jobs' collection
-      const job = await mongoResource({
-        action: "findOne",
-        collection: "jobs",
-        query: { type: "vad" },
-      });
+      let job;
+      const deadline = performance.now() + 5000;
+      do {
+        job = await mongoResource({
+          action: "findOne",
+          collection: "jobs",
+          query: { type: "vad" },
+        });
+        if (job) break;
+        await delay(50);
+      } while (performance.now() < deadline);
       
       expect(job).not.toBeNull();
       if (job) {

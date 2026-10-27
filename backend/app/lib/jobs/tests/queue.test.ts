@@ -21,7 +21,14 @@ Deno.test(
       worker.concurrency = 4;
       expect(worker.concurrency).toBe(4);
     } finally {
-      await worker.close();
+      // The assertions above intentionally run before asynchronous startup.
+      // Let the lazy blocking Redis connection finish opening before teardown:
+      // closing it on the same tick otherwise rejects its pending connect().
+      try {
+        await worker.waitUntilReady();
+      } finally {
+        await worker.close();
+      }
     }
   }),
 );
@@ -41,7 +48,9 @@ Deno.test(
     expect(job.data.type).toBe("vad");
     expect(job.data.limit).toBe(100);
     expect(job.data.batchSize).toBe(100);
-    expect(job.data.routingContext?.resolvedAt).toBeDefined();
+    // VAD runs on the Python worker; only routed STT/LLM jobs get an
+    // automatically resolved provider snapshot.
+    expect(job.data.routingContext).toBeUndefined();
   }),
 );
 
@@ -110,7 +119,7 @@ Deno.test(
     expect(retrievedJob?.data.type).toBe("vad");
     expect(retrievedJob?.data.limit).toBe(100);
     expect(retrievedJob?.data.batchSize).toBe(100);
-    expect(retrievedJob?.data.routingContext?.resolvedAt).toBeDefined();
+    expect(retrievedJob?.data).toEqual(enqueuedJob.data);
   }),
 );
 

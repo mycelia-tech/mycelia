@@ -147,6 +147,17 @@ MongoDB. This module's Dockerfile is self-contained and starts
 
 ## Configuration
 
+Source checkouts load `rag/.env` relative to this package's project directory,
+independently of the current working directory. Set `RAG_ENV_FILE` to an absolute
+path to select another file, or to an empty string to disable dotenv loading.
+An installed wheel does not search for a `.env`; configure it through environment
+variables or an explicit `RAG_ENV_FILE`.
+
+Explicit `Settings(...)` values take priority over environment variables, which
+take priority over the selected file. A constructor `_env_file` argument overrides
+the file selector. Repository verification uses a deliberately empty file and
+explicit Python 3.12 (`deno task verify rag` from the repository root).
+
 See [`.env.example`](.env.example) for all operational defaults. Core settings:
 
 | Variable | Purpose |

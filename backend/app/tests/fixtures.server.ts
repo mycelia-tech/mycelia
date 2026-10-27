@@ -9,9 +9,8 @@ import {
 } from "@/lib/auth/index.ts";
 import { FsResource, getFsResource } from "@/lib/mongo/fs.server.ts";
 import { redis } from "@/lib/redis.ts";
-import { MongoResource } from "@/lib/mongo/core.server.ts";
-import { GenericContainer } from "testcontainers";
-import { MongoDBContainer } from "@testcontainers/mongodb";
+import { closeChangeStreamDB, closeRootDB, MongoResource } from "@/lib/mongo/core.server.ts";
+import { env } from "#/env.ts";
 import { MongoClient, UUID } from "mongodb";
 import { TimelineResource } from "@/lib/timeline/resource.server.ts";
 import { generateApiKey } from "@/lib/auth/tokens.ts";
@@ -28,17 +27,16 @@ import type { Request } from "express";
 import { up } from "@/lib/mongo/migrator.ts";
 
 import { discoverJobWorkers, jobRegistry } from "@/lib/jobs/job-registry.ts";
+import { type Fixture, runFixtureLifecycle } from "./fixture-lifecycle.ts";
+import { readTestSession } from "./test-session.ts";
+
+export type { Fixture } from "./fixture-lifecycle.ts";
+
+const testSession = await readTestSession();
 
 const sampleAudioFile = await Deno.readFile("app/tests/sample_audio.wav");
 
 await discoverJobWorkers();
-
-export type Fixture = {
-  token: any;
-  dependencies?: any[];
-  factory?: (...args: any[]) => Promise<any> | any;
-  teardown?: (setup: any) => Promise<void> | void;
-};
 
 export const testFixtures = new Map<any, Fixture>();
 
@@ -63,40 +61,14 @@ function dropDuplicates<T>(arr: T[]): T[] {
   return [...new Set(arr)];
 }
 
-let redisContainer: any = null;
-let mongoContainer: any = null;
-
-let containerCallCount = 0;
-
-async function ensureContainers() {
-  containerCallCount++;
-  if (!redisContainer) {
-    console.log("Starting redis container");
-    redisContainer = await new GenericContainer("redis")
-      .withExposedPorts(6379)
-      .withReuse()
-      .start();
-
-    redis.options.host = "localhost";
-    redis.options.password = undefined;
-    redis.options.port = redisContainer.getMappedPort(6379);
-    await redis.connect();
-  }
-
-  if (!mongoContainer) {
-    console.log("Starting mongo container");
-    mongoContainer = await new MongoDBContainer("mongo:8.0")
-      .withReuse()
-      .start();
-  }
-}
-
-await ensureContainers()
-
-addEventListener("unload", async () => {
-  if (redisContainer) await redisContainer.stop();
-  if (mongoContainer) await mongoContainer.stop();
-});
+redis.options.host = testSession.redisHost;
+redis.options.password = undefined;
+redis.options.port = testSession.redisPort;
+await redis.connect();
+// The owning runner enforces sequential modules. Redis pub/sub ignores DB
+// indices, so parallel files must not share this pair. This endpoint comes only
+// from the runner's private manifest, never from application REDIS_* settings.
+await redis.flushdb();
 
 defineFixture({
   token: ResourceManager,
@@ -160,19 +132,49 @@ defineFixture({
 defineFixture({
   token: "Mongo",
   factory: async () => {
-    const mongoUri = mongoContainer.getConnectionString();
+    const mongoUri = testSession.mongoUri;
     const databaseName = new UUID().toString();
+    const previous = {
+      mongoUrl: env.MONGO_URL,
+      databaseName: env.DATABASE_NAME,
+      processMongoUrl: Deno.env.get("MONGO_URL"),
+      processDatabaseName: Deno.env.get("DATABASE_NAME"),
+    };
+    const restoreConfig = () => {
+      env.MONGO_URL = previous.mongoUrl;
+      env.DATABASE_NAME = previous.databaseName;
+      for (const [name, value] of [
+        ["MONGO_URL", previous.processMongoUrl],
+        ["DATABASE_NAME", previous.processDatabaseName],
+      ] as const) {
+        if (value === undefined) Deno.env.delete(name);
+        else Deno.env.set(name, value);
+      }
+    };
+    // env.ts captures configuration when imported. Updating only Deno.env leaves
+    // direct application lookups (credential revocation, browser sessions) on the
+    // sentinel endpoint, while resource calls see this fixture's private DB.
+    // This wiring is confined to tests: production has no DB override mechanism.
+    await closeRootDB();
+    await closeChangeStreamDB();
     Deno.env.set("MONGO_URL", mongoUri);
     Deno.env.set("DATABASE_NAME", databaseName);
+    env.MONGO_URL = mongoUri;
+    env.DATABASE_NAME = databaseName;
     const resource = new MongoResource();
     const client = new MongoClient(
       mongoUri,
       {
-        timeoutMS: 1000,
+        timeoutMS: 10_000,
         directConnection: true,
       },
     );
-    await client.connect();
+    try {
+      await client.connect();
+    } catch (error) {
+      try { await client.close(); } finally { restoreConfig(); }
+      throw error;
+    }
     const isolatedDB = client.db(databaseName);
     const fs = new FsResource();
     const timeline = new TimelineResource();
@@ -197,11 +199,24 @@ defineFixture({
     return {
       db: isolatedDB,
       client,
+      restoreConfig,
     };
   },
-  teardown: async ({ client, db }) => {
-    await db.dropDatabase();
-    await client.close();
+  teardown: async ({ client, db, restoreConfig }) => {
+    const errors: unknown[] = [];
+    try {
+      await db.dropDatabase();
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      try {
+        const results = await Promise.allSettled([
+          closeRootDB(), closeChangeStreamDB(), client.close(),
+        ]);
+        errors.push(...results.flatMap((result) => result.status === "rejected" ? [result.reason] : []));
+      } finally { restoreConfig(); }
+    }
+    if (errors.length) throw new AggregateError(errors, "Mongo fixture cleanup failed");
   },
 });
 
@@ -356,9 +371,14 @@ defineFixture({
 
 defineFixture({
   token: "MockCallResourceSDK",
-  dependencies: ["MockFetch"],
-  factory: async ({ addMock }) => {
-    Deno.env.set("MYCELIA_JWT", "foo");
+  dependencies: ["MockFetch", "Admin", "BearerFactory"],
+  factory: async ({ addMock }, auth: Auth, bearerFactory: (auth: Auth) => Promise<string>) => {
+    const previous = {
+      MYCELIA_JWT: Deno.env.get("MYCELIA_JWT"),
+      MYCELIA_URL: Deno.env.get("MYCELIA_URL"),
+    };
+    const bearer = await bearerFactory(auth);
+    Deno.env.set("MYCELIA_JWT", bearer.replace("Bearer ", ""));
     Deno.env.set("MYCELIA_URL", "http://not-used");
     addMock(/.*\/api\/resource\/(.*)/, async (input: any, data: any) => {
       const auth = await getServerAuth();
@@ -370,6 +390,13 @@ defineFixture({
         headers: { "Content-Type": "application/json" },
       });
     });
+    return previous;
+  },
+  teardown: (previous: Record<string, string | undefined>) => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
   },
 });
 
@@ -462,21 +489,9 @@ export function withFixtures(
   testFn: (...args: any[]) => Promise<void> | void,
 ) {
   return async () => {
-    const resolved = new Map<any, any>();
     const fixtures = dropDuplicates(resolveFixtures(dependencies));
-    for (const fixture of fixtures) {
-      const args = fixture.dependencies?.map((dep) => resolved.get(dep)) ?? [];
-      resolved.set(fixture.token, await fixture.factory?.(...args));
-    }
-
-    try {
-      const args = dependencies.map((dep) => resolved.get(dep));
-      await testFn(...args);
-    } finally {
-      for (const fixture of fixtures) {
-        await fixture.teardown?.(resolved.get(fixture.token));
-      }
+    await runFixtureLifecycle(fixtures, dependencies, testFn, () => {
       defaultResourceManager.clearResources();
-    }
+    });
   };
 }

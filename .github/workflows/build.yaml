@@ -9,7 +9,10 @@ env:
   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
 jobs:
+  verification:
+    uses: ./.github/workflows/verify.yml
   build-and-push:
+    needs: verification
     runs-on: ubuntu-latest
     strategy:
       matrix:
