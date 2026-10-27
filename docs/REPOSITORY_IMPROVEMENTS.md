@@ -16,7 +16,7 @@ that an operator backup has been restored.
 | Verification | Root verification groups shared with CI, synthetic integration databases, browser/infra contracts, dependency/secret/link checks and guarded application deployment |
 | Documentation | Current documentation entrypoints; historical roadmap/workflow preserved outside active discovery |
 
-## Validation
+## Initial validation baseline (`25fd9dda`)
 
 - Backend: 1,180 tests (plus nine test steps), lint and typechecking; complete
   suite took 9m39s and the runner exited successfully after owned-container cleanup.
@@ -39,13 +39,48 @@ that an operator backup has been restored.
   This includes optional, transitive and retained tooling entries and is not an
   exploitability count. See [the report](reports/dependency-audit-2026-10-27.json).
 
-All root verification groups completed successfully. The dependency advisory
+All root verification groups completed successfully for this initial baseline. The dependency advisory
 audit intentionally remains failing while findings exist. Local verification is
-evidence about this source tree, not remote CI or production readiness. The final read-only doctor check found application mounts
+evidence about this source tree, not remote CI or production readiness. The initial read-only doctor check found application mounts
 on the original checkout, outside this implementation worktree. Backend was
 ready/healthy in production mode; frontend was healthy with mode unconfirmed.
 Mongo still published port 27017 on IPv4/IPv6 wildcard interfaces. That existing
 runtime binding requires a separate reviewed rollout; it was not changed here.
+
+## Follow-up: Docker load and test admission (2026-10-27–28)
+
+At the follow-up inspection, Docker listed 16 containers, eight running and eight
+stopped. There were no running MongoDB instances, no Testcontainers containers,
+and no containers carrying the new test-run owner label. The only remaining
+MongoDB container was the stopped main database. The two Mongo images (`8.0` and
+`8.2`) are cached images, not additional running databases. No containers, images
+or data volumes were removed. The user confirmed the main Mycelia stack was
+intentionally stopped and must remain stopped.
+
+The host had approximately 3.5–3.6 GiB available disk space and about 6 GiB of used
+swap; the OS memory-pressure query reported 40% available memory. Docker's image
+usage calculation failed with a missing containerd snapshot. These observations
+do not establish database corruption or the cause of the earlier freeze. No
+storage repair, Docker reset or production restart was attempted. A later check
+showed about 9.2 GiB free without any cleanup by this task; the snapshot error
+still occurred.
+
+The backend runner now checks free disk space before Docker startup, serializes
+updated runners with a per-user kernel lock, refuses an existing running test
+Mongo/Redis instance, and applies CPU/RAM/swap/cache limits to its owned pair.
+The low-disk refusal was exercised on this host with networking and subprocess
+execution explicitly denied: it exited before creating containers at 3.54 GiB
+available. Twenty-one guard/session tests passed, including lock contention/crash release,
+legacy/orphan admission and resource configuration. Actual capped-container
+execution and the full integration suite were not rerun in this follow-up,
+which stayed limited to container-free checks after the reported resource incident.
+
+Doctor now distinguishes active from configured ports, reports exit/OOM/resource
+metadata, and separates stopped services from their historical health checks.
+Its six tests and nine deployment-guard tests passed. JobsPage's progress/result
+presenter moved into `modules/jobs/JobProgressCell`, reducing the page by 1,189
+lines with existing props and links preserved; all three focused frontend tests,
+changed-file typechecking and lint passed. No service was started for these checks.
 
 ## Rollout gates and compatibility
 

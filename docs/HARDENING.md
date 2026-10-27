@@ -73,6 +73,10 @@ cancellation, stale-response protection, timeout/elapsed state and the frozen
 server-checked range. Jobs and voice review remain substantial pages; subsequent
 extraction should preserve their domain contracts and regression tests.
 
+`frontend/src/modules/jobs/JobProgressCell` now owns worker-specific progress,
+result, error and processed-range presentation. JobsPage retains orchestration;
+existing props, timeline/detail links and its compatibility re-export are kept.
+
 Live audio attaches opaque capture/session/request UUIDs and allowlisted failure
 codes across Omi, WLK and the private ASR adapter. A capture ID persists across
 rotation windows. Diagnostics omit speech, PCM, arbitrary provider errors and

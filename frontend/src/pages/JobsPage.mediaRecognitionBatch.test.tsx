@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import type { JobInfo } from "@/types/jobs";
-import { JobProgressCell } from "./JobsPage";
+import { JobProgressCell } from "@/modules/jobs/JobProgressCell";
 
 function batchJob(overrides: Partial<JobInfo> = {}): JobInfo {
   return {
