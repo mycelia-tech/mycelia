@@ -22,110 +22,110 @@ ROOT = Path("/mnt/datadrive/sky-services/projects/qwen")
 LOCK = ROOT / ".qwen-switch.lock"
 DISK_UUID = "816b292e-4e7e-4965-85b8-24abbb3e000d"
 
-HELP_NOTES = """БЫСТРЫЙ ВЫБОР
-  qwen-switch big-audio       Всё вместе: Qwen 27B + Whisper + обе диаризации.
-  qwen-switch big-asr         Qwen 27B + Whisper; live выключается.
-  qwen-switch audio           Qwen 9B + Whisper + live; больше запаса GPU.
-  qwen-switch big u64         Qwen 27B / 64K; общий Whisper и live выключаются.
-  qwen-switch                 Интерактивное меню.
+HELP_NOTES = """QUICK START
+  qwen-switch big-audio       Everything: Qwen 27B + Whisper + both diarizers.
+  qwen-switch big-asr         Qwen 27B + Whisper; live is stopped.
+  qwen-switch audio           Qwen 9B + Whisper + live; more GPU headroom.
+  qwen-switch big u64         Qwen 27B / 64K; shared Whisper and live stop.
+  qwen-switch                 Open the interactive menu.
 
-ЧТО ДЕЛАЕТ КАЖДЫЙ СЕРВИС
-  Qwen          Текстовая модель: ответы, обработка текста, суммаризация.
-  Whisper       large-v3-turbo: аудио -> текст. Одна общая GPU-модель для
-                файлового API :8001 и live-потока через внутренний backend.
-  File          pyannote community-1: спикеры и интервалы в готовых файлах.
-                API :8085; используется файловым конвейером Mycelia.
-  Live          WhisperLiveKit + Sortformer: живой текст и до 4 анонимных
-                спикеров через WebSocket :8010/asr. В big-audio Sortformer
-                работает на CPU, распознавание текста выполняет общий Whisper.
-                Имена людей и комнаты LiveKit/WebRTC этим не включаются.
+WHAT EACH SERVICE DOES
+  Qwen          Text model: answers, text processing and summarization.
+  Whisper       large-v3-turbo: audio -> text. One shared GPU model serves
+                the file API :8001 and live audio through an internal backend.
+  File          pyannote community-1: speaker labels and intervals in files.
+                API :8085; used by the Mycelia file-processing pipeline.
+  Live          WhisperLiveKit + Sortformer: live text and up to 4 anonymous
+                speakers over WebSocket :8010/asr. In big-audio, Sortformer
+                runs on CPU; the shared Whisper handles speech recognition.
+                Named speaker recognition and LiveKit/WebRTC rooms are separate.
 
-СОСТАВ ПРОФИЛЕЙ
-  Профиль      Qwen       Whisper   Файловая диаризация    Live
-  big-audio    27B / 32K  GPU       GPU, запускается       CPU, запускается
-  big-asr      27B / 32K  GPU       Сохраняет состояние*   Выключается
-  audio        9B / 64K   GPU       Сохраняет состояние    Запускается**
-  big PROFILE  27B        Выкл.     Сначала остановить     Выключается
-  stop         Выкл.     Сохраняет состояние всех аудиосервисов
+WORKLOAD PROFILES
+  Profile      Qwen       Whisper   File diarization      Live
+  big-audio    27B / 32K  GPU       GPU, starts           CPU, starts
+  big-asr      27B / 32K  GPU       Keeps current state*  Stops
+  audio        9B / 64K   GPU       Keeps current state   Starts**
+  big PROFILE  27B        Stops     Stop it first         Stops
+  stop         Stops     Keeps the state of all audio services
 
-  * Для совместимости с 27B нужны concurrency=1, очередь <=1, batches <=8/8/4.
-  ** Используется существующее размещение WLK; на faeon сейчас CPU.
-  big-audio требует уже настроенный CPU-only WLK и ограниченные file batches.
-  Профиль включает автозапуск своих сервисов после загрузки Docker и диска.
-  small = audio; u32asr = big-asr. Другие имена выбирают big с этой моделью:
-    u64      27B / 64K, обработка изображений на GPU, VRAM ~19-21 GiB
-    u128     27B / 128K, изображения на GPU, VRAM ~20-22 GiB
-    u64cpu   27B / 64K, проектор изображений на CPU, VRAM ~18-20 GiB
-    qwen, heretic: старые DFlash-профили, VRAM ~20-22 GiB;
-                   известны проблемы с обработкой изображений.
-  9B small: только текст, VRAM ~6 GiB. Все диапазоны приблизительные.
+  * Coexistence with 27B requires concurrency=1, queue <=1, batches <=8/8/4.
+  ** Uses the existing WLK placement; the verified faeon setup uses CPU.
+  big-audio requires an existing CPU-only WLK and bounded file batches.
+  It enables service restart after Docker starts and the model disk is mounted.
+  small = audio; u32asr = big-asr. Other names select big with that model:
+    u64      27B / 64K, GPU image projector, VRAM ~19-21 GiB
+    u128     27B / 128K, GPU image projector, VRAM ~20-22 GiB
+    u64cpu   27B / 64K, CPU image projector, VRAM ~18-20 GiB
+    qwen, heretic: legacy DFlash profiles, VRAM ~20-22 GiB;
+                   known image-processing issues.
+  9B small: text only, VRAM ~6 GiB. All ranges are approximate.
 
-СКОЛЬКО ПАМЯТИ ЗАНИМАЕТ
-  RAM = оперативная память сервера; VRAM = память видеокарты.
-  Наблюдения на faeon 2026-10-27, не текущий замер и не предел потребления:
-    Сервис                    VRAM              RAM контейнера
+MEMORY AND DISK USAGE
+  RAM = server system memory; VRAM = graphics card memory.
+  Observed on faeon 2026-10-27; historical samples, not current readings or peaks:
+    Service                   VRAM              Container RAM
     Qwen 27B / 32K            ~17.3 GiB          ~10.0 GiB
     Whisper large-v3-turbo    ~2.5 GiB           ~2.4 GiB
-    Файловая диаризация       ~1.0-1.3 GiB       ~1.8 GiB
-    Live Sortformer на CPU    0                  ~1.7 GiB
-  big-audio: четыре сервиса вместе ~16 GiB RAM и ~21-22 GiB VRAM.
-  Прокси, Omi и остальные процессы потребляют дополнительную память.
-  CPU Sortformer сохраняет место на GPU; в коротком тесте занимал до ~3 ядер.
-  При нагрузке на CPU live может замедляться. Тесты 10/20 с дали первый текст
-  через ~1.7-2.3 с; длительная устойчивость и тяжёлая генерация Qwen одновременно
-  с live этим не подтверждены. Часовой тест не выполнялся.
-  Модели могут засыпать/выгружаться при простое; RAM/VRAM меняются с нагрузкой.
+    File diarization         ~1.0-1.3 GiB       ~1.8 GiB
+    Live Sortformer on CPU    0                  ~1.7 GiB
+  big-audio: these four services together ~16 GiB RAM and ~21-22 GiB VRAM.
+  Proxies, Omi and other processes use additional memory.
+  CPU Sortformer saves GPU capacity; the short test used up to ~3 CPU cores.
+  CPU contention can slow live processing. Tests lasting 10/20 seconds produced
+  first text in ~1.7-2.3 seconds; they do not establish long-session reliability
+  or heavy Qwen generation concurrent with live. No hour-long test was run.
+  Idle models may sleep/offload; RAM/VRAM usage changes with workload.
 
-  На диске: файл весов Qwen 27B Q4_K_M = 15.66 GiB; 9B Q4_K_M = 5.38 GiB
-  (размеры проверены 2026-10-28). Проектор, draft-модель, Whisper/Sortformer,
-  образы Docker и кеши занимают дополнительное место. Это НЕ расход RAM/VRAM.
+  On disk: Qwen 27B Q4_K_M weights = 15.66 GiB; 9B Q4_K_M weights = 5.38 GiB
+  (file sizes checked 2026-10-28). Projectors, draft models, Whisper/Sortformer,
+  Docker images and caches need additional space. Disk size is not RAM/VRAM use.
 
-КАК ПОСМОТРЕТЬ ФАКТИЧЕСКИЙ РАСХОД
-  qwen-switch status          Активный профиль и готовность сервисов.
-  qwen-switch memory          RAM по сервисам; GPU used/free; общие показатели.
-  qwen-switch processes       Процессы контейнеров и GPU PID, включая CPU WLK.
-  SLEEPING = контейнер работает, веса модели выгружены; статус их не будит.
-  В файловом статусе model/loaded показывают загрузку весов, active/queued —
-  выполняющиеся и ожидающие запросы. API READY не обязательно значит loaded.
-  Табличные VRAM~GiB/RAM~GiB — исторические оценки, memory — свежие измерения.
-  RAM контейнеров и RAM хоста — разные способы учёта; их нельзя складывать.
-  GPU used включает драйвер/экран; память GPU PID уже входит в этот расход.
-  Неизвестные значения = '?'. GiB = 1024 MiB. Ctx = контекст модели в токенах.
-  KV = кеш; B/U = batch/ubatch; T = потоки CPU; u* = Uncensored.
+CHECK CURRENT RESOURCE USAGE
+  qwen-switch status          Active profile and service readiness.
+  qwen-switch memory          Per-service RAM, GPU used/free and totals.
+  qwen-switch processes       Container processes and GPU PIDs, including CPU WLK.
+  SLEEPING = container running, model weights unloaded; status does not wake it.
+  File status: model/loaded describe weight residency; active/queued describe
+  running and waiting requests. API READY does not necessarily mean loaded.
+  Table VRAM~GiB/RAM~GiB values are historical estimates; memory reads fresh data.
+  Container RAM and host RAM are different accounting views; do not add them.
+  GPU used includes driver/display memory; GPU PID usage is already part of it.
+  Unknown values = '?'. GiB = 1024 MiB. Ctx = model context in tokens.
+  KV = cache; B/U = batch/ubatch; T = CPU threads; u* = Uncensored.
 
-УПРАВЛЕНИЕ ОБОИМИ ВИДАМИ ДИАРИЗАЦИИ
-  qwen-switch diarization                     Статус live и file.
-  qwen-switch diarization live status          Проверить live.
-  qwen-switch diarization live start           Запустить Whisper/прокси/WLK.
-  qwen-switch diarization live stop            Остановить WLK и live-прокси.
-  qwen-switch diarization file status          Проверить file и очередь.
-  qwen-switch diarization file start           Запустить файловый сервис.
-  qwen-switch diarization file stop            Дождаться работы и остановить.
-  Отдельные команды сохраняют выбранный Qwen; live stop сохраняет общий
-  Whisper/файловый API, file stop останавливает только канонический :8085.
-  Файловый контейнер: sky-diarization-candidate-diarization-1-1.
-  Старый sky-diarization-1 и остальные candidate-реплики не запускаются.
+CONTROL BOTH DIARIZATION SERVICES
+  qwen-switch diarization                     Show live and file status.
+  qwen-switch diarization live status          Check live.
+  qwen-switch diarization live start           Start Whisper/proxies/WLK.
+  qwen-switch diarization live stop            Stop WLK and its live proxy.
+  qwen-switch diarization file status          Check file service and queue.
+  qwen-switch diarization file start           Start file diarization.
+  qwen-switch diarization file stop            Finish accepted work, then stop.
+  Independent controls keep the selected Qwen. live stop keeps shared Whisper
+  and the file API; file stop affects only the canonical :8085 service.
+  File container: sky-diarization-candidate-diarization-1-1.
+  Legacy sky-diarization-1 and other candidate replicas are never started.
 
-ПРОВЕРКА ПЕРЕД ПЕРЕКЛЮЧЕНИЕМ И ОСТАНОВКА
-  qwen-switch big-audio --dry-run              Проверка без переключения.
-  qwen-switch diarization file start --dry-run Проверка запуска file.
-  qwen-switch stop                             Остановить только Qwen.
-  Live с 27B требует профиль 32K ASR и CPU-only Sortformer.
-  Перед live stop завершите запись: EOF -> ready_to_stop. Проверка открытых
-  соединений — снимок состояния, а не атомарная блокировка новых подключений.
-  File stop ждёт принятые запросы без автоматического SIGKILL. --timeout
-  ограничивает ожидание команды; остановка сервера может ещё продолжаться.
-  --force допускает прерывание работы и 30-секундный срок до принудительного
-  завершения. Для live это не гарантирует финальный текст/ready_to_stop.
-  При холодном запуске нужно свободной VRAM: Whisper >=3 GiB, file >=2 GiB,
-  GPU WLK >=2 GiB. Это проверки запаса, не гарантии пикового потребления.
-  Переключение не удаляет записи, транскрипты, volumes или кеши моделей.
-  Утилита запускает существующие аудиоконтейнеры; установка моделей отдельно.
+PREFLIGHT AND SHUTDOWN
+  qwen-switch big-audio --dry-run              Validate without switching.
+  qwen-switch diarization file start --dry-run Validate file startup.
+  qwen-switch stop                             Stop Qwen only.
+  Live alongside 27B requires the 32K ASR profile and CPU-only Sortformer.
+  Before live stop, finish recording: EOF -> ready_to_stop. Open-connection
+  checks are snapshots, not an atomic gate against new connections.
+  File stop waits for accepted requests without an automatic SIGKILL deadline.
+  --timeout limits CLI waiting; the server may still be shutting down afterward.
+  --force permits interruption and a 30-second deadline before forced shutdown.
+  For live, this does not guarantee final buffered text or ready_to_stop.
+  Cold-start free VRAM checks: Whisper >=3 GiB, file >=2 GiB, GPU WLK >=2 GiB.
+  These are headroom checks, not guarantees of peak memory consumption.
+  Switching preserves recordings, transcripts, volumes and model caches.
+  This tool starts existing audio containers; model installation is separate.
 
-ЗАПУСК ЧЕРЕЗ SSH
+RUN OVER SSH
   ssh faeon '~/.local/bin/qwen-switch help'
-  В интерактивном Bash достаточно qwen-switch. В неинтерактивном SSH указывайте
-  ~/.local/bin/qwen-switch: в /usr/local/bin осталась историческая версия.
+  In interactive Bash, qwen-switch is sufficient. For noninteractive SSH, use
+  ~/.local/bin/qwen-switch: /usr/local/bin contains a historical version.
 """
 
 
@@ -1064,7 +1064,7 @@ def stop_all(force=False, dry_run=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Qwen и аудиосервисы на faeon / RTX 4090. Без аргументов — меню.",
+        description="Qwen and audio services on faeon / RTX 4090. No arguments opens the menu.",
         epilog=HELP_NOTES, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("choice", nargs="?", help=f"audio, big-audio, big-asr, big [profile], 1..{len(MODELS)}, {', '.join(SHORT_NAMES.values())}, status/list, memory, processes, diarization [live|file] [status|start|stop], stop/off, toggle, help")
     parser.add_argument("profile", nargs="?", help="profile for big, or live/file/status/start for diarization")

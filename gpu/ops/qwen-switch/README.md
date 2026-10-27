@@ -4,7 +4,7 @@ User-owned CLI for the existing Qwen and shared audio containers. Python 3's
 standard library, Docker CLI and `nvidia-smi` are required. It does not deploy new
 models, replace audio images, copy secrets, or create a second Whisper.
 
-`qwen-switch help` and `qwen-switch --help` provide a Russian guide to profile
+`qwen-switch help` and `qwen-switch --help` provide an English guide to profile
 selection, each service's purpose, CPU/GPU placement, measured RAM/VRAM and
 Qwen weight-file sizes on disk, with dated measurements, control commands and
 shutdown behavior. Reading help requires no Docker access and starts no services.
