@@ -1,6 +1,10 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socket import SHUT_RDWR
 from sys import path
+from threading import Thread
 from unittest import TestCase, main
 from unittest.mock import patch
 
@@ -15,15 +19,99 @@ from lib.diarization_runtime import (  # noqa: E402
     RecordingLease,
     acquire_recording_lease,
     aggregate_stage_timings,
+    new_provider_session,
     parse_diarization_recording_lease_seconds,
     release_recording_lease,
     release_recording_leases,
     renew_recording_lease,
 )
+from lib.api import job_session_var, job_token_var  # noqa: E402
 from lib.resources import call_resource_once  # noqa: E402
 
 
+@contextmanager
+def provider_http_server():
+    observed = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            observed.append({
+                # Retain the socket object so identity cannot be recycled.
+                "connection": self.connection,
+                "connection_header": self.headers.get("Connection"),
+                "authorization": self.headers.get("Authorization"),
+                "cookie": self.headers.get("Cookie"),
+                "body": body,
+            })
+            if self.path == "/disconnect":
+                self.close_connection = True
+                self.connection.shutdown(SHUT_RDWR)
+                self.connection.close()
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = Thread(
+            target=server.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}", observed
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+
+
 class DiarizationRuntimeTest(TestCase):
+    def test_provider_posts_use_separate_connections_without_job_credentials(self):
+        with requests.Session() as backend:
+            backend.headers["Authorization"] = "Bearer test-mycelia-job-token"
+            backend.cookies.set("mycelia-session", "test-session")
+            session_context = job_session_var.set(backend)
+            token_context = job_token_var.set("test-mycelia-job-token")
+            try:
+                with provider_http_server() as (url, observed), new_provider_session() as provider:
+                    # Keep the loopback test independent of proxy/netrc settings.
+                    provider.trust_env = False
+                    for scheme in ("http://", "https://"):
+                        adapter = provider.get_adapter(scheme)
+                        self.assertEqual(adapter._pool_connections, 1)
+                        self.assertEqual(adapter._pool_maxsize, 1)
+                        self.assertEqual(adapter.max_retries.total, 0)
+                    for _ in range(2):
+                        response = provider.post(
+                            url + "/diarize", data=b"test-audio", timeout=(1, 1),
+                        )
+                        response.raise_for_status()
+                    self.assertEqual(len(observed), 2)
+                    self.assertIsNot(observed[0]["connection"], observed[1]["connection"])
+                    for request in observed:
+                        self.assertEqual(request["connection_header"], "close")
+                        self.assertIsNone(request["authorization"])
+                        self.assertIsNone(request["cookie"])
+            finally:
+                job_session_var.reset(session_context)
+                job_token_var.reset(token_context)
+
+    def test_provider_disconnect_after_post_is_not_retried(self):
+        with provider_http_server() as (url, observed), new_provider_session() as provider:
+            provider.trust_env = False
+            with self.assertRaises(requests.ConnectionError):
+                provider.post(url + "/disconnect", data=b"test-audio", timeout=(1, 1))
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0]["body"], b"test-audio")
+
     def test_bounded_resource_call_uses_one_short_attempt(self):
         session = requests.Session()
         with (

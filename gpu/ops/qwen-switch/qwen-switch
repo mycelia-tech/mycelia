@@ -1,0 +1,1149 @@
+#!/usr/bin/env python3
+"""Select one known Qwen Docker profile; never stop unrelated containers."""
+import argparse
+import importlib.util
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
+
+
+ROOT = Path("/mnt/datadrive/sky-services/projects/qwen")
+LOCK = ROOT / ".qwen-switch.lock"
+DISK_UUID = "816b292e-4e7e-4965-85b8-24abbb3e000d"
+
+HELP_NOTES = """QUICK START
+  qwen-switch big-audio       Everything: Qwen 27B + Whisper + both diarizers.
+  qwen-switch big-asr         Qwen 27B + Whisper; live is stopped.
+  qwen-switch audio           Qwen 9B + Whisper + live; more GPU headroom.
+  qwen-switch big u64         Qwen 27B / 64K; shared Whisper and live stop.
+  qwen-switch                 Open the interactive menu.
+
+WHAT EACH SERVICE DOES
+  Qwen          Text model: answers, text processing and summarization.
+  Whisper       large-v3-turbo: audio -> text. One shared GPU model serves
+                the file API :8001 and live audio through an internal backend.
+  File          pyannote community-1: speaker labels and intervals in files.
+                API :8085; used by the Mycelia file-processing pipeline.
+  Live          WhisperLiveKit + Sortformer: live text and up to 4 anonymous
+                speakers over WebSocket :8010/asr. In big-audio, Sortformer
+                runs on CPU; the shared Whisper handles speech recognition.
+                Named speaker recognition and LiveKit/WebRTC rooms are separate.
+
+WORKLOAD PROFILES
+  Profile      Qwen       Whisper   File diarization      Live
+  big-audio    27B / 32K  GPU       GPU, starts           CPU, starts
+  big-asr      27B / 32K  GPU       Keeps current state*  Stops
+  audio        9B / 64K   GPU       Keeps current state   Starts**
+  big PROFILE  27B        Stops     Stop it first         Stops
+  stop         Stops     Keeps the state of all audio services
+
+  * Coexistence with 27B requires concurrency=1, queue <=1, batches <=8/8/4.
+  ** Uses the existing WLK placement; the verified faeon setup uses CPU.
+  big-audio requires an existing CPU-only WLK and bounded file batches.
+  It enables service restart after Docker starts and the model disk is mounted.
+  small = audio; u32asr = big-asr. Other names select big with that model:
+    u64      27B / 64K, GPU image projector, VRAM ~19-21 GiB
+    u128     27B / 128K, GPU image projector, VRAM ~20-22 GiB
+    u64cpu   27B / 64K, CPU image projector, VRAM ~18-20 GiB
+    qwen, heretic: legacy DFlash profiles, VRAM ~20-22 GiB;
+                   known image-processing issues.
+  9B small: text only, VRAM ~6 GiB. All ranges are approximate.
+
+MEMORY AND DISK USAGE
+  RAM = server system memory; VRAM = graphics card memory.
+  Observed on faeon 2026-10-27; historical samples, not current readings or peaks:
+    Service                   VRAM              Container RAM
+    Qwen 27B / 32K            ~17.3 GiB          ~10.0 GiB
+    Whisper large-v3-turbo    ~2.5 GiB           ~2.4 GiB
+    File diarization         ~1.0-1.3 GiB       ~1.8 GiB
+    Live Sortformer on CPU    0                  ~1.7 GiB
+  big-audio: these four services together ~16 GiB RAM and ~21-22 GiB VRAM.
+  Proxies, Omi and other processes use additional memory.
+  CPU Sortformer saves GPU capacity; the short test used up to ~3 CPU cores.
+  CPU contention can slow live processing. Tests lasting 10/20 seconds produced
+  first text in ~1.7-2.3 seconds; they do not establish long-session reliability
+  or heavy Qwen generation concurrent with live. No hour-long test was run.
+  Idle models may sleep/offload; RAM/VRAM usage changes with workload.
+
+  On disk: Qwen 27B Q4_K_M weights = 15.66 GiB; 9B Q4_K_M weights = 5.38 GiB
+  (file sizes checked 2026-10-28). Projectors, draft models, Whisper/Sortformer,
+  Docker images and caches need additional space. Disk size is not RAM/VRAM use.
+
+CHECK CURRENT RESOURCE USAGE
+  qwen-switch status          Active profile and service readiness.
+  qwen-switch memory          Per-service RAM, GPU used/free and totals.
+  qwen-switch processes       Container processes and GPU PIDs, including CPU WLK.
+  SLEEPING = container running, model weights unloaded; status does not wake it.
+  File status: model/loaded describe weight residency; active/queued describe
+  running and waiting requests. API READY does not necessarily mean loaded.
+  Table VRAM~GiB/RAM~GiB values are historical estimates; memory reads fresh data.
+  Container RAM and host RAM are different accounting views; do not add them.
+  GPU used includes driver/display memory; GPU PID usage is already part of it.
+  Unknown values = '?'. GiB = 1024 MiB. Ctx = model context in tokens.
+  KV = cache; B/U = batch/ubatch; T = CPU threads; u* = Uncensored.
+
+CONTROL BOTH DIARIZATION SERVICES
+  qwen-switch diarization                     Show live and file status.
+  qwen-switch diarization live status          Check live.
+  qwen-switch diarization live start           Start Whisper/proxies/WLK.
+  qwen-switch diarization live stop            Stop WLK and its live proxy.
+  qwen-switch diarization file status          Check file service and queue.
+  qwen-switch diarization file start           Start file diarization.
+  qwen-switch diarization file stop            Finish accepted work, then stop.
+  Independent controls keep the selected Qwen. live stop keeps shared Whisper
+  and the file API; file stop affects only the canonical :8085 service.
+  File container: sky-diarization-candidate-diarization-1-1.
+  Legacy sky-diarization-1 and other candidate replicas are never started.
+
+PREFLIGHT AND SHUTDOWN
+  qwen-switch big-audio --dry-run              Validate without switching.
+  qwen-switch diarization file start --dry-run Validate file startup.
+  qwen-switch stop                             Stop Qwen only.
+  Live alongside 27B requires the 32K ASR profile and CPU-only Sortformer.
+  Before live stop, finish recording: EOF -> ready_to_stop. Open-connection
+  checks are snapshots, not an atomic gate against new connections.
+  File stop waits for accepted requests without an automatic SIGKILL deadline.
+  --timeout limits CLI waiting; the server may still be shutting down afterward.
+  --force permits interruption and a 30-second deadline before forced shutdown.
+  For live, this does not guarantee final buffered text or ready_to_stop.
+  Cold-start free VRAM checks: Whisper >=3 GiB, file >=2 GiB, GPU WLK >=2 GiB.
+  These are headroom checks, not guarantees of peak memory consumption.
+  Switching preserves recordings, transcripts, volumes and model caches.
+  This tool starts existing audio containers; model installation is separate.
+
+RUN OVER SSH
+  ssh faeon '~/.local/bin/qwen-switch help'
+  In interactive Bash, qwen-switch is sufficient. For noninteractive SSH, use
+  ~/.local/bin/qwen-switch: /usr/local/bin contains a historical version.
+"""
+
+
+@dataclass(frozen=True)
+class Model:
+    key: str
+    container: str
+    title: str
+    port: int
+    compose: str = ""
+    context: int = 200000
+    cache: str = "turbo3_tcq"
+    runtime_context: int | None = None
+    model_filename: str = "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+
+
+MODELS = (
+    Model("normal", "qwen3.8-27B-dflash2-turboquant", "Qwen normal / BeeLlama / legacy DFlash", 8082, model_filename="Qwen3.8-27B-Q4_K_M.gguf"),
+    Model("heretic", "qwen3.8-27B-heretic-dflash2-turboquant", "Heretic / BeeLlama / legacy DFlash", 8084, model_filename="Qwen3.8-27B-Heretic-RVN-Q4_K_M.gguf"),
+    Model("uncensored", "qwen3.8-27b-uncensored-llamacpp", "Uncensored / upstream / 64K Q8 + MTP + vision", 8084, "compose.yaml", 65536, "q8_0"),
+    Model("uncensored-long", "qwen3.8-27b-uncensored-long-llamacpp", "Uncensored / upstream / 128K Q4 + MTP + vision", 8084, "compose-long.yaml", 131072, "q4_0"),
+    Model("uncensored-cpu", "qwen3.8-27b-uncensored-cpu-mmproj-llamacpp", "Uncensored / upstream / 64K Q8 + MTP / CPU mmproj", 8084, "compose-cpu-mmproj.yaml", 65536, "q8_0"),
+    Model("small", "qwen3.8-9b-distill-llamacpp", "9B Distill Heretic Uncensored / upstream / 64K Q4 / TEXT ONLY", 8084, "compose-small.yaml", 65536, "q4_0", model_filename="Qwen3.8-9B-Distill-uncensored-heretic.Q4_K_M.gguf"),
+    Model("uncensored-asr", "qwen3.8-27b-asr-llamacpp", "Uncensored 27B / 32K Q8 + MTP / CPU vision / Whisper coexistence", 8084, "compose-asr.yaml", 32768, "q8_0"),
+)
+ALIASES = {"qwen": "normal", "upstream": "uncensored", "64k": "uncensored", "long": "uncensored-long", "128k": "uncensored-long", "q4": "uncensored-long", "cpu": "uncensored-cpu", "cpu-mmproj": "uncensored-cpu"}
+SHORT_NAMES = {
+    "normal": "qwen", "heretic": "heretic", "uncensored": "u64",
+    "uncensored-long": "u128", "uncensored-cpu": "u64cpu",
+    "small": "small",
+    "uncensored-asr": "u32asr",
+}
+ALIASES.update({short: key for key, short in SHORT_NAMES.items()})
+ALIASES.update({"usmall": "small", "small-uncensored": "small"})
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+# Start dependencies before their clients; stop in reverse order.
+AUDIO = (
+    Model("whisper", "mycelia-stt-whisper-1", "Whisper ASR", 0),
+    Model("stt-proxy", "mycelia-stt-proxy-1", "STT API", 0),
+    Model("live-proxy", "mycelia-stt-live-proxy-1", "Live ASR backend", 0),
+    Model("wlk", "sky-livekit-wlk-1", "WhisperLiveKit + Sortformer diarization", 0),
+)
+
+# Loaded-profile planning estimates, NOT live readings or guaranteed peaks.
+# 27B VRAM ranges are coarse estimates informed by historical whole-GPU tests
+# (background included); RAM values are Docker snapshots after short text tests.
+# Sources: QWEN-BENCHMARK-SUMMARY.md, mmproj-benchmark.md (2026-09-04).
+# small: benchmark-usmall64-20260919.jsonl, process 6168 MiB / Docker 479.7 MiB.
+# u32asr: 2026-10-19, process 17684 MiB / Docker 1.92 GiB; 28.5K prompt
+# plus 3 concurrent Whisper requests: whole GPU peak 21639 MiB, free >=2523 MiB.
+# Keep these estimates in sync if context, weights, offload or batching changes.
+MEMORY_ESTIMATES = {
+    "normal": ("20-22", "2.7"),
+    "heretic": ("20-22", "2.7"),
+    "uncensored": ("19-21", "1.0"),
+    "uncensored-long": ("20-22", "1.1"),
+    "uncensored-cpu": ("18-20", "1.9"),
+    "small": ("6.0", "0.5"),
+    "uncensored-asr": ("17-18", "1.9"),
+}
+
+
+def format_context(value):
+    try:
+        tokens = int(value)
+    except (ValueError, TypeError):
+        return str(value)
+    if tokens < 1024:
+        return str(tokens)
+    return f"{tokens / 1024:.1f}".rstrip("0").rstrip(".") + "K"
+
+
+def run(*args, timeout=60, check=True):
+    result = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
+    if check and result.returncode:
+        detail = (result.stderr or result.stdout).strip()[-1500:]
+        raise RuntimeError(f"Command failed: {' '.join(args)}\n{detail}")
+    return result
+
+
+def inspect(model):
+    fmt = '{"state":{{json .State}},"restart":{{json .HostConfig.RestartPolicy}},"cmd":{{json .Config.Cmd}},"networks":{{json .NetworkSettings.Networks}},"env":{{json .Config.Env}},"entrypoint":{{json .Config.Entrypoint}},"devices":{{json .HostConfig.DeviceRequests}}}'
+    result = run("docker", "inspect", "--format", fmt, model.container, check=False)
+    if result.returncode != 0:
+        return None
+    info = json.loads(result.stdout)
+    # Keep only placement/batching settings; credentials never enter status output.
+    allowed = {"CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
+               "DIARIZATION_SEGMENTATION_BATCH_SIZE", "DIARIZATION_EMBEDDING_BATCH_SIZE",
+               "DIARIZATION_SEGMENT_EMBEDDING_BATCH_SIZE", "DIARIZATION_REQUEST_CONCURRENCY",
+               "DIARIZATION_MAX_QUEUED_REQUESTS"}
+    info["env"] = {k: v for k, v in (item.split("=", 1) for item in info.get("env", [])
+                                    if "=" in item) if k in allowed}
+    return info
+
+
+def api(model, path, payload=None, timeout=2, raw=False):
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{model.port}{path}", data=data,
+        headers={"Content-Type": "application/json"} if data else {},
+    )
+    try:
+        with OPENER.open(req, timeout=timeout) as response:
+            body = response.read().decode()
+            return body if raw else json.loads(body)
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+
+
+def is_running(info):
+    return bool(info and info["state"].get("Running"))
+
+
+def arg_value(args, names, default):
+    for index, item in enumerate(args or []):
+        if item in names and index + 1 < len(args):
+            return args[index + 1]
+    return default
+
+
+def status(model, info):
+    if info is None:
+        return "NOT CREATED", None
+    state = info["state"].get("Status", "unknown")
+    if state != "running":
+        return {"exited": "STOPPED", "created": "CREATED", "restarting": "RESTARTING"}.get(state, state.upper()), None
+    props = api(model, "/props")
+    if isinstance(props, dict) and props.get("is_sleeping") is True:
+        return "SLEEPING", props
+    health = api(model, "/health")
+    if isinstance(health, dict) and health.get("status") == "ok":
+        if isinstance(props, dict) and props.get("is_sleeping") is False:
+            return "LOADED", props
+        return "API READY", props
+    return "NOT READY", props
+
+
+def display_args(model, info):
+    if info is not None:
+        return info.get("cmd") or []
+    if model.compose and (ROOT / model.compose).is_file():
+        result = run("docker", "compose", "-f", str(ROOT / model.compose), "config", "--format", "json", check=False)
+        if result.returncode == 0:
+            try:
+                return json.loads(result.stdout)["services"]["llama"]["command"]
+            except (ValueError, KeyError):
+                pass
+    return []
+
+
+def parameter_values(model, args, props=None):
+    ctx = arg_value(args, ("--ctx-size", "-c"), model.context)
+    runtime_ctx = (props or {}).get("default_generation_settings", {}).get("n_ctx")
+    if isinstance(runtime_ctx, int) and runtime_ctx > 0:
+        ctx = runtime_ctx
+    ctx = format_context(ctx)
+    key_cache = arg_value(args, ("--cache-type-k", "-ctk"), model.cache)
+    value_cache = arg_value(args, ("--cache-type-v", "-ctv"), model.cache)
+    cache = key_cache if key_cache == value_cache else f"{key_cache}/{value_cache}"
+    spec = arg_value(args, ("--spec-type",), "none")
+    draft = arg_value(args, ("--spec-draft-n-max",), "3")
+    spec_name = {"draft-mtp": "MTP", "draft-dflash": "DFlash", "dflash": "DFlash"}.get(spec, spec)
+    spec_text = f"{spec_name}:{draft}" if spec != "none" else "none"
+    if spec == "dflash" and "--spec-dm-adaptive" in args:
+        spec_text += "A"
+    vision = "off"
+    if "--mmproj" in args and "--no-mmproj" not in args:
+        vision = "CPU" if "--no-mmproj-offload" in args else "GPU"
+    batch = arg_value(args, ("--batch-size", "-b"), "2048")
+    ubatch = arg_value(args, ("--ubatch-size", "-ub"), "512")
+    threads = arg_value(args, ("--threads", "-t"), "auto")
+    threads_batch = arg_value(args, ("--threads-batch", "-tb"), threads)
+    idle = arg_value(args, ("--sleep-idle-seconds",), "0")
+    idle_text = "off" if str(idle) in ("0", "-1") else f"{idle}s"
+    return (str(ctx), str(cache), spec_text, vision, f"{batch}/{ubatch}",
+            f"{threads}/{threads_batch}", idle_text, str(model.port))
+
+
+def format_table(headers, rows):
+    widths = [max(len(str(row[index])) for row in [headers, *rows])
+              for index in range(len(headers))]
+
+    def line(row):
+        return " " + "  ".join(str(value).ljust(width) for value, width in zip(row, widths)).rstrip()
+
+    return [line(headers), line(tuple("-" * width for width in widths)),
+            *(line(row) for row in rows)]
+
+
+def model_name(model, args, props=None):
+    path = (props or {}).get("model_path") or arg_value(args, ("--model", "-m"), model.model_filename)
+    return Path(path).name.removesuffix(".gguf")
+
+
+def show_status():
+    print("\nQwen profiles\n")
+    show_workload_state()
+    active = 0
+    rows = []
+    for number, model in enumerate(MODELS, 1):
+        info = inspect(model)
+        label, props = status(model, info)
+        running = is_running(info)
+        active += running
+        marker = "*" if running else " "
+        args = display_args(model, info)
+        values = parameter_values(model, args, props)
+        visible_values = (*values[:6], values[7])  # Hide Idle; keep unload configuration unchanged.
+        vram, ram = MEMORY_ESTIMATES.get(model.key, ("?", "?"))
+        rows.append((marker, f"{number})", SHORT_NAMES[model.key], label,
+                     visible_values[0], vram, ram, *visible_values[1:]))
+    headers = ("", "#", "Profile", "Status", "Ctx", "VRAM~GiB", "RAM~GiB", "KV", "Spec", "Vision", "B/U", "T", "Port")
+    print("\n".join(format_table(headers, rows)))
+    if active > 1:
+        print(" WARNING: multiple models are running. Run qwen-switch stop first.")
+
+
+def resolve(value):
+    if value in {str(i) for i in range(1, len(MODELS) + 1)}:
+        return MODELS[int(value) - 1]
+    key = ALIASES.get(value, value)
+    for model in MODELS:
+        if model.key == key:
+            return model
+    raise ValueError(f"Unknown model: {value}. Use qwen-switch list.")
+
+
+def preflight(model):
+    if not model.compose:
+        if inspect(model) is None:
+            raise RuntimeError(f"Container {model.container} is missing; legacy profiles are not created automatically.")
+        return
+    path = ROOT / model.compose
+    if not path.is_file():
+        raise RuntimeError(f"Compose file not found: {path}")
+    run("docker", "compose", "-f", str(path), "config", "-q")
+    config = json.loads(run("docker", "compose", "-f", str(path), "config", "--format", "json").stdout)
+    for network in (config.get("networks") or {}).values():
+        if network.get("external"):
+            run("docker", "network", "inspect", network["name"], "--format", "{{.Id}}")
+    service = config["services"]["llama"]
+    if service.get("container_name") != model.container:
+        raise RuntimeError("Compose container_name does not match the selected profile.")
+    run("docker", "image", "inspect", service["image"], "--format", "{{.Id}}")
+    args = service["command"]
+    mounts = {mount["target"]: mount["source"] for mount in service.get("volumes", []) if mount.get("type") == "bind"}
+    for flag in ("--model", "--mmproj"):
+        if flag == "--mmproj" and flag not in args:
+            continue
+        remote = arg_value(args, (flag,), "")
+        if not remote.startswith("/models/") or "/models" not in mounts:
+            raise RuntimeError(f"Expected /models bind mount not found for {flag}.")
+        local = Path(mounts["/models"]) / remote.removeprefix("/models/")
+        if not local.is_file() or local.stat().st_size == 0:
+            raise RuntimeError(f"Model/projector file is missing or empty: {local}")
+    draft = arg_value(args, ("--spec-draft-model",), "")
+    if draft:
+        # The shared draft's parent is not user-readable. Check only this exact
+        # read-only file through Docker before stopping the current profile.
+        mount = next((item for item in service.get("volumes", [])
+                      if item.get("type") == "bind" and item["target"] == draft), None)
+        if not mount or not mount.get("read_only"):
+            raise RuntimeError("Draft model requires an exact-file read-only bind mount.")
+        run("docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--entrypoint", "/bin/sh", "--mount",
+            f"type=bind,source={mount['source']},target=/draft.gguf,readonly",
+            service["image"], "-ec", "test -f /draft.gguf && test -r /draft.gguf && test -s /draft.gguf")
+
+
+def ensure_idle(model, force):
+    if force:
+        return
+    props = api(model, "/props")
+    if isinstance(props, dict) and props.get("is_sleeping") is True:
+        return
+    slots = api(model, "/slots")
+    if isinstance(slots, list) and slots and all("is_processing" in slot for slot in slots):
+        if any(slot["is_processing"] for slot in slots):
+            raise RuntimeError(f"{model.key} is processing a request. Wait for completion; --force will interrupt it.")
+        return
+    metrics = api(model, "/metrics", raw=True)
+    if metrics:
+        matches = re.findall(r"^[^#\n]*requests_processing(?:\{[^}]*\})?\s+([0-9.eE+-]+)\s*$", metrics, re.M)
+        if matches:
+            if any(float(value) > 0 for value in matches):
+                raise RuntimeError(f"{model.key} is processing a request. Wait for completion; --force will interrupt it.")
+            return
+    raise RuntimeError(f"Cannot verify active requests for {model.key}; switch cancelled. Use --force only to intentionally interrupt.")
+
+
+def set_restart(model, policy):
+    run("docker", "update", f"--restart={policy}", model.container)
+
+
+def policy_string(info):
+    policy = info["restart"]
+    name = policy.get("Name") or "no"
+    retries = policy.get("MaximumRetryCount", 0)
+    return f"{name}:{retries}" if name == "on-failure" and retries else name
+
+
+def wait_ready(model, timeout):
+    started = time.monotonic()
+    next_report = started
+    while time.monotonic() - started < timeout:
+        info = inspect(model)
+        if not is_running(info):
+            raise RuntimeError(f"{model.key}: container exited before readiness. See docker logs {model.container}")
+        label, props = status(model, info)
+        if label in ("LOADED", "API READY"):
+            if model.compose:
+                ctx = (props or {}).get("default_generation_settings", {}).get("n_ctx")
+                path = (props or {}).get("model_path", "")
+                expected_context = model.runtime_context or model.context
+                if ctx != expected_context or Path(path).name != model.model_filename:
+                    raise RuntimeError(f"API does not match profile {model.key}: context={ctx}, model={path}")
+            print(f"Ready: {model.key} - {label}")
+            return
+        if label == "SLEEPING":
+            print("Model is sleeping; waking it with a short local request...")
+            remaining = max(1, timeout - (time.monotonic() - started))
+            result = api(model, "/completion", {"prompt": "Hello", "n_predict": 1, "stream": False}, timeout=remaining)
+            if result is None:
+                raise RuntimeError("Model wake-up did not complete successfully.")
+            continue
+        if time.monotonic() >= next_report:
+            print(f"Waiting for {model.key} to load... {int(time.monotonic() - started)} s", flush=True)
+            next_report = time.monotonic() + 10
+        time.sleep(1)
+    raise RuntimeError(f"{model.key}: model did not become ready within {timeout} seconds.")
+
+
+@contextmanager
+def locked():
+    # Fixed project-local lock: all callers use the same file. No global Docker operations.
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o660)
+    with os.fdopen(fd, "w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another qwen-switch is already switching profiles.") from exc
+        yield
+
+
+def switch_to(target, force=False, timeout=180, dry_run=False, *, lock_held=False):
+    with (nullcontext() if lock_held else locked()):
+        preflight(target)
+        snapshot = {model.key: inspect(model) for model in MODELS}
+        previous = [model for model in MODELS if is_running(snapshot[model.key])]
+        if len(previous) > 1:
+            raise RuntimeError("Multiple known models are running; run qwen-switch stop first.")
+        if previous == [target]:
+            if dry_run:
+                print(f"Already running: {target.key}. No changes.")
+            else:
+                wait_ready(target, timeout)
+            return
+        for model in previous:
+            ensure_idle(model, force)
+        print(f"Selected: {SHORT_NAMES[target.key]}")
+        print("Stop: " + (", ".join(model.key for model in previous) or "nothing"))
+        if not target.compose:
+            print("Warning: legacy DFlash settings are unchanged; use upstream for images.")
+        if dry_run:
+            print("DRY RUN: preflight passed; containers unchanged.")
+            return
+        try:
+            for model in MODELS:
+                if snapshot[model.key]:
+                    set_restart(model, "no")
+            for model in previous:
+                print(f"Stopping {model.key}...", flush=True)
+                run("docker", "stop", "-t", "30", model.container, timeout=45)
+            print(f"Starting {target.key}...", flush=True)
+            if target.compose:
+                run("docker", "compose", "-f", str(ROOT / target.compose), "up", "-d", "--pull", "never", "--no-build", "llama", timeout=90)
+            else:
+                run("docker", "start", target.container)
+            set_restart(target, "unless-stopped")
+            wait_ready(target, timeout)
+        except (Exception, KeyboardInterrupt):
+            print("Start failed/interrupted. Restoring the previous profile...", file=sys.stderr, flush=True)
+            try:
+                if inspect(target):
+                    set_restart(target, "no")
+                    if is_running(inspect(target)):
+                        run("docker", "stop", "-t", "30", target.container, timeout=45)
+                for model in MODELS:
+                    if snapshot[model.key]:
+                        set_restart(model, policy_string(snapshot[model.key]))
+                for model in previous:
+                    run("docker", "start", model.container)
+                    wait_ready(model, timeout)
+            except Exception as rollback_error:
+                print(f"WARNING: rollback incomplete: {rollback_error}", file=sys.stderr)
+            raise
+        print(f"API: http://127.0.0.1:{target.port}/v1")
+        https_port = 8444 if target.port == 8082 else 8443
+        print(f"Tailscale: https://bastion.cheetah-cod.ts.net:{https_port}/v1")
+
+
+def show_workload_state():
+    audio = {service.key: inspect(service) for service in AUDIO}
+    running = [model for model in MODELS if is_running(inspect(model))]
+    audio_on = all(is_running(info) for info in audio.values())
+    audio_off = all(not is_running(info) for info in audio.values())
+    asr_only = all(is_running(audio[s.key]) == (s.key in ("whisper", "stt-proxy")) for s in AUDIO)
+    if (len(running) == 1 and running[0].key == "uncensored-asr" and audio_on
+            and is_running(inspect(FILE_DIARIZATION)) and live_cpu_only(audio["wlk"])):
+        mode = "big-audio: 27B/32K + Whisper + file GPU + live CPU"
+    elif len(running) == 1 and running[0].key == "uncensored-asr" and asr_only:
+        mode = "big-asr: 27B/32K + Whisper ASR (live diarization stopped)"
+    elif len(running) == 1 and running[0].key == "small" and audio_on:
+        mode = "audio: Whisper ASR + WLK/Sortformer + small 9B"
+    elif len(running) == 1 and running[0].key != "small" and audio_off:
+        mode = f"big: {SHORT_NAMES[running[0].key]} (Whisper/live stopped)"
+    else:
+        mode = "custom / partially running"
+    print(" Mode: " + mode)
+    whisper = whisper_readiness(audio.get("whisper"))
+    print(" Whisper: " + whisper)
+    show_resources(running=running, audio=audio)
+    print()
+
+
+FILE_DIARIZATION = Model("file-diarization", "sky-diarization-candidate-diarization-1-1", "File diarization :8085", 8085)
+OMI_CONTAINERS = {"omiloc-docker-app-1", "omiloc-docker-ingress-1"}
+
+
+def whisper_readiness(info):
+    if not is_running(info):
+        return "STOPPED" if info else "MISSING"
+    for network in (info.get("networks") or {}).values():
+        address = network.get("IPAddress")
+        if not address:
+            continue
+        try:
+            with OPENER.open(f"http://{address}:9000/health", timeout=2) as response:
+                value = json.load(response)
+            if value.get("status") == "ready":
+                return "READY / " + str(value.get("model_state", "model state unknown"))
+        except (OSError, ValueError, urllib.error.URLError):
+            continue
+    return "RUNNING / readiness unknown"
+
+
+def resource_module():
+    # Resolve the user-bin symlink so helpers always belong to the deployed project.
+    path = Path(__file__).resolve().with_name("qwen_resources.py")
+    spec = importlib.util.spec_from_file_location("qwen_resources", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("qwen_resources.py is missing beside the maintained qwen-switch")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def loaded_vram_plan(running, audio):
+    low = high = 0.0
+    unknown = False
+    for model in running:
+        text = MEMORY_ESTIMATES.get(model.key, ("?", "?"))[0]
+        try:
+            values = [float(value) for value in text.split("-")]
+            low += values[0]
+            high += values[-1]
+        except ValueError:
+            unknown = True
+    if is_running(audio.get("whisper")):
+        low += 2.5
+        high += 2.5
+    if is_running(audio.get("wlk")) and not live_cpu_only(audio["wlk"]):
+        low += 1.4
+        high += 1.4
+    estimate = f"{low:.1f}" if low == high else f"{low:.1f}-{high:.1f}"
+    return estimate + (" + unknown" if unknown else "")
+
+
+def show_resources(full=False, running=None, audio=None):
+    running = running if running is not None else [m for m in MODELS if is_running(inspect(m))]
+    audio = audio if audio is not None else {s.key: inspect(s) for s in AUDIO}
+    known = {m.container for m in MODELS} | {s.container for s in AUDIO} | OMI_CONTAINERS | {FILE_DIARIZATION.container}
+    module = resource_module()
+    snapshot = module.collect_resources(known)
+    states = {c["name"]: c["state"] for c in snapshot["containers"]}
+    active_states = {"running", "restarting", "paused"}
+    settled_states = active_states | {"exited", "created", "dead", "missing"}
+    running = [m for m in MODELS if states.get(m.container) in active_states]
+    planned_audio = {s.key: {**(audio.get(s.key) or {}), "state": {"Running": states.get(s.container) in active_states}} for s in AUDIO}
+    uncertain = any(states.get(s.container) not in settled_states for s in (*MODELS, *AUDIO, FILE_DIARIZATION))
+    print(module.render_resources(snapshot, full=full))
+    if not full:
+        extra = " + file GPU ~1.0 (observed, peak unknown)" if states.get(FILE_DIARIZATION.container) in active_states else ""
+        if uncertain:
+            extra += " + unknown selection"
+        print(f" Loaded model VRAM~GiB: current selection {loaded_vram_plan(running, planned_audio)}{extra}.")
+        print(" Add other GPU usage; loaded RAM/VRAM peaks are not guaranteed. Details: qwen-switch help.")
+
+
+def show_diarization():
+    for service, title in ((AUDIO[-1], "Live Sortformer :8010"), (FILE_DIARIZATION, "File diarization :8085")):
+        info = inspect(service)
+        state = info.get("state", {}) if info else {}
+        label = state.get("Status", "missing").upper()
+        health = state.get("Health", {}).get("Status")
+        configured = True
+        if service.key == "wlk":
+            cmd = info.get("cmd", []) if info else []
+            configured = "--diarization" in cmd and arg_value(cmd, ("--diarization-backend",), "") == "sortformer"
+        if not configured:
+            label += " / Sortformer not configured"
+        if health and is_running(info):
+            label += " / " + health
+        if service.key == FILE_DIARIZATION.key and is_running(info):
+            data = file_diarization_health(info)
+            label += " / API READY" if file_diarization_ready(data) else " / API not ready"
+            if isinstance(data, dict):
+                label += (f" / model={data.get('modelState', '?')} loaded={data.get('modelsLoaded', '?')}"
+                          f" / active={data.get('inflight', '?')} queued={data.get('queued', '?')}")
+        if service.key == "wlk":
+            label += " / CPU" if live_cpu_only(info) else " / GPU or unknown placement"
+            if is_running(info):
+                data = service_health(service, info)
+                label += " / API READY" if data and data.get("ready") is True else " / API not ready"
+        print(f" {title}: {label}")
+    print(" Live: qwen-switch diarization live start|stop (keeps current Qwen).")
+    print(" File: qwen-switch diarization file start|stop (canonical :8085 service).")
+    show_resources()
+
+
+def file_diarization_health(info):
+    if not is_running(info):
+        return None
+    for network in (info.get("networks") or {}).values():
+        address = network.get("IPAddress")
+        if not address:
+            continue
+        try:
+            # Probe the selected container directly, never another service bound to :8085.
+            with OPENER.open(f"http://{address}:8085/health", timeout=2) as response:
+                data = json.load(response)
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError, urllib.error.URLError):
+            continue
+    return None
+
+
+def file_diarization_ready(data):
+    return bool(isinstance(data, dict) and data.get("service") == "pyannote-diarization"
+                and data.get("status") == "ok" and data.get("ready") is True
+                and str(data.get("device", "")).startswith("cuda")
+                and type(data.get("concurrency")) is int and data["concurrency"] == 1
+                and type(data.get("maxQueued")) is int and 0 <= data["maxQueued"] <= 1)
+
+
+def wait_file_diarization(timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = inspect(FILE_DIARIZATION)
+        if not is_running(info) or info["state"].get("Restarting"):
+            raise RuntimeError("File diarization stopped or restarted during startup")
+        data = file_diarization_health(info)
+        if file_diarization_ready(data):
+            print("File diarization API READY on :8085 (GPU); audio quality is a separate check.")
+            return
+        time.sleep(1)
+    raise RuntimeError("File diarization readiness timeout; no successful /health ready=true GPU response")
+
+
+def control_file_diarization(action, force=False, timeout=180, dry_run=False):
+    if action not in ("start", "stop"):
+        raise ValueError("File diarization supports start or stop")
+    with locked():
+        guard_disk()
+        before = inspect(FILE_DIARIZATION)
+        if before is None:
+            raise RuntimeError("File diarization container is missing; no candidate replicas are started automatically")
+        was_running = is_running(before)
+        if action == "stop":
+            if not was_running:
+                print("File diarization is already stopped.")
+                return
+            if dry_run:
+                print("DRY RUN: gracefully stop only " + FILE_DIARIZATION.container)
+            else:
+                graceful_stop(FILE_DIARIZATION, timeout, force)
+                print("File diarization stopped; other services unchanged.")
+            return
+        if was_running:
+            if dry_run:
+                print("DRY RUN: file diarization is already running; no changes.")
+            else:
+                wait_file_diarization(timeout)
+            return
+        conflicts = run("docker", "ps", "--filter", "publish=8085", "--format", "{{.Names}}", timeout=10).stdout.splitlines()
+        conflicts = [name for name in conflicts if name and name != FILE_DIARIZATION.container]
+        if conflicts:
+            raise RuntimeError("Port 8085 is already owned by another container: " + ", ".join(conflicts))
+        guard_file_start(force)
+        if dry_run:
+            print("DRY RUN: would start only " + FILE_DIARIZATION.container + "; Qwen/audio/candidate replicas and restart policies unchanged.")
+            return
+        try:
+            run("docker", "start", FILE_DIARIZATION.container)
+            wait_file_diarization(timeout)
+        except (Exception, KeyboardInterrupt):
+            # The selected service was stopped before this request; restore only it.
+            try:
+                result = run("docker", "stop", "--timeout=-1", FILE_DIARIZATION.container, timeout=timeout, check=False)
+                after = inspect(FILE_DIARIZATION)
+                if result.returncode or after is None or is_running(after):
+                    print("WARNING: file diarization rollback incomplete; inspect " + FILE_DIARIZATION.container, file=sys.stderr)
+            except Exception as rollback_error:
+                print("WARNING: file diarization rollback incomplete: " + str(rollback_error), file=sys.stderr)
+            raise
+
+
+
+def live_cpu_only(info):
+    env = (info or {}).get("env") or {}
+    return (env.get("CUDA_VISIBLE_DEVICES") == ""
+            and env.get("NVIDIA_VISIBLE_DEVICES") in ("void", "none", "")
+            and not (info or {}).get("devices"))
+
+
+def file_bounded(info):
+    env = (info or {}).get("env") or {}
+    limits = {"DIARIZATION_SEGMENTATION_BATCH_SIZE": 8,
+              "DIARIZATION_EMBEDDING_BATCH_SIZE": 8,
+              "DIARIZATION_SEGMENT_EMBEDDING_BATCH_SIZE": 4}
+    try:
+        # These defaults match the deployed service; actual admission limits
+        # are checked again from /health before reporting the service ready.
+        bounded = (all(0 < int(env.get(key, 0)) <= limit for key, limit in limits.items())
+                   and int(env.get("DIARIZATION_REQUEST_CONCURRENCY", 1)) == 1
+                   and 0 <= int(env.get("DIARIZATION_MAX_QUEUED_REQUESTS", 1)) <= 1)
+    except (TypeError, ValueError):
+        return False
+    if not bounded:
+        return False
+    return not is_running(info) or file_diarization_ready(file_diarization_health(info))
+
+
+def service_health(service, info=None):
+    info = info if info is not None else inspect(service)
+    if not is_running(info):
+        return None
+    port = 8000 if service.key == "wlk" else 9000
+    for network in (info.get("networks") or {}).values():
+        address = network.get("IPAddress")
+        if not address:
+            continue
+        try:
+            with OPENER.open(f"http://{address}:{port}/health", timeout=2) as response:
+                data = json.load(response)
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError, urllib.error.URLError):
+            continue
+    return None
+
+
+def guard_free_vram(minimum_mib, label, force=False):
+    if force:
+        return
+    result = run("nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits", timeout=10)
+    try:
+        free = float(result.stdout.splitlines()[0])
+    except (ValueError, IndexError) as error:
+        raise RuntimeError("Cannot measure GPU headroom for " + label) from error
+    if not math.isfinite(free) or free < minimum_mib:
+        raise RuntimeError(f"{label} needs >= {minimum_mib / 1024:g} GiB current free VRAM; measured {free:g} MiB")
+
+
+def guard_file_start(force=False):
+    large = [m for m in MODELS if m.key != "small" and is_running(inspect(m))]
+    if not force and large:
+        if (len(large) != 1 or large[0].key != "uncensored-asr"
+                or not file_bounded(inspect(FILE_DIARIZATION))):
+            raise RuntimeError("File diarization requires bounded batches and the 27B/32K ASR profile; choose big-audio or audio")
+    guard_free_vram(2048, "File diarization", force)
+
+
+
+class DrainInProgress(RuntimeError):
+    """Shutdown was requested but must not be undone by automatic rollback."""
+
+
+def live_connections():
+    if not is_running(inspect(AUDIO[-1])):
+        return 0
+    code = ("from pathlib import Path; import json; "
+            "print(json.dumps(sum(1 for p in ('/proc/net/tcp','/proc/net/tcp6') "
+            "if Path(p).exists() for l in Path(p).read_text().splitlines()[1:] "
+            "if l.split()[1].split(':')[-1].upper()=='1F40' and l.split()[3]=='01')))" )
+    result = run("docker", "exec", AUDIO[-1].container, "python", "-c", code, timeout=10, check=False)
+    try:
+        value = json.loads(result.stdout)
+        return value if result.returncode == 0 and type(value) is int and value >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def ensure_live_idle(force=False):
+    if force:
+        return
+    for attempt in range(2):
+        count = live_connections()
+        if count is None or count > 0:
+            raise RuntimeError("Live has open/uncheckable connections; finish the recording first. --force interrupts the live preview")
+        if attempt == 0:
+            time.sleep(0.2)
+
+
+def graceful_stop(service, timeout, force=False):
+    if not is_running(inspect(service)):
+        return
+    if service.key == "wlk":
+        ensure_live_idle(force)
+    # Docker sends the configured stop signal, closes admission in Uvicorn, and
+    # waits for in-flight file requests. -1 disables Docker's SIGKILL deadline.
+    # A client timeout does not undo shutdown; never restart a draining server.
+    print("Stopping " + service.container + (" (forced deadline)" if force else " (graceful drain)"), flush=True)
+    try:
+        run("docker", "stop", "--timeout=30" if force else "--timeout=-1", service.container,
+            timeout=timeout)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+        raise DrainInProgress(service.container + " is still stopping/draining; check status before retrying. " + ("Forced kill deadline may still apply." if force else "No SIGKILL deadline was set.")) from error
+    if is_running(inspect(service)):
+        raise DrainInProgress(service.container + " did not stop; inspect status before retrying")
+
+
+def control_live_diarization(action, force=False, timeout=180, dry_run=False):
+    with locked():
+        guard_disk()
+        before = {s.key: inspect(s) for s in AUDIO}
+        selected = AUDIO if action == "start" else tuple(reversed(AUDIO[2:]))
+        if action not in ("start", "stop"):
+            raise ValueError("Live diarization supports start or stop")
+        if any(before[s.key] is None for s in selected):
+            raise RuntimeError("Required existing live containers are missing; deploy shared audio first")
+        if action == "start":
+            cmd = before["wlk"].get("cmd") or []
+            if "--diarization" not in cmd or arg_value(cmd, ("--diarization-backend",), "") != "sortformer":
+                raise RuntimeError("WLK is not configured for Sortformer")
+            large = [m for m in MODELS if m.key != "small" and is_running(inspect(m))]
+            if large and not force and (len(large) != 1 or large[0].key != "uncensored-asr" or not live_cpu_only(before["wlk"])):
+                raise RuntimeError("Live with 27B requires the 32K ASR profile and CPU-only Sortformer; use audio for small 9B")
+            needed = (3072 if not is_running(before["whisper"]) else 0)
+            if not is_running(before["wlk"]) and not live_cpu_only(before["wlk"]):
+                needed += 2048
+            if needed:
+                guard_free_vram(needed, "Live stack", force)
+        if action == "stop" and is_running(before["wlk"]):
+            ensure_live_idle(force)
+        if dry_run:
+            print("DRY RUN: " + action + " " + ", ".join(s.container for s in selected) + "; Qwen unchanged")
+            return
+        # Preserve existing services on failure; stop only newly started ones.
+        started = []
+        try:
+            for service in selected:
+                if action == "stop":
+                    graceful_stop(service, timeout, force)
+                else:
+                    if not is_running(inspect(service)):
+                        run("docker", "start", service.container)
+                        started.append(service)
+                    wait_audio(service, timeout)
+        except (Exception, KeyboardInterrupt):
+            if action == "start":
+                for service in reversed(started):
+                    try:
+                        graceful_stop(service, timeout, force)
+                    except Exception as error:
+                        print("WARNING: rollback incomplete: " + str(error), file=sys.stderr)
+                        break  # Keep dependencies for a still-running/draining client.
+            raise
+        print("Live diarization " + ("ready" if action == "start" else "stopped") + "; Qwen and file diarization unchanged.")
+
+
+def guard_disk():
+    mounted = run("findmnt", "-rn", "-M", "/mnt/datadrive", "-t", "ext4", "-O", "rw", "-o", "UUID").stdout.strip()
+    if mounted != DISK_UUID:
+        raise RuntimeError("Expected writable data disk is not mounted; no changes made.")
+
+
+def wait_audio(service, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = inspect(service)
+        if not is_running(info) or info["state"].get("Restarting"):
+            raise RuntimeError(f"Audio service failed to start: {service.container}")
+        health = info["state"].get("Health")
+        if health is None or health.get("Status") == "healthy":
+            return
+        if health.get("Status") == "unhealthy":
+            raise RuntimeError(f"Audio service is unhealthy: {service.container}")
+        time.sleep(1)
+    raise RuntimeError(f"Audio readiness timeout: {service.container}")
+
+
+def restore_workload(models_before, audio_before, timeout):
+    # Free audio VRAM before restoring a previously selected large model.
+    for service in reversed(AUDIO):
+        if is_running(inspect(service)) and not is_running(audio_before[service.key]):
+            graceful_stop(service, timeout)
+    for model in MODELS:
+        current = inspect(model)
+        original = models_before[model.key]
+        if current and is_running(current) and not is_running(original):
+            set_restart(model, "no")
+            run("docker", "stop", "-t", "30", model.container, timeout=45)
+        if current:
+            set_restart(model, policy_string(original) if original else "no")
+    for model in MODELS:
+        if is_running(models_before[model.key]):
+            if not is_running(inspect(model)):
+                run("docker", "start", model.container)
+            wait_ready(model, timeout)
+    for service in AUDIO:
+        original = audio_before[service.key]
+        set_restart(service, policy_string(original))
+        if is_running(original):
+            if not is_running(inspect(service)):
+                run("docker", "start", service.container)
+            wait_audio(service, timeout)
+
+
+def switch_workload(mode, target=None, force=False, timeout=180, dry_run=False):
+    """Change only known Qwen/audio containers, restoring both on failure."""
+    if mode not in ("audio", "big", "big-asr", "big-audio"):
+        raise ValueError("Unknown workload mode")
+    target = target or resolve({"audio": "small", "big": "u64", "big-asr": "u32asr", "big-audio": "u32asr"}[mode])
+    if (mode == "audio") != (target.key == "small") or (mode in ("big-asr", "big-audio") and target.key != "uncensored-asr"):
+        raise ValueError("audio requires small; big-asr requires u32asr; big requires a 27B profile")
+    enabled_audio = tuple(s for s in AUDIO if mode in ("audio", "big-audio") or (mode == "big-asr" and s.key in ("whisper", "stt-proxy")))
+    disabled_audio = tuple(s for s in AUDIO if s not in enabled_audio)
+    with locked():
+        guard_disk()
+        file_before = inspect(FILE_DIARIZATION)
+        if (target.key not in ("small", "uncensored-asr") or not file_bounded(file_before)) and target.key != "small" and is_running(file_before) and not force:
+            raise RuntimeError("File diarization is running; stop it with qwen-switch diarization file stop before loading a 27B profile, or explicitly use --force")
+        preflight(target)
+        models_before = {model.key: inspect(model) for model in MODELS}
+        previous = [model for model in MODELS if is_running(models_before[model.key])]
+        if len(previous) > 1:
+            raise RuntimeError("Multiple known models are running; run qwen-switch stop first.")
+        audio_before = {service.key: inspect(service) for service in AUDIO}
+        missing = [s.container for s in AUDIO if audio_before[s.key] is None]
+        if missing:
+            raise RuntimeError("Missing audio containers; no changes made: " + ", ".join(missing))
+        cmd = audio_before["wlk"].get("cmd") or []
+        if mode in ("audio", "big-audio") and ("--diarization" not in cmd or arg_value(cmd, ("--diarization-backend",), "") != "sortformer"):
+            raise RuntimeError("WLK is not configured for Sortformer diarization; no changes made.")
+        if mode == "big-audio":
+            if not live_cpu_only(audio_before["wlk"]):
+                raise RuntimeError("big-audio requires CPU-only WLK; current GPU/unknown placement is not changed automatically")
+            if file_before is None or not file_bounded(file_before):
+                raise RuntimeError("big-audio requires the canonical file diarizer with bounded batches 8/8/4")
+        for model in previous:
+            if model != target:
+                ensure_idle(model, force)
+        if AUDIO[-1] in disabled_audio and is_running(audio_before["wlk"]):
+            ensure_live_idle(force)
+        print(f"Workload: {mode}; Qwen: {SHORT_NAMES[target.key]}", flush=True)
+        print("Audio: " + {"audio": "start ASR + WLK/Sortformer", "big": "stop ASR + WLK/Sortformer to free VRAM",
+                           "big-asr": "keep Whisper ASR; stop live diarization",
+                           "big-audio": "Whisper GPU + file GPU + live Sortformer CPU"}[mode], flush=True)
+        if dry_run:
+            print("DRY RUN: preflight passed; containers and restart policies unchanged.")
+            return
+        try:
+            for model in MODELS:
+                if model != target and models_before[model.key]:
+                    set_restart(model, "no")
+            if disabled_audio:
+                for service in reversed(disabled_audio):
+                    graceful_stop(service, timeout, force)
+                    set_restart(service, "no")
+            switch_to(target, force, timeout, False, lock_held=True)
+            set_restart(target, "unless-stopped")
+            if enabled_audio:
+                for service in enabled_audio:
+                    set_restart(service, "unless-stopped")
+                    if not is_running(inspect(service)):
+                        if service.key == "whisper":
+                            guard_free_vram(3072, "Whisper", force)
+                        elif service.key == "wlk" and not live_cpu_only(audio_before["wlk"]):
+                            guard_free_vram(2048, "Live GPU Sortformer", force)
+                        print("Starting " + service.container, flush=True)
+                        run("docker", "start", service.container)
+                    wait_audio(service, timeout)
+            if mode == "big-audio":
+                if not is_running(file_before):
+                    guard_file_start(force)
+                    run("docker", "start", FILE_DIARIZATION.container)
+                wait_file_diarization(timeout)
+                set_restart(FILE_DIARIZATION, "unless-stopped")
+        except DrainInProgress:
+            print("Shutdown still in progress; no automatic restart/rollback attempted.", file=sys.stderr)
+            raise
+        except (Exception, KeyboardInterrupt):
+            print("Workload switch failed; restoring previous Qwen and audio state...", file=sys.stderr, flush=True)
+            try:
+                if file_before is not None:
+                    if not is_running(file_before) and is_running(inspect(FILE_DIARIZATION)):
+                        graceful_stop(FILE_DIARIZATION, timeout)
+                    set_restart(FILE_DIARIZATION, policy_string(file_before))
+                restore_workload(models_before, audio_before, timeout)
+            except (Exception, KeyboardInterrupt) as error:
+                print(f"WARNING: workload rollback incomplete: {error}", file=sys.stderr)
+            raise
+        print(f"Workload ready: {mode}. Restart policies preserve this selection.", flush=True)
+
+
+def stop_all(force=False, dry_run=False):
+    with locked():
+        snapshot = [(model, inspect(model)) for model in MODELS]
+        for model, info in snapshot:
+            if is_running(info):
+                ensure_idle(model, force)
+        for model, info in snapshot:
+            if not info:
+                continue
+            if dry_run:
+                print(f"DRY RUN: restart=no, stop {model.container}")
+                continue
+            set_restart(model, "no")
+            if is_running(info):
+                run("docker", "stop", "-t", "30", model.container, timeout=45)
+        print("DRY RUN: no changes." if dry_run else "All known Qwen profiles stopped. Auto-restart disabled.")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Qwen and audio services on faeon / RTX 4090. No arguments opens the menu.",
+        epilog=HELP_NOTES, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("choice", nargs="?", help=f"audio, big-audio, big-asr, big [profile], 1..{len(MODELS)}, {', '.join(SHORT_NAMES.values())}, status/list, memory, processes, diarization [live|file] [status|start|stop], stop/off, toggle, help")
+    parser.add_argument("profile", nargs="?", help="profile for big, or live/file/status/start for diarization")
+    parser.add_argument("action", nargs="?", help="diarization live/file: status/start/stop")
+    parser.add_argument("--force", action="store_true", help="allow interruption of active/uncheckable jobs or override GPU coexistence guards")
+    parser.add_argument("--dry-run", action="store_true", help="validate the selected profile without changing containers")
+    parser.add_argument("--timeout", type=int, default=180, help="readiness timeout in seconds (default: 180)")
+    args = parser.parse_args(argv)
+    if args.profile and args.choice not in ("big", "b", "diarization"):
+        parser.error("a second argument is only valid with big or diarization")
+    if args.choice == "diarization" and args.profile not in (None, "status", "start", "live", "file"):
+        parser.error("diarization supports status/start or live/file [action]")
+    if args.action and (args.choice != "diarization" or args.profile not in ("live", "file")):
+        parser.error("a third argument is only valid with diarization live/file")
+    if args.action not in (None, "status", "start", "stop"):
+        parser.error("live/file support status/start/stop")
+    if args.timeout < 1 or args.timeout > 900:
+        parser.error("--timeout must be between 1 and 900")
+    if args.choice == "help":
+        parser.print_help()
+        return 0
+    run("docker", "info", "--format", "{{.ServerVersion}}", timeout=15)
+    choice = args.choice
+    if choice is None:
+        show_status()
+        print("\n a) Audio: Whisper ASR + WLK/Sortformer + small 9B\n f) Big-Audio: 27B/32K + Whisper + file GPU + live CPU\n w) Big-ASR: 27B/32K + Whisper ASR, live diarization off\n b) Big: one 27B model (u64), Whisper/live off\n d) Diarization status\n m) Memory\n p) Active processes\n 0) Stop all Qwen profiles (keep audio state)\n q) Quit without changes\n")
+        try:
+            choice = input("Select a number or name: ").strip().lower()
+        except EOFError:
+            print("\nNo input - no changes.")
+            return 0
+        if not choice or choice in ("q", "quit", "exit"):
+            return 0
+    if choice == "help":
+        parser.print_help()
+    elif choice in ("status", "list"):
+        show_status()
+    elif choice in ("memory", "m"):
+        show_resources()
+    elif choice in ("processes", "p"):
+        show_resources(full=True)
+    elif choice in ("diarization", "d"):
+        action = args.action or ("start" if args.profile == "start" else "status")
+        if args.profile == "file" and action != "status":
+            control_file_diarization(action, args.force, args.timeout, args.dry_run)
+        elif action in ("start", "stop"):
+            control_live_diarization(action, args.force, args.timeout, args.dry_run)
+        else:
+            show_diarization()
+    elif choice in ("stop", "off", "0"):
+        stop_all(args.force, args.dry_run)
+    elif choice in ("audio", "a"):
+        switch_workload("audio", force=args.force, timeout=args.timeout, dry_run=args.dry_run)
+    elif choice in ("big", "b"):
+        switch_workload("big", resolve(args.profile or "u64"), args.force, args.timeout, args.dry_run)
+    elif choice in ("big-audio", "f"):
+        switch_workload("big-audio", force=args.force, timeout=args.timeout, dry_run=args.dry_run)
+    elif choice in ("big-asr", "w"):
+        switch_workload("big-asr", force=args.force, timeout=args.timeout, dry_run=args.dry_run)
+    else:
+        if choice == "toggle":
+            # Preserve the old explicit toggle command; no-argument mode is now a menu.
+            choice = "heretic" if is_running(inspect(MODELS[0])) else "normal"
+        target = resolve(choice)
+        mode = "audio" if target.key == "small" else "big-asr" if target.key == "uncensored-asr" else "big"
+        switch_workload(mode, target, args.force, args.timeout, args.dry_run)
+    return 0
+
+
+if __name__ == "__main__":
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupted)
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nCancelled.", file=sys.stderr)
+        sys.exit(130)
+    except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        sys.exit(1)

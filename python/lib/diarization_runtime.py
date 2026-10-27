@@ -83,6 +83,9 @@ def is_job_cancelled() -> bool:
 def new_provider_session() -> requests.Session:
     """Create a job-local provider session without Mycelia credentials."""
     session = requests.Session()
+    # Avoid reusing a connection as the provider's keep-alive timeout expires.
+    # An interrupted POST still fails once; inference must not be replayed.
+    session.headers["Connection"] = "close"
     adapter = requests.adapters.HTTPAdapter(
         pool_connections=1,
         pool_maxsize=1,
