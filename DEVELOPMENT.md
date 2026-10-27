@@ -29,10 +29,33 @@ direct `deno test` remains suitable for tests without database fixtures. All
 verification groups clear inherited service credentials and paths, retain only
 explicit tool/runtime settings and request Python 3.12. RAG uses an explicit
 `RAG_ENV_FILE` during verification; see its README for deployment configuration.
+
+Backend test admission requires the pinned Deno 2.9.5 executable and at least
+5 GiB available on both the checkout and `/tmp` filesystems. Check `deno --version`
+when multiple installations are on PATH. A private per-user OS lock serializes
+updated runners across worktrees and Docker contexts; a competing run exits
+before creating containers. Do not remove
+`/tmp/mycelia-backend-tests-<uid>/runner.lock`: the kernel releases ownership when
+the runner exits, including after a crash, and the same file must remain in place.
+Legacy runners do not participate in this lock. Existing running test Mongo/Redis
+containers are reported for inspection; the runner never stops another run.
+
+Test Mongo has a 1 GiB memory limit, 1 CPU and 256 MiB WiredTiger cache. Test Redis
+has 256 MiB memory, 0.5 CPU, a 128 MiB data limit and `noeviction`, so exhaustion
+fails explicitly. Both containers have swap disabled; actual limits and loopback
+bindings are inspected before running tests. These limits apply only to the test
+pair. Low disk space is a refusal to start, not an instruction to prune working
+data or weaken the limits. Pure unit tests can still run without Docker.
+
 The doctor is read-only and exits nonzero for source mismatch or public
 Mongo exposure; running/healthy/readiness are reported separately. Resolve a
 checkout mismatch before deploying application changes. Do not automatically
 replace the running worktree's bind mounts.
+It reports exit codes, Docker's recorded OOM flag and configured resource limits
+without inferring the exit cause. Stopped services have `health` and `readiness`
+set to `not-running`; `recordedHealth` retains Docker's last health result.
+`published` shows active port bindings, while `configuredPublished` also reveals
+ports that will reopen on a subsequent start.
 
 Mongo host access now requires the explicit loopback-only
 `docker-compose.mongo-local.yml` overlay. The separate RAG stack connects through

@@ -16,6 +16,9 @@ Run `deno task verify` for the shared local/CI checks and `deno task doctor` for
 read-only runtime-source diagnostics. MongoDB is internal to Docker by default;
 host maintenance and authentication migration are explicit opt-ins described in
 [MONGO_AUTH.md](docs/MONGO_AUTH.md).
+Backend integration tests use one resource-limited Mongo/Redis pair and refuse
+overlapping runs or less than 5 GiB free disk space. See
+[verification and source guard](DEVELOPMENT.md#verification-and-source-guard).
 
 ### Audio Ingestion & Processing
 

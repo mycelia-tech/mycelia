@@ -6,7 +6,24 @@ type Container = {
   Name?: string;
   Image?: string;
   Config?: { Image?: string; Env?: string[]; Labels?: Record<string, string> };
-  State?: { Running?: boolean; Health?: { Status?: string } };
+  State?: {
+    Running?: boolean;
+    Status?: string;
+    ExitCode?: number;
+    OOMKilled?: boolean;
+    FinishedAt?: string;
+    Health?: { Status?: string };
+  };
+  RestartCount?: number;
+  HostConfig?: {
+    Memory?: number;
+    MemorySwap?: number;
+    NanoCpus?: number;
+    PortBindings?: Record<
+      string,
+      { HostIp: string; HostPort: string }[] | null
+    >;
+  };
   Mounts?: { Source: string; Destination: string; RW?: boolean }[];
   NetworkSettings?: {
     Ports?: Record<string, { HostIp: string; HostPort: string }[] | null>;
@@ -48,27 +65,60 @@ export function summarizeRuntime(
       issues.push(`${service}: checkout does not match expected root`);
     }
     if (!container.State?.Running) issues.push(`${service}: not running`);
-    if (container.State?.Health?.Status === "unhealthy") {
+    if (
+      container.State?.Running && container.State.Health?.Status === "unhealthy"
+    ) {
       issues.push(`${service}: unhealthy`);
     }
-    const published = Object.entries(container.NetworkSettings?.Ports ?? {})
-      .flatMap(
-        ([port, bindings]) =>
-          (bindings ?? []).map((binding) => ({
-            port,
-            host: binding.HostIp,
-            hostPort: binding.HostPort,
-          })),
-      );
+    const portBindings = (
+      ports: Record<string, { HostIp: string; HostPort: string }[] | null>,
+    ) =>
+      Object.entries(ports)
+        .flatMap(
+          ([port, bindings]) =>
+            (bindings ?? []).map((binding) => ({
+              port,
+              host: binding.HostIp,
+              hostPort: binding.HostPort,
+            })),
+        );
+    const published = portBindings(container.NetworkSettings?.Ports ?? {});
+    // Stopping a container removes active bindings, but restarting it restores
+    // HostConfig.PortBindings. Keep the latent exposure visible to operators.
+    const configuredPublished = portBindings(
+      container.HostConfig?.PortBindings ?? {},
+    );
+    const isPublic = (binding: { host: string }) =>
+      !["127.0.0.1", "::1"].includes(binding.host);
     if (
       service === "mongo" &&
-      published.some((binding) => !["127.0.0.1", "::1"].includes(binding.host))
+      published.some(isPublic)
     ) issues.push("mongo: database is published beyond loopback");
+    else if (service === "mongo" && configuredPublished.some(isPublic)) {
+      issues.push(
+        "mongo: configured host publication exposes the database on start",
+      );
+    }
     return {
       service,
       running: container.State?.Running ?? false,
-      health: container.State?.Health?.Status ?? "not-configured",
-      readiness: "not-probed" as string,
+      state: container.State?.Status ?? "unknown",
+      lastExit: container.State?.Running ? null : {
+        code: container.State?.ExitCode ?? null,
+        oomKilled: container.State?.OOMKilled ?? null,
+        finishedAt: container.State?.FinishedAt ?? null,
+      },
+      restartCount: container.RestartCount ?? null,
+      resourceLimits: {
+        memoryBytes: container.HostConfig?.Memory ?? null,
+        memorySwapBytes: container.HostConfig?.MemorySwap ?? null,
+        nanoCpus: container.HostConfig?.NanoCpus ?? null,
+      },
+      health: container.State?.Running
+        ? container.State.Health?.Status ?? "not-configured"
+        : "not-running",
+      recordedHealth: container.State?.Health?.Status ?? "not-configured",
+      readiness: container.State?.Running ? "not-probed" : "not-running",
       mode: service === "backend"
         ? environment.APP_MODE ?? "unknown"
         : service === "frontend"
@@ -81,6 +131,7 @@ export function summarizeRuntime(
       imageRevision:
         container.Config?.Labels?.["org.opencontainers.image.revision"] ?? null,
       published,
+      configuredPublished,
     };
   });
   for (const service of ["backend", "frontend", "mongo", "redis"]) {
@@ -168,6 +219,10 @@ export async function doctor(args: string[], options: {
       const container = containers.find((entry) =>
         entry.Config?.Labels?.["com.docker.compose.service"] === service.service
       );
+      if (!service.running) {
+        service.readiness = "not-running";
+        continue;
+      }
       try {
         const probe = service.service === "backend"
           ? [

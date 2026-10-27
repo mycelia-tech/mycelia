@@ -1,5 +1,6 @@
 import {
   GenericContainer,
+  getContainerRuntimeClient,
   type InspectResult,
   type StartedTestContainer,
   Wait,
@@ -15,6 +16,17 @@ import {
   withOwnedTestContainers,
 } from "./test-session.ts";
 import { testProcessEnvironment } from "../../../scripts/test-environment.ts";
+import {
+  acquireTestRunLease,
+  assertTestContainerLimits,
+  boundedMongoCommand,
+  REDIS_TEST_COMMAND,
+  requireNoRunningTestDatabases,
+  requireTestDiskCapacity,
+  requireTestRunnerVersion,
+  testContainerLimits,
+  type TestContainerRole,
+} from "./test-runner-guard.ts";
 
 const backendRoot = fileURLToPath(new URL("../../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -23,11 +35,19 @@ async function verifyBindings(
   container: StartedTestContainer,
   inspect: InspectResult,
   port: number,
+  role: TestContainerRole,
 ) {
   try {
     assertLoopbackBindings(inspect.ports, port);
+    const runtime = await getContainerRuntimeClient();
+    const actual = await within(
+      runtime.container.inspect(runtime.container.getById(container.getId())),
+      10_000,
+      "Test container resource verification",
+    );
+    assertTestContainerLimits(role, actual);
     console.info(
-      `[TEST] Verified container port ${port} is bound only to 127.0.0.1`,
+      `[TEST] Verified ${role} CPU/RAM/cache limits and port ${port} bound only to 127.0.0.1`,
     );
   } catch (error) {
     await within(
@@ -44,27 +64,32 @@ async function verifyBindings(
 class LoopbackRedisContainer extends GenericContainer {
   protected override async beforeContainerCreated() {
     this.hostConfig.PortBindings = loopbackPortBindings(6379);
+    Object.assign(this.hostConfig, testContainerLimits("redis"));
+    this.createOpts.Cmd = [...REDIS_TEST_COMMAND];
   }
   protected override async containerStarted(
     container: StartedTestContainer,
     inspect: InspectResult,
   ) {
-    await verifyBindings(container, inspect, 6379);
+    await verifyBindings(container, inspect, 6379, "redis");
   }
 }
 class LoopbackMongoContainer extends MongoDBContainer {
   protected override async beforeContainerCreated() {
     this.hostConfig.PortBindings = loopbackPortBindings(27017);
+    Object.assign(this.hostConfig, testContainerLimits("mongo"));
+    this.createOpts.Cmd = boundedMongoCommand(this.createOpts.Cmd);
   }
   protected override async containerStarted(
     container: StartedTestContainer,
     inspect: InspectResult,
   ) {
-    await verifyBindings(container, inspect, 27017);
+    await verifyBindings(container, inspect, 27017, "mongo");
   }
 }
 
 async function main(args: string[]): Promise<number> {
+  requireTestRunnerVersion(Deno.version.deno);
   const testArguments = parseTestArguments(args);
   // Paths are backend-relative, even when this runner is invoked from the repo root.
   for (let i = 0; i < testArguments.length; i++) {
@@ -81,12 +106,21 @@ async function main(args: string[]): Promise<number> {
   }
   const abort = new AbortController();
   const owner = crypto.randomUUID();
+  await requireTestDiskCapacity([backendRoot, "/tmp"]);
+  const lease = await acquireTestRunLease({ owner, checkout: repoRoot });
   console.info(`[TEST] Container owner: ${owner}`);
   const interrupt = () =>
     abort.abort(new Error("Backend test run interrupted"));
-  Deno.addSignalListener("SIGINT", interrupt);
-  Deno.addSignalListener("SIGTERM", interrupt);
   try {
+    Deno.addSignalListener("SIGINT", interrupt);
+    Deno.addSignalListener("SIGTERM", interrupt);
+    const inventory = await within(
+      getContainerRuntimeClient().then((runtime) => runtime.container.list()),
+      10_000,
+      "Existing test database inventory",
+    );
+    abort.signal.throwIfAborted();
+    requireNoRunningTestDatabases(inventory);
     return await withOwnedTestContainers(
       async () => {
         const container = await new LoopbackRedisContainer(
@@ -189,8 +223,12 @@ async function main(args: string[]): Promise<number> {
       { signal: abort.signal },
     );
   } finally {
-    Deno.removeSignalListener("SIGINT", interrupt);
-    Deno.removeSignalListener("SIGTERM", interrupt);
+    try {
+      Deno.removeSignalListener("SIGINT", interrupt);
+      Deno.removeSignalListener("SIGTERM", interrupt);
+    } finally {
+      lease.release();
+    }
   }
 }
 
