@@ -122,8 +122,6 @@ for speaker_name, speaker_data in KNOWN_SPEAKERS.items():
 
 # %%
 
-from sklearn.manifold import TSNE
-from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 
 # Cluster embeddings to assign a speaker label to each point
@@ -472,7 +470,6 @@ embeddings[0]
 
 
 from speechbrain.inference.separation import SepformerSeparation as separator
-import torchaudio
 
 model = separator.from_hparams(source="speechbrain/sepformer-whamr-enhancement", savedir='pretrained_models/sepformer-whamr-enhancement4')
 enhanced_speech = model.separate_file(path='67fed949573b7e8abb1c228f.local.wav')

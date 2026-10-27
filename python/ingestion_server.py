@@ -11,12 +11,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from bson import ObjectId
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-# CLI credentials come from .env; the local API address has a stable nginx
-# default and must be set before daemon/lib.config modules are imported.
-os.environ.setdefault("MYCELIA_URL", "http://localhost:3210")
+from lib.config import load_environment
+
+# Process environment wins over the explicit dotenv file and local fallback.
+load_environment(default_url="http://localhost:3210")
 
 from daemon import import_new_files, ingests_missing_sources, initialize_auth
 from lib.api import job_token_var
@@ -98,9 +100,27 @@ class IngestionJobData(BaseModel):
     type: str = "ingestion"
     limit: int = Field(default=20, ge=1, le=100)
     sourceFolder: str | None = Field(default=None, min_length=1, max_length=4096)
+    sourceIds: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    retryErrors: bool = False
+
+    @field_validator("sourceIds")
+    @classmethod
+    def valid_source_ids(cls, value):
+        if value is not None and any(not ObjectId.is_valid(item) for item in value):
+            raise ValueError("sourceIds must contain ObjectId strings")
+        return list(dict.fromkeys(value)) if value else value
+
+    @model_validator(mode="after")
+    def validate_selection(self):
+        if self.sourceFolder and self.sourceIds:
+            raise ValueError("Choose sourceIds or sourceFolder, not both")
+        if self.retryErrors and not self.sourceIds:
+            raise ValueError("Retrying cached errors requires explicit sourceIds")
+        return self
 
 
-def run_ingestion_cycle(limit: int, job_id: str | None = None, source_folder: str | None = None) -> dict[str, Any]:
+def run_ingestion_cycle(limit: int, job_id: str | None = None, source_folder: str | None = None,
+                        source_ids: list[str] | None = None, retry_errors: bool = False) -> dict[str, Any]:
     """Discover and ingest one bounded batch, serializing automatic/manual runs."""
     global last_cycle, current_cycle, folder_settings
 
@@ -115,8 +135,8 @@ def run_ingestion_cycle(limit: int, job_id: str | None = None, source_folder: st
                     "progress": {"phase": "discovery", "processed": 0, "limit": limit},
                 })
 
-            folder_settings = load_folder_settings()
-            selected = folder_settings if source_folder is None else {"path": source_folder, "automatic": False}
+            folder_settings = load_folder_settings() if not source_ids else folder_settings
+            selected = None if source_ids else (folder_settings if source_folder is None else {"path": source_folder, "automatic": False})
             if selected is not None and not job_id and not selected["automatic"]:
                 # Poll settings without claiming that a source scan happened.
                 return last_cycle.copy()
@@ -126,7 +146,15 @@ def run_ingestion_cycle(limit: int, job_id: str | None = None, source_folder: st
                     "jobId": job_id,
                     "progress": {"phase": "ingestion", "processed": 0, "limit": limit},
                 })
-            if selected is not None:
+            if source_ids:
+                # Explicit recovery must neither scan folders nor clear failure history.
+                source_results = []
+                current_cycle = {**current_cycle, "phase": "ingestion"}
+                ingestion = ingests_missing_sources(
+                    limit=limit, source_ids=[ObjectId(value) for value in source_ids],
+                    retry_errors=retry_errors, progress_callback=update_ingestion_progress,
+                )
+            elif selected is not None:
                 # One lock covers discovery, path rebinding and all bounded uploads.
                 with ingestion_lock():
                     root, importer = folder_importer(selected["path"])
@@ -286,7 +314,8 @@ async def process_ingestion_job(
 
     token_ref = job_token_var.set(authorization.removeprefix("Bearer "))
     try:
-        return await asyncio.to_thread(run_ingestion_cycle, data.limit, job_id, data.sourceFolder)
+        return await asyncio.to_thread(run_ingestion_cycle, data.limit, job_id, data.sourceFolder,
+                                       data.sourceIds, data.retryErrors)
     except Exception as exc:
         logger.exception("Manual ingestion job %s failed", job_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

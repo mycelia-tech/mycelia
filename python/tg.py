@@ -1,8 +1,4 @@
 #%%
-from bs4 import BeautifulSoup
-from bson import ObjectId
-from pydantic import BaseModel
-from typing import Optional, List, Union
 from datetime import datetime
 from pathlib import Path
 import json

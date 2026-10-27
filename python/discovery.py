@@ -152,10 +152,18 @@ class Importer:
             "start": self.get_start(metadata)
         })
         self.logger.debug("adding %s to source_files", metadata['path'])
+        # Registration identity, not content deduplication: retries of this
+        # host/importer/path must resolve to one document after a lost response.
+        import hashlib
+        from bson import ObjectId
+        identity = json.dumps([platform.node(), self.code, os.path.abspath(metadata["path"])])
+        source_id = ObjectId(hashlib.sha256(identity.encode()).digest()[:12])
         call_resource('mongo', {
-            "action": "insertOne",
+            "action": "updateOne",
             "collection": "source_files",
-            "doc": metadata
+            "query": {"_id": source_id},
+            "update": {"$setOnInsert": metadata},
+            "options": {"upsert": True},
         })
 
     def run(self) -> int:

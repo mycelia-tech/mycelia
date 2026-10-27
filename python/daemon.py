@@ -10,6 +10,10 @@ from logging.handlers import RotatingFileHandler
 
 from pydub import AudioSegment
 
+from lib.config import load_environment
+
+load_environment()
+
 import settings
 from discovery import Importer, extract_device_info
 from ingestion_lock import serialized_ingestion
@@ -20,7 +24,7 @@ from lib.resources import call_resource
 
 logger = logging.getLogger('daemon')
 
-log_dir = os.path.expanduser('~/Library/mycelia/logs')
+log_dir = os.path.expanduser(os.getenv('MYCELIA_LOG_DIR', '~/Library/mycelia/logs'))
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, 'daemon.log')
 
@@ -582,12 +586,11 @@ def cli(argv=None):
             args.vad_limit,
             args.vad_batch_size,
         )
-        cycle = lambda: run_vad_cycle(
-            limit=args.vad_limit,
-            batch_size=args.vad_batch_size,
-        )
+        def cycle():
+            return run_vad_cycle(limit=args.vad_limit, batch_size=args.vad_batch_size)
     else:
-        cycle = lambda: main(reset_errors=args.reset_errors)
+        def cycle():
+            return main(reset_errors=args.reset_errors)
 
     run_cycles(cycle, once=args.once)
 

@@ -13,8 +13,7 @@ import json
 import sqlite3
 import subprocess
 import os
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime
 
 # Apple's reference date: January 1, 2001 00:00:00 UTC
 APPLE_REFERENCE_DATE = 978307200
@@ -413,7 +412,7 @@ def analyze_database():
     cloud_only = cursor.fetchall()
 
     if cloud_only:
-        print(f"\n(Showing up to 10 of cloud-only recordings)")
+        print("\n(Showing up to 10 of cloud-only recordings)")
         for rec in cloud_only:
             print(f"  {apple_to_datetime(rec['ZDATE'])} | {format_duration(rec['ZDURATION']):>12} | {rec['ZCUSTOMLABEL'] or rec['ZENCRYPTEDTITLE'] or 'Untitled'}")
     else:
@@ -440,7 +439,7 @@ def analyze_database():
     print(f"  In folder but not in DB: {len(in_folder_not_db)}")
 
     if in_folder_not_db:
-        print(f"\n  Files not tracked in DB (first 5):")
+        print("\n  Files not tracked in DB (first 5):")
         for f in sorted(in_folder_not_db)[:5]:
             print(f"    - {f}")
 

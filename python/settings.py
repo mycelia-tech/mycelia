@@ -1,4 +1,6 @@
 import os
+import importlib.util
+from pathlib import Path
 from datetime import UTC, datetime
 
 import pytz
@@ -159,8 +161,24 @@ def build_default_importers() -> list[Importer]:
     return configured
 
 
-if os.path.exists('./local.py'):
-    from local import importers
-else:
-    print("No local.py found, using default importers")
-    importers = build_default_importers()
+def load_importers() -> list[Importer]:
+    root = Path(__file__).resolve().parent
+    configured = os.getenv("MYCELIA_IMPORTERS_FILE")
+    location = Path(configured).expanduser() if configured else root / "local.py"
+    if not location.is_absolute():
+        location = root / location
+    if not location.is_file():
+        if configured:
+            raise ValueError("MYCELIA_IMPORTERS_FILE does not identify a readable file")
+        return build_default_importers()
+    spec = importlib.util.spec_from_file_location("mycelia_local_importers", location)
+    if spec is None or spec.loader is None:
+        raise ValueError("Importer configuration must be a Python module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not isinstance(module.importers, list):
+        raise TypeError("Importer configuration must export an importers list")
+    return module.importers
+
+
+importers = load_importers()

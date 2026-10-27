@@ -25,6 +25,9 @@ from uuid import uuid4
 from bson import ObjectId
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from lib.config import load_environment
+
+load_environment()
 
 from chunking import ingest_source
 from discovery import extract_device_info

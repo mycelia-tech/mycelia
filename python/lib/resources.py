@@ -2,14 +2,15 @@ from .api import get_session, ensure_authorized
 from .config import get_url
 from typing import Any
 import json
+import time
 
 
 from bson import ObjectId
 from datetime import datetime
 import base64
 import pytz
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from requests.exceptions import RequestException, HTTPError
+from .cancellation import check_cancelled, job_cancel_event_var
 
 
 class EJsonEncoder(json.JSONEncoder):
@@ -54,27 +55,44 @@ class EJsonDecoder(json.JSONDecoder):
 
 def _should_retry(exception: Exception) -> bool:
     if isinstance(exception, HTTPError):
-        return exception.response.status_code >= 500
+        return exception.response is not None and exception.response.status_code >= 500
     return isinstance(exception, RequestException)
 
 
-@retry(
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=60),
-    retry=retry_if_exception(_should_retry),
-    reraise=True,
-)
+def _retry_safe(resource_name: str, body: dict) -> bool:
+    """Only known stateless reads and stable insert-if-absent writes may replay.
+
+    Cursors advance server state, and even a $set update can have meaningful
+    matched/modified counts. Neither is automatically safe to repeat.
+    """
+    action = body.get("action")
+    if resource_name == "mongo":
+        if action in {"find", "findOne", "count", "distinct"}:
+            return True
+        if action == "updateOne":
+            query, update = body.get("query", {}), body.get("update", {})
+            return (set(query) == {"_id"} and isinstance(query["_id"], (str, ObjectId))
+                    and set(update) == {"$setOnInsert"} and body.get("options", {}).get("upsert") is True)
+    return resource_name == "config" and action == "get"
+
+
 def call_resource(resource_name: str, body: dict) -> Any:
-    ensure_authorized()
-    session = get_session()
-    response = session.post(
-        get_url("api", "resource", resource_name),
-        data=json.dumps(body, cls=EJsonEncoder),
-        headers={"Content-Type": "application/json"},
-        timeout=600,
-    )
-    response.raise_for_status()
-    return json.loads(response.text, cls=EJsonDecoder)
+    attempts = 3 if _retry_safe(resource_name, body) else 1
+    for attempt in range(attempts):
+        check_cancelled()
+        try:
+            return call_resource_once(resource_name, body, timeout=(3.0, 30.0))
+        except RequestException as exc:
+            if attempt + 1 == attempts or not _should_retry(exc):
+                raise
+            delay = float(2 ** attempt)
+            event = job_cancel_event_var.get()
+            if event is not None:
+                event.wait(delay)
+            else:
+                time.sleep(delay)
+            check_cancelled()
+    raise AssertionError("Unreachable retry state")
 
 
 def call_resource_once(
@@ -85,8 +103,8 @@ def call_resource_once(
 ) -> Any:
     """Call a worker resource once with a bounded network deadline.
 
-    Lookahead cleanup must not inherit the normal five-attempt/600-second
-    resource retry envelope. Mongo operations still carry their own maxTimeMS.
+    Cleanup intentionally remains callable after cancellation. Callers own
+    retry decisions; Mongo operations still carry their own maxTimeMS.
     """
     ensure_authorized()
     session = get_session()

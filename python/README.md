@@ -13,7 +13,26 @@ The main prerequisites are listed in the [root README](../README.md). This secti
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### PortAudio (Required for `stt.py`)
+### Optional recorder and development dependencies
+
+Use Python 3.12 and `uv sync --frozen` for the locked runtime. Notebook packages
+are in the `notebooks` extra; microphone capture/PyAudio is in the `recorder`
+extra. Install these only where needed, e.g. `uv sync --frozen --extra recorder`.
+Tests and lint use `uv run --frozen --group dev pytest -q tests` and
+`uv run --frozen --group dev ruff check .`.
+
+Startup reads a fixed repository `.env` path or explicit `MYCELIA_ENV_FILE`;
+process environment always wins. `MYCELIA_IMPORTERS_FILE` chooses importer
+configuration relative to this Python directory. Changing the shell's working
+directory no longer selects a different configuration. Tests set a private
+`MYCELIA_LOG_DIR` and never load operator dotenv files.
+
+Resource reads have bounded timeouts and cancellation-aware retries. Mutations
+are retried only with a stable operation identity and deduplication. Ingestion
+jobs accept `sourceIds` and `retryErrors` for one-source recovery while retaining
+the prior error until successful processing.
+
+### PortAudio (optional microphone recording)
 
 **macOS:**
 ```bash

@@ -62,6 +62,10 @@ class MongoStub:
             return {"insertedId": "inserted"}
         if body["action"] == "updateOne":
             if not selected:
+                if body.get("options", {}).get("upsert"):
+                    record = {**deepcopy(body["query"]), **deepcopy(body["update"].get("$setOnInsert", {}))}
+                    self.records.append(record)
+                    return {"matchedCount": 0, "modifiedCount": 0, "upsertedId": record.get("_id")}
                 return {"matchedCount": 0, "modifiedCount": 0}
             record = selected[0]
             record.update(deepcopy(body["update"].get("$set", {})))

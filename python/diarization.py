@@ -83,7 +83,6 @@ def run_voice_activity_detection(limit=1000, verbose_logs=False, batch_size=100)
     
     updates = []
     has_speech = 0
-    start_time = time.time()
     total_processed = 0
     pbar = tqdm(total=limit if limit else None, unit="chunks")
     

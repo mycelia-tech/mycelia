@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import os
-import threading
 import time
 import uuid
-from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
@@ -14,6 +12,7 @@ from bson import ObjectId
 from pytz import UTC
 
 from .resources import call_resource
+from .cancellation import job_cancel_event_var
 
 
 def parse_diarization_recording_lease_seconds(
@@ -74,12 +73,6 @@ class RecordingLease:
     owner: str
     token: str
     expires_at: datetime
-
-
-job_cancel_event_var: ContextVar[Optional[threading.Event]] = ContextVar(
-    "job_cancel_event",
-    default=None,
-)
 
 
 def is_job_cancelled() -> bool:

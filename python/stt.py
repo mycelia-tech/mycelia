@@ -12,6 +12,10 @@ import tempfile
 from pathlib import Path
 import ffmpeg
 import requests
+from lib.config import load_environment
+
+load_environment()
+
 from lib.resources import call_resource
 from lib.api import job_token_var, exchange_api_key_for_jwt
 
@@ -421,20 +425,16 @@ def process_speech_sequences(limit=None, max_workers=1, worker_id=None, filters=
         tqdm.write('Pending work: unknown (unable to query MongoDB)')
 
     if limit is not None:
-        progress_mode = 'sequence_limit'
         progress_total = limit
         progress_unit = 'seq'
     else:
         if pending_chunks is not None:
-            progress_mode = 'chunks'
             progress_total = pending_chunks
             progress_unit = 'chunk'
         elif estimated_sequences is not None:
-            progress_mode = 'sequences'
             progress_total = estimated_sequences
             progress_unit = 'seq'
         else:
-            progress_mode = 'sequences'
             progress_total = None
             progress_unit = 'seq'
 

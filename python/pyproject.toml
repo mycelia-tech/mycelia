@@ -11,8 +11,6 @@ dependencies = [
     "ffmpeg-python>=0.2.0",
     "hdbscan>=0.8.40",
     "humanize>=4.13.0",
-    "ipykernel>=6.29.5",
-    "ipython>=9.2.0",
     "langchain-community>=0.3.26",
     "langchain-core>=0.3.66",
     "langchain-ollama>=0.3.3",
@@ -20,12 +18,9 @@ dependencies = [
     "langgraph>=0.5.0",
     "langgraph-supervisor>=0.0.27",
     "lazy-object-proxy>=1.11.0",
-    "matplotlib>=3.10.3",
     "numpy>=2.2.5",
     "pandas>=2.2.3",
     "paramiko>=4.0.0",
-    "pyaudio>=0.2.14",
-    "pdbpp>=0.11.6",
     "pyannote-audio>=3.3.2",
     "pydantic>=2.11.4",
     "pydub>=0.25.1",
@@ -37,7 +32,6 @@ dependencies = [
     "safetensors>=0.5.3",
     "scikit-learn>=1.6.1",
     "sentence-transformers>=5.1.0",
-    "streamlit>=1.46.1",
     "torch>=2.7.0",
     "torchaudio>=2.7.0",
     "tqdm>=4.67.1",
@@ -46,5 +40,12 @@ dependencies = [
 ]
 
 
-[tool.ruff]
+[project.optional-dependencies]
+recorder = ["pyaudio>=0.2.14"]
+notebooks = ["ipykernel>=6.29.5", "ipython>=9.2.0", "matplotlib>=3.10.3", "streamlit>=1.46.1"]
+
+[dependency-groups]
+dev = ["pytest>=8.3.0,<9", "pytest-asyncio>=0.24.0,<1", "httpx>=0.28.1,<1", "ruff==0.11.13", "pdbpp>=0.11.6"]
+
+[tool.ruff.lint]
 ignore = ["E402"]

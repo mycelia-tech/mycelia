@@ -3,7 +3,7 @@
 import logging
 import os
 import time
-from datetime import datetime, UTC
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel
 

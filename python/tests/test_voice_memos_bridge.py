@@ -175,7 +175,8 @@ class BridgeTest(TestCase):
         self.mongo.records = [{"_id": "existing", "voicememo": {"ZUNIQUEID": self.recording["uuid"]},
                                "ingested": False, "bridge_pending_sha256": "0" * 64}]
         with patch.object(bridge, "ingest_source") as ingest:
-            job_id = self.prepare(); self.upload(job_id)
+            job_id = self.prepare()
+            self.upload(job_id)
             self.assertEqual(self.await_result(job_id)["state"], "failed")
             ingest.assert_not_called()
 
@@ -185,7 +186,8 @@ class BridgeTest(TestCase):
             seen.append(Path(source["path"]).parent)
             raise bridge.Cancelled("Paused fixture")
         with patch.object(bridge, "ingest_source", side_effect=cancelled):
-            job_id = self.prepare(); self.upload(job_id)
+            job_id = self.prepare()
+            self.upload(job_id)
             self.assertEqual(self.await_result(job_id)["state"], "cancelled")
         self.assertFalse(seen[0].exists())
         self.assertFalse(self.mongo.records[0]["ingested"])
@@ -195,8 +197,10 @@ class BridgeTest(TestCase):
     def test_real_ffmpeg_same_chunks_and_original_preserved(self):
         source = self.root / "fixture.m4a"
         subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.3", "-c:a", "aac", str(source)], check=True)
-        self.audio = source.read_bytes(); self.recording["size"] = len(self.audio)
-        job_id = self.prepare(); self.upload(job_id)
+        self.audio = source.read_bytes()
+        self.recording["size"] = len(self.audio)
+        job_id = self.prepare()
+        self.upload(job_id)
         result = self.await_result(job_id)
         self.assertEqual(result["state"], "imported", result)
         self.assertGreater(result["encoded_seconds"], 0)

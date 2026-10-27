@@ -150,7 +150,6 @@ def process_vad_job(job_id: str, data: VadJobData, progress_callback: Callable) 
                 break
 
             chunk_id = chunk["_id"]
-            chunk_start = chunk.get("start", "unknown")
 
             try:
                 audio = read_codec(chunk["data"], codec="opus", sample_rate=sample_rate)

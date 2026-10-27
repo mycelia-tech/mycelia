@@ -6,9 +6,10 @@ import requests
 import time
 import io
 import argparse
+import os
 from datetime import datetime, timezone
 from typing import Optional
-from lib.config import get_url, client_id, client_secret
+from lib.config import allow_insecure_transport, env, get_url, load_environment
 from oauthlib.oauth2 import BackendApplicationClient
 from requests_oauthlib import OAuth2Session
 
@@ -295,6 +296,10 @@ class AudioRecorder:
 
 
 def main():
+    load_environment()
+    if allow_insecure_transport():
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    client_id, client_secret = env("MYCELIA_CLIENT_ID"), env("MYCELIA_TOKEN")
     parser = argparse.ArgumentParser(description='Record audio and stream to Mycelia server')
     parser.add_argument('--db', default='audio_queue.db', help='Path to queue database file')
     parser.parse_args()

@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from pydantic import BaseModel
 from typing import Any, Callable, Dict, Optional, Type
+from lib.config import load_environment
+
+load_environment()
 
 from lib.resources import call_resource
 from lib.api import job_token_var

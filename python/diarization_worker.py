@@ -11,6 +11,10 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from tqdm import tqdm
+from lib.config import load_environment
+
+load_environment()
+
 from lib.resources import call_resource
 from lib.worker import setup_worker_logging, get_worker_id, mongo_cursor, claim_chunks, release_chunks
 from lib.diarization_runtime import (

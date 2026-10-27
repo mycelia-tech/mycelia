@@ -14,7 +14,22 @@ from discovery import (
     APPLE_REFERENCE_DATE,
     AppleVoiceMemosImporter,
     SourceUnavailableError,
+    FilesystemImporter,
 )
+
+
+class RegistrationRetryTest(TestCase):
+    def test_discovery_registration_is_stable_without_resetting_existing_state(self):
+        mongo = MongoStub([])
+        importer = FilesystemImporter(code="fixture", root="/fixture")
+        metadata = {"path": "/fixture/synthetic.wav", "created": datetime(2026, 1, 1, tzinfo=UTC)}
+        with patch("discovery.call_resource", side_effect=mongo):
+            importer.ingest(dict(metadata))
+            mongo.records[0]["ingested"] = True
+            importer.ingest(dict(metadata))
+        self.assertEqual(len(mongo.records), 1)
+        self.assertTrue(mongo.records[0]["ingested"])
+        self.assertEqual(mongo.calls[0]["query"], mongo.calls[1]["query"])
 
 
 def apple_seconds(value: datetime) -> float:

@@ -161,6 +161,28 @@ class IngestionServerHealthTest(TestCase):
         self.assertLessEqual(result["startedAt"], result["finishedAt"])
         self.assertIsNone(ingestion_server.current_cycle)
 
+    def test_explicit_retry_selects_only_requested_source_without_discovery(self):
+        source_id = "507f1f77bcf86cd799439011"
+        with (
+            patch("ingestion_server.call_resource"),
+            patch("ingestion_server.import_new_files") as discover,
+            patch("ingestion_server.load_folder_settings") as folders,
+            patch("ingestion_server.ingests_missing_sources", return_value=SUCCESS) as ingest,
+        ):
+            asyncio.run(ingestion_server.process_ingestion_job({"jobId": "fixture", "data": {
+                "sourceIds": [source_id], "retryErrors": True, "limit": 1,
+            }}, "Bearer fixture-token"))
+        discover.assert_not_called()
+        folders.assert_not_called()
+        self.assertEqual([str(value) for value in ingest.call_args.kwargs["source_ids"]], [source_id])
+        self.assertTrue(ingest.call_args.kwargs["retry_errors"])
+
+    def test_retry_requires_an_explicit_valid_selection(self):
+        for data in ({"retryErrors": True}, {"sourceIds": []}, {"sourceIds": ["invalid"]},
+                     {"sourceIds": ["507f1f77bcf86cd799439011"], "sourceFolder": "/fixture"}):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                ingestion_server.IngestionJobData.model_validate(data)
+
     def test_staging_receipt_is_bounded_and_belongs_to_configured_database(self):
         with (
             patch("ingestion_server.get_apple_voicememos_mode", return_value="staged"),

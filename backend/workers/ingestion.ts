@@ -5,7 +5,14 @@ import { NetworkJobCapability } from "./python.ts";
 export const schema = z.object({
   type: z.literal("ingestion"),
   sourceFolder: z.string().trim().min(1).max(4096).optional(),
+  sourceIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).min(1).max(100)
+    .optional(),
+  retryErrors: z.boolean().default(false),
   limit: z.number().int().min(1).max(100).default(20),
+}).refine((data) => !(data.sourceFolder && data.sourceIds), {
+  message: "Choose sourceIds or sourceFolder, not both",
+}).refine((data) => !data.retryErrors || Boolean(data.sourceIds?.length), {
+  message: "Retrying cached errors requires explicit sourceIds",
 });
 
 // Ingestion must run on the host because source_files paths refer to macOS

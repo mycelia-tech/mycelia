@@ -36,7 +36,6 @@ histogram_data = call_resource('mongo', {
 })
 len(histogram_data)
 #%%
-import numpy as np
 
 # Create DataFrame
 df = pd.DataFrame(histogram_data)

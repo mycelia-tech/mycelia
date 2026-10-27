@@ -5,7 +5,7 @@ from typing import Any
 import requests
 from bson import ObjectId
 
-from .config import ALLOW_INSECURE_TRANSPORT, client_id, client_secret, get_url
+from . import config
 
 # ContextVars to store per-request job state
 job_token_var: ContextVar[str | None] = ContextVar("job_token", default=None)
@@ -15,26 +15,28 @@ job_session_var: ContextVar[requests.Session | None] = ContextVar("job_session",
 def create_session(token: str | None = None) -> requests.Session:
     """Create a Mycelia API session for one execution context."""
     session = requests.Session()
-    session.verify = not ALLOW_INSECURE_TRANSPORT
+    # Plain HTTP does not require disabling TLS checks on HTTPS redirects.
+    session.verify = True
     if token:
         session.headers.update({"Authorization": f"Bearer {token}"})
     return session
 
 
-def exchange_api_key_for_jwt(*, timeout=None) -> str:
+def exchange_api_key_for_jwt(*, timeout=(3.0, 15.0)) -> str:
     """Exchange the API key for a JWT access token using OAuth client_credentials flow."""
+    client_id, client_secret = config.env("MYCELIA_CLIENT_ID"), config.env("MYCELIA_TOKEN")
     if not client_id or not client_secret:
         raise RuntimeError("MYCELIA_CLIENT_ID and MYCELIA_TOKEN must be set in environment")
 
     response = requests.post(
-        get_url("oauth", "token"),
+        config.get_url("oauth", "token"),
         data={
             "grant_type": "client_credentials",
             "client_id": client_id,
             "client_secret": client_secret,
         },
-        verify=not ALLOW_INSECURE_TRANSPORT,
-        **({"timeout": timeout} if timeout is not None else {}),
+        verify=True,
+        timeout=timeout or (3.0, 15.0),
     )
     response.raise_for_status()
     data = response.json()
