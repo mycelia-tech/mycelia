@@ -1,264 +1,147 @@
 import { getRootDB } from "@/lib/mongo/core.server.ts";
 import { redis } from "@/lib/redis.ts";
+import {
+  ACCESS_LOG_GROUP,
+  ACCESS_LOG_STREAM,
+  ACKNOWLEDGE_PERSISTED_ACCESS_LOGS,
+  persistAccessLogBatch,
+  readAccessLogBatch,
+  type StoredAccessLog,
+} from "./accessLog.persistence.ts";
 
-// Quiet logging by default - enable with DEBUG_ACCESS_LOG=true
 const DEBUG = Deno.env.get("DEBUG_ACCESS_LOG") === "true";
-const log = (msg: string) => DEBUG && console.log(msg);
+const log = (message: string) => DEBUG && console.log(message);
 
 let accessLogWorker: { stop: () => Promise<void> } | null = null;
-let workerRunning = false;
-let workerLoopPromise: Promise<void> | null = null;
 
-const STREAM_NAME = "access_logs";
-const CONSUMER_GROUP = "access_logs_group";
-const CONSUMER_NAME = "worker-1";
-const BATCH_SIZE = 100;
-const BLOCK_TIMEOUT_MS = 5000;
+export async function startAccessLogWorker(): Promise<void> {
+  if (accessLogWorker) return;
 
-interface AccessLogMessage {
-  principal: string;
-  resource: string;
-  actions: Array<{
-    path: string[];
-    actions: string[];
-  }>;
-  timestamp: string;
-}
+  // Blocking reads must not stall the shared connection used by HTTP requests
+  // and job scheduling. A finite retry count lets the loop back off on failure.
+  const connection = redis.duplicate({
+    maxRetriesPerRequest: 1,
+    commandTimeout: 10_000,
+    lazyConnect: true,
+  });
+  // Failed commands are reported below without exposing connection details.
+  connection.on("error", () => {});
+  let running = true;
+  let loop: Promise<void> | undefined;
+  let wakeBackoff: (() => void) | undefined;
+  const worker = {
+    stop: async () => {
+      running = false;
+      wakeBackoff?.();
+      connection.disconnect();
+      // Redis blocking reads/backoff stop promptly. An in-flight shared Mongo
+      // connection lookup must finish its existing application retry policy;
+      // do not abandon it and start concurrent database retries.
+      await loop;
+      if (accessLogWorker === worker) accessLogWorker = null;
+    },
+  };
+  accessLogWorker = worker;
 
-async function ensureConsumerGroup(): Promise<void> {
-  try {
-    await redis.call("XGROUP", "CREATE", STREAM_NAME, CONSUMER_GROUP, "0", "MKSTREAM");
-    log(`[AccessLog] Created consumer group ${CONSUMER_GROUP} on stream ${STREAM_NAME}`);
-  } catch (error: any) {
-    if (error.message && (error.message.includes("BUSYGROUP") || error.message.includes("already exists"))) {
-      log(`[AccessLog] Consumer group ${CONSUMER_GROUP} already exists`);
-    } else {
-      throw error;
-    }
-  }
-}
-
-async function processBatch(messages: Array<[string, string[]]>): Promise<void> {
-  if (messages.length === 0) {
-    return;
-  }
-
-  const startTime = Date.now();
-  log(`[AccessLog] Processing batch of ${messages.length} messages`);
-
-  const documents: AccessLogMessage[] = [];
-  const failedMessages: Array<{ messageId: string; rawData: Record<string, string>; error: string }> = [];
-  const messageIds: string[] = [];
-
-  for (const messageEntry of messages) {
-    if (!Array.isArray(messageEntry) || messageEntry.length < 2) {
-      continue;
-    }
-
-    const messageId = typeof messageEntry[0] === "string" ? messageEntry[0] : new TextDecoder().decode(messageEntry[0] as Uint8Array);
-    const fields = messageEntry[1] as any[];
-    messageIds.push(messageId);
-
-    const messageData: Record<string, string> = {};
-    for (let i = 0; i < fields.length; i += 2) {
-      const key = typeof fields[i] === "string" ? fields[i] : new TextDecoder().decode(fields[i] as Uint8Array);
-      const value = typeof fields[i + 1] === "string" ? fields[i + 1] : new TextDecoder().decode(fields[i + 1] as Uint8Array);
-      messageData[key] = value;
-    }
-
+  const ensureGroup = async () => {
     try {
-      const actions = JSON.parse(messageData.actions);
-      documents.push({
-        principal: messageData.principal,
-        resource: messageData.resource,
-        actions,
-        timestamp: messageData.timestamp,
-      });
+      await connection.call(
+        "XGROUP",
+        "CREATE",
+        ACCESS_LOG_STREAM,
+        ACCESS_LOG_GROUP,
+        "0",
+        "MKSTREAM",
+      );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[AccessLog] Failed to parse message ${messageId}:`, error);
-      failedMessages.push({
-        messageId,
-        rawData: messageData,
-        error: errorMessage,
-      });
+      if (!(error instanceof Error) || !error.message.includes("BUSYGROUP")) {
+        throw error;
+      }
     }
-  }
+  };
 
-  const db = await getRootDB();
+  const backoff = () =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        wakeBackoff = undefined;
+        resolve();
+      }, 1000);
+      wakeBackoff = () => {
+        clearTimeout(timer);
+        wakeBackoff = undefined;
+        resolve();
+      };
+    });
 
   try {
-    if (documents.length > 0) {
-      const collection = db.collection("access_logs");
-      const insertDocs = documents.map((doc) => ({
-        principal: doc.principal,
-        resource: doc.resource,
-        actions: doc.actions,
-        timestamp: new Date(doc.timestamp),
-      }));
-
-      await collection.insertMany(insertDocs);
-      log(`[AccessLog] Successfully inserted ${documents.length} documents`);
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[AccessLog] Failed to insert batch to MongoDB:`, error);
-    
-    for (let i = 0; i < documents.length; i++) {
-      failedMessages.push({
-        messageId: messageIds[i],
-        rawData: {
-          principal: documents[i].principal,
-          resource: documents[i].resource,
-          actions: JSON.stringify(documents[i].actions),
-          timestamp: documents[i].timestamp,
-        },
-        error: errorMessage,
-      });
-    }
-  }
-
-  if (failedMessages.length > 0) {
-    try {
-      const failedCollection = db.collection("access_logs_failed");
-      const failedDocs = failedMessages.map((failed) => ({
-        messageId: failed.messageId,
-        principal: failed.rawData.principal || null,
-        resource: failed.rawData.resource || null,
-        actions: failed.rawData.actions || null,
-        timestamp: failed.rawData.timestamp ? new Date(failed.rawData.timestamp) : new Date(),
-        error: failed.error,
-        failedAt: new Date(),
-        rawMessage: failed.rawData,
-      }));
-
-      await failedCollection.insertMany(failedDocs);
-      log(`[AccessLog] Saved ${failedMessages.length} failed messages to access_logs_failed`);
-    } catch (error) {
-      console.error(`[AccessLog] Failed to save failed messages:`, error);
-    }
-  }
-
-  if (messageIds.length > 0) {
-    await redis.xack(STREAM_NAME, CONSUMER_GROUP, ...messageIds);
-    log(`[AccessLog] Acknowledged ${messageIds.length} messages (${documents.length} successful, ${failedMessages.length} failed)`);
-  }
-
-  const duration = Date.now() - startTime;
-  log(
-    `[AccessLog] Processed batch in ${duration}ms: ${documents.length} successful, ${failedMessages.length} failed`,
-  );
-}
-
-async function workerLoop(): Promise<void> {
-  let iterationCount = 0;
-  let lastIterationTime = Date.now();
-  while (workerRunning) {
-    try {
-      iterationCount++;
-      const iterationStartTime = Date.now();
-      const timeSinceLastIteration = iterationStartTime - lastIterationTime;
-      if (!workerRunning) {
-        break;
-      }
-
-      const xreadStartTime = Date.now();
-      const result = await redis.call(
-        "XREADGROUP",
-        "GROUP",
-        CONSUMER_GROUP,
-        CONSUMER_NAME,
-        "COUNT",
-        BATCH_SIZE,
-        "BLOCK",
-        BLOCK_TIMEOUT_MS,
-        "STREAMS",
-        STREAM_NAME,
-        ">",
-      ) as any;
-      const xreadDuration = Date.now() - xreadStartTime;
-
-      if (!workerRunning) {
-        break;
-      }
-
-      if (!result || result.length === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        lastIterationTime = Date.now();
-        continue;
-      }
-
-      for (const streamData of result) {
-        if (Array.isArray(streamData) && streamData.length >= 2) {
-          const stream = typeof streamData[0] === "string" ? streamData[0] : new TextDecoder().decode(streamData[0] as Uint8Array);
-          const messages = streamData[1];
-
-          if (stream === STREAM_NAME && Array.isArray(messages)) {
+    await ensureGroup();
+    if (!running) return;
+    loop = (async () => {
+      while (running) {
+        try {
+          const messages = await readAccessLogBatch((...args) =>
+            connection.call(args[0] as string, ...args.slice(1))
+          );
+          if (!running) break;
+          if (!messages.length) continue;
+          const db = await getRootDB();
+          if (!running) break;
+          await persistAccessLogBatch(messages, {
+            persist: async (name, documents) => {
+              await db.collection<StoredAccessLog>(name).bulkWrite(
+                documents.map((document) => ({
+                  updateOne: {
+                    filter: { _id: document._id },
+                    update: { $setOnInsert: document },
+                    upsert: true,
+                  },
+                })),
+                {
+                  ordered: false,
+                  timeoutMS: 15_000,
+                  writeConcern: { w: "majority", j: true, wtimeoutMS: 10_000 },
+                },
+              );
+            },
+            acknowledge: async (ids) => {
+              await connection.eval(
+                ACKNOWLEDGE_PERSISTED_ACCESS_LOGS,
+                1,
+                ACCESS_LOG_STREAM,
+                ACCESS_LOG_GROUP,
+                ...ids,
+              );
+            },
+          });
+          log(`[AccessLog] Persisted ${messages.length} entries`);
+        } catch (error) {
+          if (!running) break;
+          // Exception messages can contain audit payloads or connection secrets.
+          console.error(
+            "[AccessLog] Batch failed; pending entries retained for retry",
+          );
+          await backoff();
+          if (!running) break;
+          if (error instanceof Error && error.message.includes("NOGROUP")) {
             try {
-              await processBatch(messages);
-            } catch (error) {
-              console.error(`[AccessLog] Error processing batch:`, error);
+              await ensureGroup();
+            } catch {
+              console.error("[AccessLog] Consumer group unavailable; retrying");
             }
           }
         }
       }
-      lastIterationTime = Date.now();
-    } catch (error: any) {
-      if (error.message && error.message.includes("NOGROUP")) {
-        log(`[AccessLog] Consumer group ${CONSUMER_GROUP} not found, recreating...`);
-        await ensureConsumerGroup();
-      } else {
-        console.error(`[AccessLog] Error reading from stream:`, error);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      lastIterationTime = Date.now();
-    }
-  }
-}
-
-export async function startAccessLogWorker(): Promise<void> {
-  if (accessLogWorker) {
-    log("[AccessLog] Worker already started");
-    return;
-  }
-
-  log("[AccessLog] Starting access log worker...");
-
-  try {
-    await ensureConsumerGroup();
-
-    workerRunning = true;
-
-    workerLoopPromise = workerLoop().catch((error) => {
-      console.error("[AccessLog] Worker loop error:", error);
-      workerRunning = false;
-      accessLogWorker = null;
-      workerLoopPromise = null;
+    })().finally(() => {
+      connection.disconnect();
+      if (accessLogWorker === worker) accessLogWorker = null;
     });
-
-    accessLogWorker = {
-      stop: async () => {
-        log("[AccessLog] Stopping access log worker...");
-        workerRunning = false;
-        if (workerLoopPromise) {
-          await workerLoopPromise;
-          workerLoopPromise = null;
-        }
-        accessLogWorker = null;
-        log("[AccessLog] Access log worker stopped");
-      },
-    };
-
-    log("[AccessLog] Access log worker started");
+    log("[AccessLog] Worker started");
   } catch (error) {
-    console.error("[AccessLog] Failed to start worker:", error);
+    await worker.stop();
     throw error;
   }
 }
 
 export async function stopAccessLogWorker(): Promise<void> {
-  if (accessLogWorker) {
-    await accessLogWorker.stop();
-  }
+  await accessLogWorker?.stop();
 }
-
