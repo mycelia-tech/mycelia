@@ -1734,3 +1734,12 @@ browser profile. Install Chromium once with
 `cd frontend && node node_modules/@playwright/test/cli.js install chromium`, then
 run `deno task verify e2e` from the repository root. CI installs Chromium itself.
 For a locally installed Chrome, set `PLAYWRIGHT_CHANNEL=chrome`.
+
+### Reitti GPS synchronization
+
+The `reitti_sync` worker uses the standard location upload/commit pipeline and
+Jobs scheduling (a cheap 60-second due check; exports at most once per hour). Configuration and recovery are documented in
+[docs/REITTI_SYNC.md](docs/REITTI_SYNC.md). Its UTC planner and export validation
+are covered by `backend/app/lib/location/reitti-sync.test.ts`. Changes to the
+private `REITTI_*` environment require recreating only backend using the active
+Compose overlays, then restarting nginx and checking `[READY]` and `/readiness`.

@@ -971,3 +971,12 @@ You're welcome to fork, build plugins, suggest features, or break things
 ## License
 
 [MIT](./LICENSE)
+
+### Reitti location synchronization
+
+Mycelia can pull GPS history from Reitti into its existing location map. Set the
+`REITTI_*` variables in `.env`, recreate the backend, then run `reitti_sync` from
+Jobs. It imports recent days first, resumes historical batches, and refreshes
+once an hour. Original daily GPX files and import receipts are retained; matching
+points are deduplicated and conflicting coordinates remain reviewable. See
+[Reitti synchronization](docs/REITTI_SYNC.md) for setup and recovery.
