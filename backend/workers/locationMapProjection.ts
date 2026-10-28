@@ -158,7 +158,7 @@ const capability: JobCapability = {
     ]);
     return pending && conversationState?.ready || routeState ? 1 : 0;
   },
-  getTriggerJobData: () => ({ mode: "incremental" }),
+  getTriggerJobData: () => ({ type: name, mode: "incremental" }),
   use,
 };
 

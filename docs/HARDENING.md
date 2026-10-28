@@ -118,6 +118,9 @@ to reserve CPU for interactive work. An operator can apply the same quota with
 `docker update --cpus 2 <python-worker-container>` without interrupting a job;
 keep the dotenv setting consistent so the next recreation preserves the quota.
 This is a throughput tradeoff, not evidence that model thread counts are tuned.
+The Python service also defaults its startup `OMP_NUM_THREADS` to `1`, separately
+configurable as `PYTHON_WORKER_OMP_THREADS`. The offline VAD benchmark and its
+scope are documented in [Python CPU budgets](../DEVELOPMENT.md#python-cpu-budgets-and-vad-measurement).
 
 `deno task verify` runs repository, backend, frontend, SDK, Python, RAG, CPU
 GPU, isolated nginx and browser acceptance checks. Supply group names for focused

@@ -28,6 +28,7 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
       project: string,
       overlay?: string,
       envFile = ".env",
+      ompThreads = "",
     ) => {
       const output = await new Deno.Command("docker", {
         args: [
@@ -45,7 +46,11 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
           "--format",
           "json",
         ],
-        env: { MYCELIA_MONGO_NETWORK: "", MONGO_LOCAL_PORT: "27017" },
+        env: {
+          MYCELIA_MONGO_NETWORK: "",
+          MONGO_LOCAL_PORT: "27017",
+          PYTHON_WORKER_OMP_THREADS: ompThreads,
+        },
         stdin: "null",
         stdout: "piped",
         stderr: "piped",
@@ -56,6 +61,9 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
     };
     const main = await config("mycelia-fixture-a");
     const other = await config("mycelia-fixture-b");
+    equal(main.services["python-worker"].environment.OMP_NUM_THREADS, "1");
+    const tuned = await config("mycelia-fixture-a", undefined, ".env", "2");
+    equal(tuned.services["python-worker"].environment.OMP_NUM_THREADS, "2");
     equal(main.services.mongo.ports?.length ?? 0, 0);
     equal(main.networks.mongo_clients.name, "mycelia-fixture-a-mongo-clients");
     notEqual(

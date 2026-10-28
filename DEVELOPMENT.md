@@ -109,6 +109,30 @@ Keep the setting on subsequent starts. These events can still be durably
 persisted/acknowledged, but their Redis payloads remain; only later IDs qualify
 for normal release. Changing the boundary is not a cleanup operation.
 
+### Python CPU budgets and VAD measurement
+
+`PYTHON_WORKER_CPU_LIMIT` caps the container's total CPU usage; it does not limit
+native library thread pools. Compose now also sets `OMP_NUM_THREADS` before
+Python starts, from `PYTHON_WORKER_OMP_THREADS` (default `1`). This avoids OpenMP
+oversubscription observed in the ARM64 worker even when PyTorch reports one
+intra-op thread. The setting affects native OpenMP operations throughout the
+worker; deployments with different CPU workloads may explicitly override it.
+Changing this environment variable requires recreating the Python worker after
+its active jobs drain. Changing only Docker's CPU quota does not apply it.
+
+The offline benchmark uses the explicitly selected, already cached Silero model
+and public example audio. It downloads nothing and does not read application
+recordings, enqueue jobs or write Mongo/Redis. From the `python/` directory:
+
+```sh
+OMP_NUM_THREADS=1 uv run --frozen benchmarks/vad.py --hub-dir "$SILERO_HUB_DIR"
+```
+
+Set `SILERO_HUB_DIR` to a trusted existing `snakers4_silero-vad_master` cache.
+The report includes model/sample hashes, three timed passes in an executor
+thread, and speech/silence/noise/partial-window probabilities. Compare outputs
+as well as CPU/wall time; a lower CPU quota alone is not an optimization.
+
 ### Shared GPU audio service
 
 The optional [shared audio deployment](gpu/SHARED_AUDIO.md) adds WhisperLiveKit

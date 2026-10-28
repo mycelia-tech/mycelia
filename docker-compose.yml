@@ -145,6 +145,9 @@ services:
       context: .
       dockerfile: ./python/Dockerfile
     environment:
+      # Set before native libraries initialize. torch.set_num_threads(1) alone
+      # does not prevent the cached ARM64 VAD runtime's OpenMP oversubscription.
+      OMP_NUM_THREADS: ${PYTHON_WORKER_OMP_THREADS:-1}
       MYCELIA_URL: http://backend:5173
       MYCELIA_CLIENT_ID: ${MYCELIA_CLIENT_ID}
       MYCELIA_TOKEN: ${MYCELIA_TOKEN}
