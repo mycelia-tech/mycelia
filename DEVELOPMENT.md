@@ -424,9 +424,15 @@ For removable disks on macOS, append `docker-compose.media-disks.yml` after
 the primary media overlay. It mounts the stable `/Volumes` directory read-only,
 so individual disks are optional at startup. In **Media → Choose folder**, open
 **Connected disks**, refresh after connecting a disk, and select a disk or folder
-before scanning. First create an empty `disks` directory inside the local
-`MEDIA_SOURCE_HOST_PATH` folder for the nested mountpoint. The default
-local-folder scan excludes these separate sources.
+before scanning. Disks use an independent `/media-disks` mount while saved
+`disks/...` and alias paths remain unchanged. An absent local import folder is
+created empty by the UAT overlay; without an explicit path it uses
+`./.local/media-import`. The folder picker explains empty/unavailable sources
+and retains disk selection. The default local-folder scan excludes these sources.
+Required credential/code binds are checked by `deno task deploy` before any
+application recreation. A pre-existing Google folder stream pins its resolved
+source path; after switching from a nested disk mount, pause and review/re-enable
+that stream before further recognition. No stream authorization is migrated.
 See [External photo libraries](docs/MEDIA_KNOWLEDGE.md#external-photo-libraries)
 for stable aliases that preserve existing original-file references.
 

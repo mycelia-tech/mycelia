@@ -41,6 +41,26 @@ describe("MediaBatchPanel mounted-folder sync", () => {
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
   });
 
+  it("explains an empty local source while allowing another mounted folder", async () => {
+    const user = userEvent.setup();
+    const message = "Local import folder is empty. Upload files or choose another folder below, then refresh.";
+    mockCallResource.mockImplementation((_resource, input) => {
+      if (input.action === "listMountedFolders") return Promise.resolve({ listing: {
+        currentPath: input.relativePath,
+        ...(input.relativePath === "." ? { scanUnavailableReason: message,
+          folders: [{ name: "Archive", relativePath: "archive" }] } : { folders: [] }),
+      } });
+      return Promise.resolve({ campaign: null });
+    });
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Choose mounted folder" }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Scan selected folder recursively" }).hasAttribute("disabled")).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Scan selected folder recursively" }).hasAttribute("disabled")).toBe(false));
+    expect(mockCallResource.mock.calls.some(([, input]) => input.action === "startFolderScan")).toBe(false);
+  });
+
   it("keeps available folders selectable and shows discovery without a false percentage", async () => {
     const user = userEvent.setup();
     mockCallResource.mockImplementation((_resource, input) => {

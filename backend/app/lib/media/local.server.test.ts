@@ -22,6 +22,99 @@ import {
 // Folder fixtures must not inherit the developer's configured physical disks.
 env.MEDIA_SOURCE_ALIASES = "{}";
 env.MEDIA_SOURCE_DISKS_DIR = "";
+env.MEDIA_SOURCE_DISKS_ROOT = "";
+
+Deno.test("empty or missing local folders retain independent disk selection and safe logical paths", async () => {
+  const temporary = await Deno.makeTempDir();
+  const previous = {
+    root: env.MEDIA_SOURCE_ROOT,
+    disks: env.MEDIA_SOURCE_DISKS_DIR,
+    physical: env.MEDIA_SOURCE_DISKS_ROOT,
+    aliases: env.MEDIA_SOURCE_ALIASES,
+  };
+  env.MEDIA_SOURCE_ROOT = `${temporary}/local`;
+  env.MEDIA_SOURCE_DISKS_DIR = "disks";
+  env.MEDIA_SOURCE_DISKS_ROOT = `${temporary}/volumes`;
+  env.MEDIA_SOURCE_ALIASES = JSON.stringify({ archive: "disks/Drive/photos" });
+  try {
+    await Deno.mkdir(`${temporary}/volumes/Drive/photos`, { recursive: true });
+    await Deno.writeTextFile(
+      `${temporary}/volumes/Drive/photos/a.jpg`,
+      "fixture",
+    );
+    const unavailable = await listMediaSourceFolders(".");
+    assertEquals(
+      unavailable.scanUnavailableReason?.includes("unavailable"),
+      true,
+    );
+    assertEquals(unavailable.folders.map((f) => f.relativePath).sort(), [
+      "archive",
+      "disks",
+    ]);
+    assertEquals(unavailable.folders.some((f) => f.unavailableReason), false);
+    assertEquals(
+      (await resolveMediaSourcePath("archive/a.jpg")).relativePath,
+      "archive/a.jpg",
+    );
+    assertEquals(
+      (await resolveMediaSourcePath("disks/Drive/photos/a.jpg")).realPath,
+      await Deno.realPath(`${temporary}/volumes/Drive/photos/a.jpg`),
+    );
+    assertEquals((await scanMediaSourceInventory("archive", 10)).paths, [
+      "archive/a.jpg",
+    ]);
+    await assertRejects(
+      () => readMediaSourceDirectoryPage("disks"),
+      Error,
+      "Choose a disk",
+    );
+    await assertRejects(
+      () => resolveMediaSourcePath("disks/../outside"),
+      Error,
+      '".."',
+    );
+    await Deno.symlink(temporary, `${temporary}/volumes/linked`);
+    await assertRejects(
+      () => resolveMediaSourcePath("disks/linked"),
+      Error,
+      "symlinks",
+    );
+    await Deno.mkdir(`${temporary}/local`);
+    assertEquals(
+      (await listMediaSourceFolders(".")).scanUnavailableReason?.includes(
+        "empty",
+      ),
+      true,
+    );
+    await Deno.writeTextFile(`${temporary}/local/local.jpg`, "fixture");
+    assertEquals(
+      (await listMediaSourceFolders(".")).scanUnavailableReason,
+      undefined,
+    );
+    assertEquals((await scanMediaSourceInventory(".", 10)).paths, [
+      "local.jpg",
+    ]);
+    env.MEDIA_SOURCE_ROOT = "";
+    assertEquals(
+      (await listMediaSourceFolders(".")).scanUnavailableReason?.includes(
+        "unavailable",
+      ),
+      true,
+    );
+    assertEquals(
+      (await listMediaSourceFolders("disks")).folders.some((f) =>
+        f.name === "Drive"
+      ),
+      true,
+    );
+  } finally {
+    env.MEDIA_SOURCE_ROOT = previous.root;
+    env.MEDIA_SOURCE_DISKS_DIR = previous.disks;
+    env.MEDIA_SOURCE_DISKS_ROOT = previous.physical;
+    env.MEDIA_SOURCE_ALIASES = previous.aliases;
+    await Deno.remove(temporary, { recursive: true });
+  }
+});
 
 Deno.test("optional disks reconnect without changing stored alias paths or scanning other sources", async () => {
   const root = await Deno.realPath(await Deno.makeTempDir());

@@ -140,6 +140,7 @@ Deno.test("dry-run preflight reads resolved Compose and never returns a config-p
       seen.push(command);
       return Promise.resolve(JSON.stringify(candidate()));
     },
+    () => Promise.resolve(),
   );
   equal(seen.length, 1);
   deepStrictEqual(seen[0].slice(-3), ["config", "--format", "json"]);
@@ -149,6 +150,50 @@ Deno.test("dry-run preflight reads resolved Compose and never returns a config-p
     JSON.stringify(commands).includes("PRIVATE_CONFIGURATION_CANARY"),
     false,
   );
+});
+
+Deno.test("deployment refuses missing required binds before mutations but permits the optional media folder", async () => {
+  const base = candidate();
+  const input = {
+    services: {
+      ...base.services,
+      backend: {
+        ...base.services.backend,
+        environment: {
+          ...base.services.backend.environment,
+          MEDIA_SOURCE_ROOT: "/media-source",
+        },
+        volumes: [...base.services.backend.volumes, {
+          type: "bind",
+          source: "/missing/import",
+          target: "/media-source",
+          bind: { create_host_path: true },
+        }, {
+          type: "bind",
+          source: "/missing/credential",
+          target: "/run/secrets/adc",
+          bind: { create_host_path: false },
+        }],
+      },
+    },
+  };
+  const checked: string[] = [];
+  await rejects(
+    () =>
+      prepareDeployment(runtime(), "/repo", "example", ["base.yml"], [
+        "backend",
+      ], () =>
+        Promise.resolve(JSON.stringify(input)), (path) => {
+        checked.push(path);
+        if (path.startsWith("/missing")) {
+          return Promise.reject(new Error("PRIVATE_PATH_CANARY"));
+        }
+        return Promise.resolve();
+      }),
+    /^Error: backend: required bind source for \/run\/secrets\/adc is missing or inaccessible$/,
+  );
+  equal(checked.includes("/missing/import"), false);
+  equal(checked.includes("/missing/credential"), true);
 });
 
 Deno.test("candidate mismatch or malformed private configuration fails before dry-run success", async () => {

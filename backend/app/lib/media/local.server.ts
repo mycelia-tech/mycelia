@@ -130,9 +130,6 @@ export async function resolveMediaSourcePath(
   realPath: string;
   relativePath: string;
 }> {
-  if (!sourceRoot) {
-    throw new Error("MEDIA_SOURCE_ROOT is not configured");
-  }
   assertSafeMediaRelativePath(relativePath);
   const logicalPath = relativePath.split(/[\\/]+/).filter((p) => p && p !== ".")
     .join("/") || ".";
@@ -141,8 +138,16 @@ export async function resolveMediaSourcePath(
   const aliasTarget = Object.hasOwn(aliases, first)
     ? aliases[first]
     : undefined;
-  const root = await Deno.realPath(sourceRoot);
-  const candidate = resolve(root, aliasTarget ?? first, ...rest);
+  const expanded = [aliasTarget ?? first, ...rest].join("/").split("/")
+    .filter((part) => part && part !== ".");
+  const external = Boolean(
+    env.MEDIA_SOURCE_DISKS_ROOT &&
+      env.MEDIA_SOURCE_DISKS_DIR && expanded[0] === env.MEDIA_SOURCE_DISKS_DIR,
+  );
+  const selectedRoot = external ? env.MEDIA_SOURCE_DISKS_ROOT : sourceRoot;
+  if (!selectedRoot) throw new Error("MEDIA_SOURCE_ROOT is not configured");
+  const root = await Deno.realPath(selectedRoot);
+  const candidate = resolve(root, ...(external ? expanded.slice(1) : expanded));
   // Reject links even when their destination happens to remain inside the root.
   let componentPath = root;
   for (const component of relative(root, candidate).split(SEPARATOR)) {
@@ -175,8 +180,26 @@ export async function listMediaSourceFolders(
   relativePath: string,
   sourceRoot = env.MEDIA_SOURCE_ROOT,
 ): Promise<MediaSourceFolderListing> {
-  if (!sourceRoot) throw new Error("MEDIA_SOURCE_ROOT is not configured");
   assertSafeMediaRelativePath(relativePath);
+  const isLocalRoot = relativePath.split(/[\\/]+/).every((p) =>
+    !p || p === "."
+  );
+  if (isLocalRoot) {
+    try {
+      if (!sourceRoot || !(await Deno.stat(sourceRoot)).isDirectory) {
+        throw new Error();
+      }
+      // Opening the directory also catches inaccessible or disconnected mounts.
+      for await (const _entry of Deno.readDir(sourceRoot)) break;
+    } catch {
+      return {
+        currentPath: ".",
+        scanUnavailableReason:
+          "Local import folder is unavailable. Choose a connected disk or another folder below, or reconnect the source and refresh. You can still upload files.",
+        folders: await alternateMediaSourceFolders(sourceRoot),
+      };
+    }
+  }
   const { root, realPath, relativePath: currentPath } =
     await resolveMediaSourcePath(
       relativePath,
@@ -187,11 +210,22 @@ export async function listMediaSourceFolders(
 
   const folders: MediaSourceFolderListing["folders"] = [];
   const aliases = mediaSourceAliases();
+  const separateSources = separateSourceNames();
+  let hasLocalEntries = false;
   for await (const entry of Deno.readDir(realPath)) {
+    if (
+      !entry.name.startsWith(".") && !separateSources.includes(entry.name)
+    ) {
+      hasLocalEntries = true;
+    }
     // Deno reports symlinks separately, so isDirectory excludes them. Resolve
     // again as a defense in depth check before exposing a selectable path.
     if (!entry.isDirectory || entry.isSymlink) continue;
     if (currentPath === "." && Object.hasOwn(aliases, entry.name)) continue;
+    if (
+      currentPath === "." && env.MEDIA_SOURCE_DISKS_ROOT &&
+      entry.name === env.MEDIA_SOURCE_DISKS_DIR
+    ) continue;
     let childRealPath: string;
     try {
       childRealPath = await Deno.realPath(resolve(realPath, entry.name));
@@ -216,20 +250,7 @@ export async function listMediaSourceFolders(
     });
   }
   if (currentPath === ".") {
-    for (const name of Object.keys(aliases)) {
-      let unavailableReason: string | undefined;
-      try {
-        const target = await resolveMediaSourcePath(name, sourceRoot);
-        if (!(await Deno.stat(target.realPath)).isDirectory) throw new Error();
-      } catch {
-        unavailableReason = "Disk unavailable — reconnect and refresh";
-      }
-      folders.push({
-        name,
-        relativePath: name,
-        ...(unavailableReason ? { unavailableReason } : {}),
-      });
-    }
+    folders.push(...await alternateMediaSourceFolders(sourceRoot));
   }
   folders.sort((left, right) =>
     left.name.localeCompare(right.name, undefined, {
@@ -243,9 +264,37 @@ export async function listMediaSourceFolders(
     ...(currentPath === env.MEDIA_SOURCE_DISKS_DIR
       ? { scanUnavailableReason: "Choose a disk or a folder before scanning" }
       : {}),
+    ...(currentPath === "." && !hasLocalEntries
+      ? {
+        scanUnavailableReason:
+          "Local import folder is empty. Upload files or choose another folder below, then refresh.",
+      }
+      : {}),
     ...(currentPath === "." ? {} : { parentPath: dirname(currentPath) }),
     folders,
   };
+}
+
+async function alternateMediaSourceFolders(
+  sourceRoot: string,
+): Promise<MediaSourceFolderListing["folders"]> {
+  const aliases = Object.keys(mediaSourceAliases());
+  const disks = env.MEDIA_SOURCE_DISKS_ROOT && env.MEDIA_SOURCE_DISKS_DIR;
+  const names = [...new Set([...aliases, ...(disks ? [disks] : [])])];
+  return await Promise.all(names.map(async (name) => {
+    let unavailableReason: string | undefined;
+    try {
+      const target = await resolveMediaSourcePath(name, sourceRoot);
+      if (!(await Deno.stat(target.realPath)).isDirectory) throw new Error();
+    } catch {
+      unavailableReason = "Disk unavailable — reconnect and refresh";
+    }
+    return {
+      name: name === disks ? "Connected disks" : name,
+      relativePath: name,
+      ...(unavailableReason ? { unavailableReason } : {}),
+    };
+  }));
 }
 
 export type MediaDirectoryEntry = {

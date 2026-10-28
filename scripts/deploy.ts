@@ -194,6 +194,7 @@ export async function prepareDeployment(
   files: string[],
   services: string[],
   read: ReadConfiguration = readConfiguration,
+  checkBindSource: (path: string) => Promise<unknown> = Deno.stat,
 ): Promise<string[][]> {
   const blockers = deploymentBlockers(runtime, services);
   if (blockers.length) throw new Error(blockers.join("\n"));
@@ -215,6 +216,31 @@ export async function prepareDeployment(
     services,
   );
   if (candidateBlockers.length) throw new Error(candidateBlockers.join("\n"));
+  // Check required bind paths before Compose can partially recreate the stack.
+  // Only the explicitly optional local media folder may be created empty.
+  if (record(candidate) && record(candidate.services)) {
+    for (const name of services) {
+      const service = candidate.services[name];
+      if (!record(service) || !Array.isArray(service.volumes)) continue;
+      for (const volume of service.volumes) {
+        if (
+          !record(volume) || volume.type !== "bind" ||
+          typeof volume.source !== "string"
+        ) continue;
+        const optionalMedia = record(service.environment) &&
+          service.environment.MEDIA_SOURCE_ROOT === volume.target &&
+          record(volume.bind) && volume.bind.create_host_path === true;
+        if (optionalMedia) continue;
+        try {
+          await checkBindSource(resolve(root, volume.source));
+        } catch {
+          throw new Error(
+            `${name}: required bind source for ${volume.target} is missing or inaccessible`,
+          );
+        }
+      }
+    }
+  }
   return mutations;
 }
 

@@ -13,6 +13,8 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
         "docker-compose.yml",
         "docker-compose.mongo-local.yml",
         "docker-compose.media-dev.yml",
+        "docker-compose.media-uat.yml",
+        "docker-compose.media-disks.yml",
       ]
     ) {
       await Deno.copyFile(join(root, file), join(directory, file));
@@ -26,7 +28,7 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
     );
     const config = async (
       project: string,
-      overlay?: string,
+      overlay?: string | string[],
       envFile = ".env",
       ompThreads = "",
     ) => {
@@ -41,7 +43,10 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
           project,
           "--file",
           join(directory, "docker-compose.yml"),
-          ...(overlay ? ["--file", join(directory, overlay)] : []),
+          ...(overlay
+            ? (Array.isArray(overlay) ? overlay : [overlay])
+              .flatMap((file) => ["--file", join(directory, file)])
+            : []),
           "config",
           "--format",
           "json",
@@ -50,6 +55,10 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
           MYCELIA_MONGO_NETWORK: "",
           MONGO_LOCAL_PORT: "27017",
           PYTHON_WORKER_OMP_THREADS: ompThreads,
+          MEDIA_SOURCE_HOST_PATH: Array.isArray(overlay)
+            ? ""
+            : join(directory, "source"),
+          GCP_ADC_HOST_PATH: "/fixture/adc.json",
         },
         stdin: "null",
         stdout: "piped",
@@ -76,6 +85,24 @@ Deno.test("Compose isolates Mongo by project and host access requires a loopback
     );
     equal(local.services.mongo.ports.length, 1);
     equal(local.services.mongo.ports[0].host_ip, "127.0.0.1");
+    const optionalMedia = await config("mycelia-optional-media", [
+      "docker-compose.media-uat.yml",
+      "docker-compose.media-disks.yml",
+    ]);
+    const mediaBackend = optionalMedia.services.backend;
+    const source = mediaBackend.volumes.find((v: { target: string }) =>
+      v.target === "/media-source"
+    );
+    equal(source.source, join(directory, ".local/media-import"));
+    equal(source.read_only, true);
+    equal(source.bind.create_host_path, true);
+    equal(mediaBackend.environment.MEDIA_SOURCE_DISKS_ROOT, "/media-disks");
+    equal(
+      mediaBackend.volumes.some((v: { target: string }) =>
+        v.target === "/media-source/disks"
+      ),
+      false,
+    );
     const media = await config(
       "mycelia-media-fixture",
       "docker-compose.media-dev.yml",

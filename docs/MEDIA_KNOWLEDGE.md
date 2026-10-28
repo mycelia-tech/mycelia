@@ -483,15 +483,18 @@ links remain local deterministic evidence and cannot be changed by the model.
 ### External photo libraries
 
 On macOS, use `docker-compose.media-disks.yml` after your primary media overlay.
-It mounts the stable parent `/Volumes` at `/media-source/disks` read-only;
+It mounts the stable parent `/Volumes` at `/media-disks` read-only;
 individual external disks are not required for Mycelia to start. Set
 `MEDIA_DISKS_HOST_PATH` only if your disks have a different stable parent.
 Docker Desktop must allow access to that parent. This exposes its directories
 to the authenticated media browser; symlinks are never followed.
-Before the first start, create an empty `disks` directory inside your local
-`MEDIA_SOURCE_HOST_PATH` folder. This permanent mountpoint is required because
-the parent folder is read-only inside Docker. It does not stand in for any disk;
-do not put local files there, as the volumes mount hides that directory's contents.
+The local import folder is optional: the UAT overlay creates it empty if absent,
+or uses `./.local/media-import` if no host path is configured. The independent
+disk mount needs no nested directory. Logical `disks/...` and alias paths stay
+unchanged. An empty/unavailable local source shows a message in the folder picker;
+choose a connected disk/folder or upload files. Required ADC credentials remain
+strict. Existing Google folder streams pin their physical source path and need
+review/re-enablement after switching mounts; this does not authorize new spending.
 
 In **Media → Choose folder**, choose **Local import folder**, a subfolder, or
 **Connected disks → disk → folder**. Refresh after connecting a disk. Scanning
