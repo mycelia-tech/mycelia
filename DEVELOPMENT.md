@@ -1743,3 +1743,8 @@ Jobs scheduling (a cheap 60-second due check; exports at most once per hour). Co
 are covered by `backend/app/lib/location/reitti-sync.test.ts`. Changes to the
 private `REITTI_*` environment require recreating only backend using the active
 Compose overlays, then restarting nginx and checking `[READY]` and `/readiness`.
+
+Map tiles require an origin Referer. nginx sends
+`Referrer-Policy: strict-origin-when-cross-origin`, so HTTPS tile requests receive
+only the app origin, not map paths or coordinate query parameters. This follows
+the [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/).
