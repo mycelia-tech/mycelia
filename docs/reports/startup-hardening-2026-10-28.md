@@ -1,8 +1,8 @@
 # Python configuration and bounded worker discovery — 2026-10-28
 
-Status: prepared and verified in the hardening worktree; this follow-up has not
-been deployed. The preceding [VAD rollout](vad-runtime-followup-2026-10-28.md)
-remains a separate runtime result.
+Status: deployed in the [subsequent main-stack rollout](startup-rollout-2026-10-28.md).
+The preparation evidence below predates that deployment. The preceding
+[VAD rollout](vad-runtime-followup-2026-10-28.md) remains a separate runtime result.
 
 ## Changes
 

@@ -10,10 +10,11 @@ The [subsequent runtime follow-up](reports/vad-runtime-followup-2026-10-28.md)
 fixes the automatic location trigger, activates graceful Mongo shutdown and
 measures/deploys the VAD OpenMP budget.
 
-The [prepared startup hardening follow-up](reports/startup-hardening-2026-10-28.md)
+The [startup hardening follow-up](reports/startup-hardening-2026-10-28.md)
 removes a remaining implicit Python dotenv override and bounds worker manifest
-discovery, rejecting partial/duplicate registries. This package is verified in
-the worktree and has not yet been deployed.
+discovery, rejecting partial/duplicate registries. The
+[latest rollout](reports/startup-rollout-2026-10-28.md) records its deployment,
+the optional media-folder fix, data preservation and remaining plan priorities.
 
 | Area | Implemented result |
 | --- | --- |
