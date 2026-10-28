@@ -10,19 +10,10 @@ import numpy as np
 import torch
 
 
-import dotenv
 python_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(python_dir)
 
-
-dotenv.load_dotenv(
-    os.path.abspath(
-        os.path.join(python_dir, "..", ".env")
-    )
-)
-
-
-
+from lib.config import load_environment
 from lib import call_resource
 from bson import ObjectId
 from chunking import read_codec, sample_rate
@@ -160,6 +151,7 @@ def process_once(batch_size: int = 10, threshold: float = 0.5) -> int:
 
 
 def main() -> None:
+    load_environment()
     while True:
         processed = process_once()
         print(f"processed {processed} chunks")

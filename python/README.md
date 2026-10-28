@@ -27,6 +27,12 @@ configuration relative to this Python directory. Changing the shell's working
 directory no longer selects a different configuration. Tests set a private
 `MYCELIA_LOG_DIR` and never load operator dotenv files.
 
+Importing shared audio utilities does not load dotenv or overwrite startup
+settings. Standalone audio scripts load configuration explicitly at their entry
+point. Notebook and embedded callers should call
+`from lib.config import load_environment; load_environment()` before using API
+helpers; `MYCELIA_ENV_FILE` paths are relative to the repository, not the shell.
+
 Resource reads have bounded timeouts and cancellation-aware retries. Mutations
 are retried only with a stable operation identity and deduplication. Ingestion
 jobs accept `sourceIds` and `retryErrors` for one-source recovery while retaining

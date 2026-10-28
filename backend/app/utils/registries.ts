@@ -1,8 +1,7 @@
 import { expandGlob } from "@std/fs";
 import { toFileUrl } from "@std/path";
 import { z } from "zod";
-
-
+import { readDiscoveryProcess } from "./discovery-process.ts";
 
 export const zTriggerSource = z.object({
   channel: z.string(),
@@ -36,7 +35,6 @@ export type CapabilityManifest = z.infer<typeof zCapabilityManifest>;
 export type RegistryEntry = {
   manifest: CapabilityManifest;
   path: URL;
-  
 };
 
 export class Registry<T extends RegistryEntry = RegistryEntry> {
@@ -55,7 +53,7 @@ export class Registry<T extends RegistryEntry = RegistryEntry> {
   }
 
   register(capability: T): void {
-    if (capability.manifest.name in this.entries) {
+    if (this.entries.has(capability.manifest.name)) {
       throw new Error(`Duplicate capability: ${capability.manifest.name}`);
     }
     this.entries.set(capability.manifest.name, capability);
@@ -67,6 +65,7 @@ export async function discoverCapabilities<Input, Output>(
     globPattern: string;
     root: string;
     exclude?: string[];
+    timeoutMs?: number;
   },
 ): Promise<
   RegistryEntry[]
@@ -81,6 +80,8 @@ export async function discoverCapabilities<Input, Output>(
     })
   ) {
     const capabilityModule = toFileUrl(file.path);
+    const started = performance.now();
+    console.log(`[worker-discovery] Inspecting ${file.name}`);
 
     const sdkPath = Deno.cwd();
     const launcherPath = `${sdkPath}/app/utils/capabilityLauncher.ts`;
@@ -103,37 +104,17 @@ export async function discoverCapabilities<Input, Output>(
       stderr: "piped",
     });
 
-    const child = cmd.spawn();
-
-    let stdoutContent = "";
-    let stderrContent = "";
-
-    const stdoutReader = child.stdout.getReader();
-    const stderrReader = child.stderr.getReader();
-
-    const readStdout = async () => {
-      while (true) {
-        const { done, value } = await stdoutReader.read();
-        if (done) break;
-        stdoutContent += new TextDecoder().decode(value);
-      }
-    };
-
-    const readStderr = async () => {
-      while (true) {
-        const { done, value } = await stderrReader.read();
-        if (done) break;
-        stderrContent += new TextDecoder().decode(value);
-      }
-    };
-
-    await Promise.all([readStdout(), readStderr()]);
-
-    const { code } = await child.status;
-
-    if (code !== 0) {
-      console.error(`Failed to discover capability: ${stderrContent}`);
-      continue;
+    let stdoutContent: string;
+    try {
+      stdoutContent = await readDiscoveryProcess(cmd, {
+        timeoutMs: options.timeoutMs,
+      });
+    } catch (error) {
+      throw new Error(
+        `Could not discover ${file.name}: ${
+          error instanceof Error ? error.message : "child process failed"
+        }`,
+      );
     }
 
     // Find the last line of output which should be the JSON result
@@ -143,7 +124,7 @@ export async function discoverCapabilities<Input, Output>(
     try {
       const resp = JSON.parse(lastLine);
       const manifest = zCapabilityManifest.parse(resp);
-      
+
       // Ensure we have schemas before attempting to use them
       if (manifest.inputSchema) {
         z.fromJSONSchema(manifest.inputSchema);
@@ -151,10 +132,20 @@ export async function discoverCapabilities<Input, Output>(
       if (manifest.outputSchema) {
         z.fromJSONSchema(manifest.outputSchema);
       }
-      
+
+      if (discovered.some((entry) => entry.manifest.name === manifest.name)) {
+        throw new Error("Duplicate manifest name");
+      }
       discovered.push({ manifest, path: capabilityModule });
-    } catch (err) {
-      console.error(`Failed to parse worker output: ${lastLine} ${err}`);
+      console.log(
+        `[worker-discovery] Inspected ${file.name} in ${
+          Math.round(performance.now() - started)
+        } ms`,
+      );
+    } catch {
+      throw new Error(
+        `Invalid or duplicate capability manifest from ${file.name}`,
+      );
     }
   }
 

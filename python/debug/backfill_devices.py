@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from discovery import extract_device_info
 from lib.resources import call_resource
+from lib.config import load_environment
 
 
 def get_device_stats():
@@ -146,6 +147,7 @@ def backfill_device_info(limit=None, verbose=False):
 
 
 def main():
+    load_environment()
     parser = argparse.ArgumentParser(
         description="Backfill device info for voice memo source_files",
         formatter_class=argparse.RawDescriptionHelpFormatter,

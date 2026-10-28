@@ -7,10 +7,6 @@ import random
 from lazy_object_proxy import Proxy as _lazy
 from typing import Callable, TypeVar
 
-import dotenv
-dotenv.load_dotenv('../.env', override=True)
-
-
 T = TypeVar('T')
 
 

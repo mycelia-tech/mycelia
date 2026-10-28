@@ -38,6 +38,12 @@ verification groups clear inherited service credentials and paths, retain only
 explicit tool/runtime settings and request Python 3.12. RAG uses an explicit
 `RAG_ENV_FILE` during verification; see its README for deployment configuration.
 
+Python startup loads the repository `.env` or `MYCELIA_ENV_FILE` explicitly,
+with process environment taking precedence. Shared audio utility imports do
+not reload dotenv. Relative `MYCELIA_ENV_FILE` paths resolve against the
+repository root. See [Python configuration](python/README.md) for standalone
+scripts and notebook callers.
+
 Backend test admission requires the pinned Deno 2.9.5 executable and at least
 5 GiB available on both the checkout and `/tmp` filesystems. Check `deno --version`
 when multiple installations are on PATH. A private per-user OS lock serializes
@@ -263,6 +269,13 @@ Expected readiness records:
 
 The backend `/readiness` endpoint returns `503` while resources and workers are
 starting and `200` only after workers, triggers, and maintenance have started.
+Worker manifest discovery stays sequential to limit startup CPU/RAM. Each child
+has a 60-second deadline and a combined 1 MiB stdout/stderr limit; a timed-out or
+noisy child is killed and reaped. `[worker-discovery] Inspecting` / `Inspected`
+records identify the module and elapsed time. A failed, invalid or duplicate
+manifest aborts discovery before any workers are registered: startup must not
+reach `[READY]` with a partial registry. Failure logs identify the module and
+reason without copying arbitrary module output that could contain credentials.
 An ordinary frontend `src/` edit uses HMR without a full restart. Editing
 `vite.config.ts` restarts Vite and can briefly return `502` until the next
 frontend `[READY]` record. A backend source edit restarts the Deno process and

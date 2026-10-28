@@ -6,6 +6,7 @@ from datetime import datetime, UTC
 import logging
 
 from lib.resources import call_resource
+from lib.config import load_environment
 import time
 from tqdm import tqdm
 import torch
@@ -144,6 +145,7 @@ def run_voice_activity_detection(limit=1000, verbose_logs=False, batch_size=100)
 
 
 if __name__ == "__main__":
+    load_environment()
     while True:
         try:
             run_voice_activity_detection(limit=1000, verbose_logs=True, batch_size=100)

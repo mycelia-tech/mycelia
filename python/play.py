@@ -6,6 +6,7 @@ from pytz import UTC
 from typing import List, Dict, Any
 
 from lib.worker import mongo_cursor
+from lib.config import load_environment
 from chunking import read_codec, array_to_wav, sample_rate
 
 
@@ -203,6 +204,7 @@ def extract_audio(start: datetime, end: datetime, output_path: str = None):
 
 
 if __name__ == '__main__':
+    load_environment()
     parser = argparse.ArgumentParser(description='Extract audio from MongoDB chunks for a time range')
     parser.add_argument('start', type=str, help='Start timestamp (ISO format or Unix timestamp)')
     parser.add_argument('end', type=str, help='End timestamp (ISO format or Unix timestamp)')
