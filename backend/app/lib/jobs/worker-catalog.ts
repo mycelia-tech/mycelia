@@ -224,6 +224,22 @@ export const WORKER_CATALOG: readonly CatalogDefinition[] = [
     { section: "maintenance", progressKind: "geonames" },
   ),
   pipeline(
+    "reitti_sync",
+    "Reitti location sync",
+    "Imports Reitti GPS history and refreshes recent days hourly with resumable checkpoints.",
+    235,
+    {
+      section: "maintenance",
+      capabilities: {
+        manualRun: true,
+        pause: true,
+        schedule: false,
+        concurrency: false,
+        batchSize: false,
+      },
+    },
+  ),
+  pipeline(
     "location_processing",
     "Location processing",
     "Builds movement and timezone records from GPS points.",

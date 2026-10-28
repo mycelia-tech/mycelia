@@ -58,3 +58,11 @@ Deno.test("manual job schemas exclude domain and internal workers", () => {
     transcription: { input: "manual" },
   });
 });
+
+Deno.test("Reitti sync can be run and retried from Jobs", () => {
+  expect(canRunWorkerFromJobs("reitti_sync")).toBe(true);
+  expect(canUseGenericQueueAction("reitti_sync")).toBe(true);
+  expect(manualJobSchemas({ reitti_sync: { type: "reitti_sync" } })).toEqual({
+    reitti_sync: { type: "reitti_sync" },
+  });
+});
