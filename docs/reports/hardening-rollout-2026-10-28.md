@@ -119,6 +119,9 @@ slowness is fixed. No unrelated service, backup, image or volume was removed.
 
 ## Remaining follow-ups
 
+The [later 2026-10-28 follow-up](vad-runtime-followup-2026-10-28.md) resolves the
+first three items below. This list records what remained at this earlier rollout.
+
 - The existing `locationMapProjection` automatic trigger returns a payload
   without `type`; startup reports a validation error. The same defect exists in
   the pre-rollout revision `f3554702`. Fix its payload contract in a small next

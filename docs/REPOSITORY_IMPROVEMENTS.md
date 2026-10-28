@@ -6,6 +6,10 @@ records the authorized deployment, data preservation and observed load. Earlier
 sections below are dated history, not the current deployment state. Mongo
 authentication migration and a verified operator-backup restoration remain separate.
 
+The [subsequent runtime follow-up](reports/vad-runtime-followup-2026-10-28.md)
+fixes the automatic location trigger, activates graceful Mongo shutdown and
+measures/deploys the VAD OpenMP budget.
+
 | Area | Implemented result |
 | --- | --- |
 | Database boundary | No default host port; explicit loopback maintenance overlay; project-scoped Mongo client network and paired RAG configuration |

@@ -1,0 +1,128 @@
+{
+  "baseline": {
+    "audioSecondsPerSample": 25,
+    "ompThreads": null,
+    "modelSha256": "e1122837f4154c511485fe0b9c64455f7b929c96fbb8d79fbdb336383ebd3720",
+    "sampleSha256": "a622cb1cdd8a52db84b0d4bb524fa9a93f9ed387de40530f87c3a57d7493fd49",
+    "samples": [
+      {
+        "wallSeconds": 3.0867960849936935,
+        "cpuSeconds": 6.090027487999999,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      },
+      {
+        "wallSeconds": 4.121181627000624,
+        "cpuSeconds": 7.325743578000001,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      },
+      {
+        "wallSeconds": 3.21451804300159,
+        "cpuSeconds": 6.394095046999999,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      }
+    ],
+    "controlProbabilities": {
+      "silence": 0.00891069695353508,
+      "noise": 0.03922611102461815,
+      "partialWindow": 0.001669795368798077
+    },
+    "torchThreads": 1,
+    "interopThreads": 9
+  },
+  "omp1": {
+    "audioSecondsPerSample": 25,
+    "ompThreads": "1",
+    "modelSha256": "e1122837f4154c511485fe0b9c64455f7b929c96fbb8d79fbdb336383ebd3720",
+    "sampleSha256": "a622cb1cdd8a52db84b0d4bb524fa9a93f9ed387de40530f87c3a57d7493fd49",
+    "samples": [
+      {
+        "wallSeconds": 0.39290416699805064,
+        "cpuSeconds": 0.3928372069999999,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      },
+      {
+        "wallSeconds": 0.4036142079930869,
+        "cpuSeconds": 0.40361108200000007,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      },
+      {
+        "wallSeconds": 0.4080509589985013,
+        "cpuSeconds": 0.40806129,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      }
+    ],
+    "controlProbabilities": {
+      "silence": 0.00891069695353508,
+      "noise": 0.03922611102461815,
+      "partialWindow": 0.001669795368798077
+    },
+    "torchThreads": 1,
+    "interopThreads": 9
+  },
+  "deployed": {
+    "audioSecondsPerSample": 25,
+    "ompThreads": "1",
+    "modelSha256": "e1122837f4154c511485fe0b9c64455f7b929c96fbb8d79fbdb336383ebd3720",
+    "sampleSha256": "a622cb1cdd8a52db84b0d4bb524fa9a93f9ed387de40530f87c3a57d7493fd49",
+    "samples": [
+      {
+        "wallSeconds": 0.43955229200219037,
+        "cpuSeconds": 0.43952787299999985,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      },
+      {
+        "wallSeconds": 0.4104949999964447,
+        "cpuSeconds": 0.4104923330000001,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      },
+      {
+        "wallSeconds": 0.5132769170013489,
+        "cpuSeconds": 0.5131616239999999,
+        "probabilities": [
+          0.999998927116394,
+          0.9999914169311523,
+          0.999997615814209
+        ]
+      }
+    ],
+    "controlProbabilities": {
+      "silence": 0.00891069695353508,
+      "noise": 0.03922611102461815,
+      "partialWindow": 0.001669795368798077
+    },
+    "torchThreads": 1,
+    "interopThreads": 9
+  }
+}
