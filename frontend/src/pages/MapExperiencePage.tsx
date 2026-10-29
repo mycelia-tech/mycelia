@@ -49,10 +49,7 @@ import { ConversationMapPanel } from "@/components/location/ConversationMapPanel
 import { PhotoClustersLayer } from "@/components/location/PhotoClustersLayer";
 import { MapTimeNavigator } from "@/components/location/MapTimeNavigator";
 import { ImportTracksDialog } from "@/components/location/ImportTracksDialog";
-import {
-  RecordedTracksLayer,
-  SavedPlacesLayer,
-} from "@/components/location/LocationSourceLayers";
+import { SavedPlacesLayer } from "@/components/location/LocationSourceLayers";
 import { LocationConflictReviewDialog } from "@/components/location/LocationConflictReviewDialog";
 import { AssignLocationDialog } from "@/components/location/AssignLocationDialog";
 import { GeotagsSheet } from "@/components/location/GeotagsSheet";
@@ -200,6 +197,7 @@ function LayerButton({
       variant={active ? "secondary" : "outline"}
       className="h-8 bg-background/95 shadow-sm"
       onClick={onClick}
+      aria-pressed={active}
     >
       {children}
     </Button>
@@ -305,7 +303,7 @@ const MapExperiencePage = () => {
     end,
     queryViewport?.bounds,
     queryViewport?.zoom ?? 2,
-    layers.has("routes"),
+    layers.has("routes") || layers.has("sourceTracks"),
     layers.has("connectors"),
   );
   const timeline = useMapTimelineSummary();
@@ -387,8 +385,13 @@ const MapExperiencePage = () => {
       const next = new Set(current);
       if (next.has(layer)) next.delete(layer);
       else next.add(layer);
-      if (layer === "routes" && !next.has("routes")) next.delete("connectors");
-      if (layer === "connectors" && next.has("connectors")) next.add("routes");
+      if (layer === "routes" && !next.has("routes")) {
+        next.delete("connectors");
+        next.delete("sourceTracks");
+      }
+      if (
+        (layer === "connectors" || layer === "sourceTracks") && next.has(layer)
+      ) next.add("routes");
       return next;
     });
   };
@@ -567,21 +570,19 @@ const MapExperiencePage = () => {
                   }}
                 />
               )}
-              {layers.has("routes") && (
+              {(layers.has("routes") || layers.has("sourceTracks")) && (
                 <RouteProjectionLayer
                   data={routes.data}
                   showConnectors={layers.has("connectors")}
-                  stale={routes.data?.projection.status === "stale" ||
-                    (routes.isFetching && !routes.isLoading)}
-                />
-              )}
-              {layers.has("sourceTracks") && (
-                <RecordedTracksLayer
-                  tracks={sourceTracks.data?.tracks ?? []}
-                  onSelect={(track) => {
+                  sourceTracks={layers.has("sourceTracks")
+                    ? sourceTracks.data?.tracks ?? []
+                    : undefined}
+                  onSelectTrack={(track) => {
                     closeSelection();
                     setSelectedRecordedTrack(track);
                   }}
+                  stale={routes.data?.projection.status === "stale" ||
+                    (routes.isFetching && !routes.isLoading)}
                 />
               )}
               <SavedPlacesLayer
@@ -613,17 +614,27 @@ const MapExperiencePage = () => {
               >
                 <Route className="mr-1 h-3.5 w-3.5" /> Routes
               </LayerButton>
-              <LayerButton
-                active={layers.has("connectors")}
-                onClick={() => toggleLayer("connectors")}
+              <label
+                className="flex h-8 cursor-pointer items-center gap-2 rounded-md border bg-background/95 px-3 text-xs shadow-sm"
+                title="Straight links across gaps in GPS recording. These are not recorded routes."
               >
-                Unrecorded connections
-              </LayerButton>
+                <input
+                  type="checkbox"
+                  checked={layers.has("connectors")}
+                  onChange={() => toggleLayer("connectors")}
+                  className="accent-slate-500"
+                />
+                <span
+                  className="w-5 border-t-2 border-dashed border-slate-400"
+                  aria-hidden="true"
+                />
+                Show recording gaps
+              </label>
               <LayerButton
                 active={layers.has("sourceTracks")}
                 onClick={() => toggleLayer("sourceTracks")}
               >
-                Source tracks
+                Source colours
               </LayerButton>
               <LayerButton
                 active={layers.has("photos")}
@@ -653,7 +664,8 @@ const MapExperiencePage = () => {
                 index in Jobs.
               </div>
             )}
-            {layers.has("routes") && routes.data &&
+            {(layers.has("routes") || layers.has("sourceTracks")) &&
+              routes.data &&
               !routes.data.projection.ready && (
               <div className="absolute right-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
                 Route detail index is not built yet.
@@ -673,6 +685,24 @@ const MapExperiencePage = () => {
             )}
           </div>
 
+          <div
+            className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground"
+            aria-label="Map route legend"
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="w-5 border-t-2 border-blue-600" />
+              {layers.has("sourceTracks")
+                ? "Recorded sections · source colours"
+                : "Recorded route"}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-5 border-t-2 border-dashed border-slate-400" />Recording
+              gap · route unknown{layers.has("connectors") ? "" : " · hidden"}
+            </span>
+            {layers.has("sourceTracks") && (
+              <span>Source colours distinguish tracks; gaps stay separate</span>
+            )}
+          </div>
           <MapTimeNavigator
             summary={timeline.data}
             start={start}
@@ -762,8 +792,9 @@ const MapExperiencePage = () => {
                     )} source coordinates
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Raw source preview. The blue Routes layer uses
-                    continuity-aware geometry.
+                    Source colours identify recorded tracks within the selected
+                    dates. Recording gaps are hidden unless “Show recording
+                    gaps” is enabled.
                   </p>
                   {selectedRecordedTrack.routeBoundaryCompleteness !==
                       "full" && (

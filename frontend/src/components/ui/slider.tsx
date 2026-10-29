@@ -9,12 +9,13 @@ type SliderProps =
   >
   & {
     thumbLabels?: string[];
+    thumbValueTexts?: string[];
   };
 
 const Slider = React.forwardRef<
   React.ElementRef<typeof SliderPrimitive.Root>,
   SliderProps
->(({ className, thumbLabels, ...props }, ref) => {
+>(({ className, thumbLabels, thumbValueTexts, ...props }, ref) => {
   const thumbCount = props.value?.length ?? props.defaultValue?.length ?? 1;
   return (
     <SliderPrimitive.Root
@@ -32,6 +33,7 @@ const Slider = React.forwardRef<
         <SliderPrimitive.Thumb
           key={index}
           aria-label={thumbLabels?.[index]}
+          aria-valuetext={thumbValueTexts?.[index]}
           className="block h-4 w-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
         />
       ))}

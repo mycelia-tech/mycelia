@@ -1,7 +1,7 @@
 import { CircleMarker, Polyline, Tooltip } from "react-leaflet";
 import type { RecordedLocationTrack, SavedPlace } from "@/types/location";
 
-function sourceColor(raw: string | undefined, fallback: string): string {
+export function sourceColor(raw: string | undefined, fallback: string): string {
   if (!raw) return fallback;
   const value = raw.replace(/^#/, "");
   if (/^[0-9a-f]{8}$/i.test(value)) {

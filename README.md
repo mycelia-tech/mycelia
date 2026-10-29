@@ -980,3 +980,13 @@ Jobs. It imports recent days first, resumes historical batches, and refreshes
 once an hour. Original daily GPX files and import receipts are retained; matching
 points are deduplicated and conflicting coordinates remain reviewable. See
 [Reitti synchronization](docs/REITTI_SYNC.md) for setup and recovery.
+
+### Map history and recording gaps
+
+The map's history chart separates teal **time at stops** and violet
+**conversation counts**, with an independent scale for each row. A single
+range slider has two handles and labelled start/end dates; click a chart bar
+to inspect a moment. **Source colours** colours the same continuity-aware
+recorded sections by source track. **Show recording gaps** is off by default;
+when enabled, faint dashed lines indicate unknown travel between recordings,
+not a recorded route. The map legend explains both line styles.

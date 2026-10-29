@@ -4,7 +4,9 @@ import type {
   ConversationMapCluster,
   MapRouteDetailResponse,
   PresenceMapCluster,
+  RecordedLocationTrack,
 } from "@/types/location";
+import { sourceColor } from "./LocationSourceLayers.tsx";
 import { formatDurationShort } from "./LocationMap.tsx";
 
 function conversationIcon(count: number, stale: boolean): L.DivIcon {
@@ -109,12 +111,19 @@ export function ConversationDensityLayer({
 export function RouteProjectionLayer({
   data,
   showConnectors,
+  sourceTracks,
+  onSelectTrack,
   stale = false,
 }: {
   data: MapRouteDetailResponse | undefined;
   showConnectors: boolean;
+  sourceTracks?: RecordedLocationTrack[];
+  onSelectTrack?: (track: RecordedLocationTrack) => void;
   stale?: boolean;
 }) {
+  const sourceById = new Map(
+    sourceTracks?.map((track) => [String(track._id), track]),
+  );
   const conflictedTracks = new Set(
     (data?.conflicts ?? []).flatMap((conflict) =>
       conflict.trackIds.map(String)
@@ -124,12 +133,24 @@ export function RouteProjectionLayer({
     <>
       {(data?.fragments ?? []).map((fragment) => {
         const conflicted = conflictedTracks.has(String(fragment.trackId));
+        const source = sourceById.get(String(fragment.trackId));
+        const sourceHue = [...String(fragment.trackId)].reduce((hash, char) =>
+          (hash * 31 + char.charCodeAt(0)) >>> 0, 0) % 360;
+        const color = sourceTracks
+          ? sourceColor(source?.style?.color, `hsl(${sourceHue} 65% 45%)`)
+          : "#2563eb";
         return (
           <Polyline
             key={fragment.id}
+            eventHandlers={source && onSelectTrack
+              ? {
+                click: () =>
+                  onSelectTrack(source),
+              }
+              : undefined}
             positions={fragment.path.map(([lng, lat]) => [lat, lng])}
             pathOptions={{
-              color: conflicted ? "#f59e0b" : "#2563eb",
+              color: conflicted ? "#f59e0b" : color,
               weight: conflicted ? 4 : 3,
               opacity: stale ? 0.38 : 0.82,
             }}
@@ -151,13 +172,14 @@ export function RouteProjectionLayer({
           ]}
           pathOptions={{
             color: "#9ca3af",
-            weight: 2,
-            dashArray: "5 6",
-            opacity: stale ? 0.3 : 0.66,
+            weight: 1.25,
+            dashArray: "4 8",
+            opacity: stale ? 0.15 : 0.3,
           }}
         >
           <Tooltip sticky>
-            Unrecorded connection · {connector.reason.replaceAll("_", " ")}
+            Recording gap — route unknown ·{" "}
+            {connector.reason.replaceAll("_", " ")}
             {" · "}
             {(connector.distanceM / 1000).toFixed(1)} km
           </Tooltip>

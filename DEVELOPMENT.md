@@ -1748,3 +1748,18 @@ Map tiles require an origin Referer. nginx sends
 `Referrer-Policy: strict-origin-when-cross-origin`, so HTTPS tile requests receive
 only the app origin, not map paths or coordinate query parameters. This follows
 the [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/).
+
+### Map history and continuity display
+
+`MapTimeNavigator` displays separate dwell-time and conversation histogram rows,
+with independent scales and one two-handle date range control. Range changes
+commit on release; dates update while dragging. Accessible thumbs announce the
+selected date/time. Chart tooltips show the actual values for each bucket.
+
+`MapExperiencePage` uses `RouteProjectionLayer` for both Routes and Source colours.
+Do not overlay raw `RecordedTracksLayer` previews here: they can join recording
+gaps and ignore the selected time window. Source metadata supplies colours and
+selection details only. Optional recording-gap connectors remain separate,
+faint dashed geometry; `layers=connectors` controls their visibility in the URL.
+Regression checks cover separated source fragments, connector styling, histogram
+labels, range interaction, and the existing focused-photo navigation.

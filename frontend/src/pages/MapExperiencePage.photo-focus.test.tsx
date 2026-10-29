@@ -103,7 +103,7 @@ vi.mock("@/components/location/PhotoClustersLayer", () => ({
 vi.mock("@/components/location/MapProjectionLayers", () => ({
   ConversationDensityLayer: () => null,
   PresenceDensityLayer: () => null,
-  RouteProjectionLayer: () => null,
+  RouteProjectionLayer: () => <div data-testid="projected-route-layer" />,
 }));
 vi.mock("@/components/location/ConversationMapPanel", () => ({
   ConversationMapPanel: () => null,
@@ -151,6 +151,41 @@ describe("Map photo focus", () => {
       {},
       "",
       "/map?photoAssetId=photo-1&start=100&end=200&layers=routes",
+    );
+  });
+
+  it("hides source-coloured routes with Routes and enables routes for gap display", async () => {
+    history.replaceState({}, "", "/map?layers=routes,sourceTracks");
+    render(
+      <BrowserRouter>
+        <MapExperiencePage />
+      </BrowserRouter>,
+    );
+    expect(screen.getByTestId("projected-route-layer")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Routes", exact: true }),
+    );
+    expect(screen.queryByTestId("projected-route-layer")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Source colours" }).getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("false");
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Show recording gaps" }),
+    );
+    expect(screen.getByTestId("projected-route-layer")).toBeTruthy();
+    await waitFor(() =>
+      expect(new URLSearchParams(location.search).get("layers")).toContain(
+        "connectors",
+      )
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Show recording gaps" }),
+    );
+    expect(screen.getByTestId("projected-route-layer")).toBeTruthy();
+    await waitFor(() =>
+      expect(new URLSearchParams(location.search).get("layers")).toBe("routes")
     );
   });
 
