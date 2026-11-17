@@ -179,9 +179,18 @@ export function RouteProjectionLayer({
         >
           <Tooltip sticky>
             Recording gap — route unknown ·{" "}
-            {connector.reason.replaceAll("_", " ")}
+            {connector.reason === "distance_threshold"
+              ? "GPS fixes too far apart"
+              : connector.reason === "time_threshold"
+              ? "GPS fixes too far apart in time"
+              : connector.reason.replaceAll("_", " ")}
             {" · "}
-            {(connector.distanceM / 1000).toFixed(1)} km
+            {connector.distanceM < 1000
+              ? `${connector.distanceM} m`
+              : `${(connector.distanceM / 1000).toFixed(1)} km`}
+            {connector.durationMs !== undefined &&
+              connector.durationMs > 0 &&
+              ` · ${formatDurationShort(connector.durationMs)}`}
           </Tooltip>
         </Polyline>
       ))}

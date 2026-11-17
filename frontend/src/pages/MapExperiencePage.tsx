@@ -62,6 +62,22 @@ import type {
 } from "@/types/location";
 import { formatPlace, segmentDurationMs } from "@/types/location";
 
+const GAP_DISTANCES_M = [100, 200, 300, 500, 1000, 2000];
+const GAP_MINUTES = [1, 2, 5, 10, 30];
+const DEFAULT_GAP_DISTANCE_M = 300;
+const DEFAULT_GAP_MINUTES = 2;
+
+function readGapThresholds(params: URLSearchParams) {
+  const distance = Number(params.get("gapM"));
+  const minutes = Number(params.get("gapMin"));
+  return {
+    gapDistanceM: GAP_DISTANCES_M.includes(distance)
+      ? distance
+      : DEFAULT_GAP_DISTANCE_M,
+    gapMinutes: GAP_MINUTES.includes(minutes) ? minutes : DEFAULT_GAP_MINUTES,
+  };
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const MAP_LAYERS = [
   "presence",
@@ -98,6 +114,7 @@ export function readMapUrlState() {
         "photos",
       ]),
       at: undefined as Date | undefined,
+      ...readGapThresholds(new URLSearchParams()),
     };
   }
   const params = new URLSearchParams(window.location.search);
@@ -125,6 +142,7 @@ export function readMapUrlState() {
         ? requestedLayers
         : ["presence", "conversations", "routes", "photos"],
     ),
+    ...readGapThresholds(params),
     at: Number.isFinite(atValue) && atValue > 0 ? new Date(atValue) : undefined,
   };
 }
@@ -156,6 +174,8 @@ export function updateMapUrl(
   viewport: { center: [number, number]; zoom: number } | null,
   layers: Set<MapLayer>,
   at?: Date,
+  gapDistanceM = DEFAULT_GAP_DISTANCE_M,
+  gapMinutes = DEFAULT_GAP_MINUTES,
 ) {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -170,6 +190,10 @@ export function updateMapUrl(
   );
   if (at) url.searchParams.set("at", String(at.getTime()));
   else url.searchParams.delete("at");
+  if (gapDistanceM === DEFAULT_GAP_DISTANCE_M) url.searchParams.delete("gapM");
+  else url.searchParams.set("gapM", String(gapDistanceM));
+  if (gapMinutes === DEFAULT_GAP_MINUTES) url.searchParams.delete("gapMin");
+  else url.searchParams.set("gapMin", String(gapMinutes));
   window.history.replaceState({}, "", url);
 }
 
@@ -215,6 +239,8 @@ const MapExperiencePage = () => {
     [location.search],
   );
   const { start, end, setRange } = useTimelineRange();
+  const [gapDistanceM, setGapDistanceM] = useState(initialUrl.gapDistanceM);
+  const [gapMinutes, setGapMinutes] = useState(initialUrl.gapMinutes);
   const [layers, setLayers] = useState(initialUrl.layers);
   const [viewport, setViewport] = useState<
     {
@@ -305,6 +331,8 @@ const MapExperiencePage = () => {
     queryViewport?.zoom ?? 2,
     layers.has("routes") || layers.has("sourceTracks"),
     layers.has("connectors"),
+    gapDistanceM,
+    gapMinutes,
   );
   const timeline = useMapTimelineSummary();
   const locationAt = useLocationAt(cursorTime, !!cursorTime);
@@ -315,13 +343,15 @@ const MapExperiencePage = () => {
   const routeConflicts = useLocationRouteConflicts("pending", true);
 
   useEffect(() => {
-    updateMapUrl(viewport, layers, cursorTime);
+    updateMapUrl(viewport, layers, cursorTime, gapDistanceM, gapMinutes);
   }, [
     viewport?.center[0],
     viewport?.center[1],
     viewport?.zoom,
     layers,
     cursorTime?.getTime(),
+    gapDistanceM,
+    gapMinutes,
   ]);
 
   useEffect(() => {
@@ -358,6 +388,8 @@ const MapExperiencePage = () => {
       const next = readMapUrlState();
       setLayers(next.layers);
       setCursorTime(next.at);
+      setGapDistanceM(next.gapDistanceM);
+      setGapMinutes(next.gapMinutes);
       if (next.viewport) {
         setFitToSegments(false);
         setViewport(next.viewport);
@@ -673,7 +705,7 @@ const MapExperiencePage = () => {
             )}
             {routes.data?.detailLimited && (
               <div className="absolute right-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
-                Zoom in for full detail
+                Some sections omitted · zoom in or shorten the period
               </div>
             )}
             {(routes.data?.conflicts.length ?? 0) > 0 && (
@@ -699,8 +731,45 @@ const MapExperiencePage = () => {
               <span className="w-5 border-t-2 border-dashed border-slate-400" />Recording
               gap · route unknown{layers.has("connectors") ? "" : " · hidden"}
             </span>
-            {layers.has("sourceTracks") && (
-              <span>Source colours distinguish tracks; gaps stay separate</span>
+            {(layers.has("routes") || layers.has("sourceTracks")) && (
+              <div
+                className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                title="Split a route when consecutive GPS fixes exceed either limit. Time applies only when both fixes have timestamps."
+              >
+                <span>Gap if fixes are more than</span>
+                <label>
+                  <span className="sr-only">Gap distance threshold</span>
+                  <select
+                    className="rounded border bg-background px-1 py-0.5 text-foreground"
+                    value={gapDistanceM}
+                    onChange={(e) => setGapDistanceM(Number(e.target.value))}
+                  >
+                    {GAP_DISTANCES_M.map((value) => (
+                      <option key={value} value={value}>{value} m</option>
+                    ))}
+                  </select>
+                </label>
+                <span>apart or</span>
+                <label>
+                  <span className="sr-only">Gap time threshold</span>
+                  <select
+                    className="rounded border bg-background px-1 py-0.5 text-foreground"
+                    value={gapMinutes}
+                    onChange={(e) => setGapMinutes(Number(e.target.value))}
+                  >
+                    {GAP_MINUTES.map((value) => (
+                      <option key={value} value={value}>{value} min</option>
+                    ))}
+                  </select>
+                </label>
+                <span>between fixes</span>
+                {routes.isFetching && (
+                  <span role="status">Updating routes…</span>
+                )}
+                {routes.isError && (
+                  <span role="status">Could not load routes</span>
+                )}
+              </div>
             )}
           </div>
           <MapTimeNavigator

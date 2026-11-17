@@ -436,7 +436,9 @@ export interface MapRouteConnector {
     | "non_increasing_time"
     | "silence"
     | "teleport"
-    | "sparse_jump";
+    | "sparse_jump"
+    | "distance_threshold"
+    | "time_threshold";
   distanceM: number;
   durationMs?: number;
   from: { coordinates: [number, number]; ts?: Date | string };

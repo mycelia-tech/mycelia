@@ -1761,5 +1761,9 @@ Do not overlay raw `RecordedTracksLayer` previews here: they can join recording
 gaps and ignore the selected time window. Source metadata supplies colours and
 selection details only. Optional recording-gap connectors remain separate,
 faint dashed geometry; `layers=connectors` controls their visibility in the URL.
-Regression checks cover separated source fragments, connector styling, histogram
-labels, range interaction, and the existing focused-photo navigation.
+`map-route-detail` uses the original indexed points at every zoom. It splits
+them at the selected distance or time limit before clipping and simplifying
+each continuous section. The settings are stored in `gapM` and `gapMin`.
+Budget limits omit sections and mark the response as limited; the map no longer
+falls back to a point-stride overview that can draw shortcuts across a route.
+Display thresholds do not alter the source or require rebuilding the route index.

@@ -73,6 +73,8 @@ export const locationKeys = {
     bounds: MapBounds | undefined,
     zoom: number,
     connectors: boolean,
+    gapDistanceM: number,
+    gapMinutes: number,
   ) =>
     [
       ...locationKeys.all,
@@ -82,6 +84,8 @@ export const locationKeys = {
       bounds,
       Math.round(zoom * 10) / 10,
       connectors,
+      gapDistanceM,
+      gapMinutes,
     ] as const,
   mapTimeline: () => [...locationKeys.all, "mapTimeline"] as const,
   mapClusterGroups: (
@@ -191,6 +195,8 @@ export function useMapRouteDetail(
   zoom: number,
   enabled: boolean,
   includeConnectors: boolean,
+  gapDistanceM: number,
+  gapMinutes: number,
 ) {
   return useQuery<MapRouteDetailResponse>({
     queryKey: locationKeys.mapRoutes(
@@ -199,6 +205,8 @@ export function useMapRouteDetail(
       bounds,
       zoom,
       includeConnectors,
+      gapDistanceM,
+      gapMinutes,
     ),
     queryFn: ({ signal }) =>
       callResource("location", {
@@ -208,10 +216,11 @@ export function useMapRouteDetail(
         bounds,
         zoom,
         includeConnectors,
+        gapDistanceM,
+        gapMinutes,
       }, { signal }),
     enabled: enabled && !!bounds,
     staleTime: 30 * 1000,
-    placeholderData: (previous) => previous,
   });
 }
 

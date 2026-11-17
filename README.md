@@ -989,4 +989,7 @@ range slider has two handles and labelled start/end dates; click a chart bar
 to inspect a moment. **Source colours** colours the same continuity-aware
 recorded sections by source track. **Show recording gaps** is off by default;
 when enabled, faint dashed lines indicate unknown travel between recordings,
-not a recorded route. The map legend explains both line styles.
+not a recorded route. In the legend, adjust the distance and time limits for
+consecutive GPS fixes (300 m or 2 min by default). Time applies only to pairs
+with timestamps. The map link preserves your limits. If the map omits sections,
+zoom in or shorten the selected period to see more.

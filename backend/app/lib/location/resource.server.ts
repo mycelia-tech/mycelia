@@ -21,6 +21,8 @@ import {
   getMapTimelineSummary,
 } from "@/lib/location/conversation-map.server.ts";
 import {
+  DEFAULT_GAP_DISTANCE_M,
+  DEFAULT_GAP_MINUTES,
   getMapRouteDetail,
   listRouteConflicts,
   resolveRouteConflict,
@@ -192,6 +194,10 @@ const mapRouteDetailSchema = z.object({
   bounds: mapBoundsSchema,
   zoom: z.number().min(0).max(24),
   includeConnectors: z.boolean().default(false),
+  gapDistanceM: z.number().int().min(100).max(2000).default(
+    DEFAULT_GAP_DISTANCE_M,
+  ),
+  gapMinutes: z.number().int().min(1).max(30).default(DEFAULT_GAP_MINUTES),
 });
 
 const mapTimelineSummarySchema = z.object({

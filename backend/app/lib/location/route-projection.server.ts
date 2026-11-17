@@ -5,6 +5,7 @@ import {
   detectRouteSeriesConflict,
   projectRoute,
   type RouteBreak,
+  routeDistanceM,
   type RoutePoint,
 } from "./route-projection.ts";
 
@@ -18,7 +19,10 @@ const TRACKS = "location_tracks";
 const SOURCE_GEOMETRY = "location_track_geometry";
 const GEOMETRY_CHUNK_SIZE = 2_000;
 const OVERVIEW_POINTS = 500;
-const DETAIL_POINT_LIMIT = 50_000;
+const ROUTE_INPUT_POINT_LIMIT = 350_000;
+const ROUTE_INPUT_FRAGMENT_LIMIT = 1_500;
+export const DEFAULT_GAP_DISTANCE_M = 300;
+export const DEFAULT_GAP_MINUTES = 2;
 const MAP_GEOMETRY_PAYLOAD_BUDGET = 200 * 1024;
 
 type RouteState = {
@@ -75,38 +79,6 @@ function decimate(points: RoutePoint[], budget: number): [number, number][] {
     result.push(points[Math.round(index * stride)].coordinates);
   }
   return result;
-}
-
-function decimatePath(
-  points: [number, number][],
-  budget: number,
-): [number, number][] {
-  if (points.length <= budget) return points;
-  const result: [number, number][] = [];
-  const stride = (points.length - 1) / (budget - 1);
-  for (let index = 0; index < budget; index++) {
-    result.push(points[Math.round(index * stride)]);
-  }
-  return result;
-}
-
-function fitGeometryPayload<T extends { path: [number, number][] }>(
-  rows: T[],
-): T[] {
-  let fitted = rows;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const bytes = new TextEncoder().encode(JSON.stringify(fitted)).byteLength;
-    if (bytes <= MAP_GEOMETRY_PAYLOAD_BUDGET) return fitted;
-    const ratio = Math.max(0.05, MAP_GEOMETRY_PAYLOAD_BUDGET / bytes * 0.85);
-    fitted = fitted.map((row) => ({
-      ...row,
-      path: decimatePath(
-        row.path,
-        Math.max(2, Math.floor(row.path.length * ratio)),
-      ),
-    }));
-  }
-  return fitted;
 }
 
 function pointBounds(points: RoutePoint[]): MapBounds {
@@ -486,14 +458,20 @@ function clipRuns(points: RoutePoint[], bounds: MapBounds): RoutePoint[][] {
   return runs;
 }
 
-function simplifyRun(points: RoutePoint[], zoom: number): [number, number][] {
-  if (points.length <= 2) return points.map((point) => point.coordinates);
+function simplifyRun(
+  points: RoutePoint[],
+  zoom: number,
+  pixels: number,
+): [number, number][] {
   const latitude =
     points.reduce((total, point) => total + point.coordinates[1], 0) /
     points.length;
   const metersPerPixel = 156543.03392 * Math.cos(latitude * Math.PI / 180) /
     2 ** zoom;
-  const toleranceDegrees = Math.max(0.0000001, metersPerPixel * 0.75 / 111_320);
+  const toleranceDegrees = Math.max(
+    0.0000001,
+    metersPerPixel * pixels / 111_320,
+  );
   const scaleX = Math.max(0.01, Math.cos(latitude * Math.PI / 180));
   const simplified = simplify(
     points.map((point) => ({
@@ -503,7 +481,79 @@ function simplifyRun(points: RoutePoint[], zoom: number): [number, number][] {
     toleranceDegrees,
     true,
   );
-  return simplified.map((point) => [point.x / scaleX, point.y]);
+  const round = (n: number) => Math.round(n * 1e6) / 1e6;
+  return simplified.map((point) => [round(point.x / scaleX), round(point.y)]);
+}
+
+type DisplayConnector = {
+  _id: string;
+  reason: "distance_threshold" | "time_threshold";
+  distanceM: number;
+  durationMs?: number;
+  from: { coordinates: [number, number]; ts?: Date };
+  to: { coordinates: [number, number]; ts?: Date };
+};
+
+type StoredConnector = Omit<DisplayConnector, "_id" | "reason"> & {
+  _id: string;
+  trackId: unknown;
+  reason: RouteBreak["reason"];
+};
+
+export function splitDisplayRuns(
+  points: RoutePoint[],
+  { id, start, end, distanceM, durationMs, collectConnectors = true }: {
+    id: string;
+    start: Date;
+    end: Date;
+    distanceM: number;
+    durationMs: number;
+    collectConnectors?: boolean;
+  },
+): { runs: RoutePoint[][]; connectors: DisplayConnector[] } {
+  const runs: RoutePoint[][] = [];
+  const connectors: DisplayConnector[] = [];
+  let run: RoutePoint[] = [];
+  const flush = () => {
+    if (run.length > 1) runs.push(run);
+    run = [];
+  };
+  for (const point of points) {
+    if (point.ts && (point.ts < start || point.ts > end)) {
+      flush();
+      continue;
+    }
+    const previous = run.at(-1);
+    if (previous) {
+      const distance = routeDistanceM(previous, point);
+      const duration = previous.ts && point.ts
+        ? point.ts.getTime() - previous.ts.getTime()
+        : undefined;
+      const byDistance = distance > distanceM;
+      if (
+        point.index !== previous.index + 1 || byDistance ||
+        (duration !== undefined && duration > durationMs)
+      ) {
+        if (
+          collectConnectors && point.index === previous.index + 1 &&
+          distance >= 1
+        ) {
+          connectors.push({
+            _id: `${id}:display-gap:${point.index}`,
+            reason: byDistance ? "distance_threshold" : "time_threshold",
+            distanceM: Math.round(distance),
+            ...(duration !== undefined ? { durationMs: duration } : {}),
+            from: { coordinates: previous.coordinates, ts: previous.ts },
+            to: { coordinates: point.coordinates, ts: point.ts },
+          });
+        }
+        flush();
+      }
+    }
+    run.push(point);
+  }
+  flush();
+  return { runs, connectors };
 }
 
 export async function getMapRouteDetail(
@@ -514,6 +564,8 @@ export async function getMapRouteDetail(
     bounds: MapBounds;
     zoom: number;
     includeConnectors: boolean;
+    gapDistanceM?: number;
+    gapMinutes?: number;
   },
 ) {
   const state = await db.collection<RouteState>(LOCATION_ROUTE_STATE).findOne({
@@ -539,7 +591,10 @@ export async function getMapRouteDetail(
       { timeStart: { $exists: false } },
       { timeStart: { $lte: input.end }, timeEnd: { $gte: input.start } },
     ],
-  } as never).toArray();
+  } as never, {
+    projection: { overview: 0, bounds: 0, sourceRefs: 0 },
+    sort: { timeEnd: -1, _id: 1 },
+  }).toArray();
   const overlappingConflicts = await db.collection(LOCATION_ROUTE_CONFLICTS)
     .find({
       status: { $in: ["pending", "resolved"] },
@@ -560,76 +615,75 @@ export async function getMapRouteDetail(
     !hiddenTrackIds.has(String(row.trackId)) &&
     intersects(row.bbox, input.bounds)
   );
-  const overview = fitGeometryPayload(visible.map((row) => ({
-    id: row._id,
-    trackId: row.trackId,
-    fragmentIndex: row.fragmentIndex,
-    path: row.overview,
-    pointCount: row.pointCount,
-    displayName: row.displayName,
-    sourceRefs: row.sourceRefs,
-    timeStart: row.timeStart,
-    timeEnd: row.timeEnd,
-  })));
-  let fragments = overview;
-  let lod: "overview" | "detail" = "overview";
+  // Use only consecutive, original fixes for display cuts. The stored
+  // overview samples by stride and can draw shortcuts through whole blocks.
+  const candidates: FragmentRow[] = [];
+  let inputPoints = 0;
   let detailLimited = false;
-  if (input.zoom >= 14 && visible.length > 0) {
-    const geometry = await db.collection(LOCATION_ROUTE_GEOMETRY).find({
+  for (const row of visible) {
+    if (
+      candidates.length >= ROUTE_INPUT_FRAGMENT_LIMIT ||
+      (candidates.length > 0 &&
+        inputPoints + row.pointCount > ROUTE_INPUT_POINT_LIMIT)
+    ) {
+      detailLimited = true;
+      continue;
+    }
+    candidates.push(row);
+    inputPoints += row.pointCount;
+  }
+  if (inputPoints > ROUTE_INPUT_POINT_LIMIT) detailLimited = true;
+  const byFragment = new Map<string, RoutePoint[]>();
+  if (candidates.length > 0) {
+    const cursor = db.collection<
+      { points: RoutePoint[]; trackId: unknown; fragmentIndex: number }
+    >(
+      LOCATION_ROUTE_GEOMETRY,
+    ).find({
       generation: state.activeGeneration,
-      $or: visible.map((row) => ({
+      $or: candidates.map((row) => ({
         trackId: row.trackId,
         fragmentIndex: row.fragmentIndex,
       })),
-    }, { sort: { trackId: 1, fragmentIndex: 1, chunkIndex: 1 } }).toArray();
-    const byFragment = new Map<string, RoutePoint[]>();
-    for (const row of geometry as any[]) {
+    }, {
+      projection: { points: 1, trackId: 1, fragmentIndex: 1 },
+      sort: { trackId: 1, fragmentIndex: 1, chunkIndex: 1 },
+    });
+    let remaining = ROUTE_INPUT_POINT_LIMIT;
+    for await (const row of cursor) {
       const key = `${String(row.trackId)}:${row.fragmentIndex}`;
-      byFragment.set(key, [
-        ...(byFragment.get(key) ?? []),
-        ...(row.points ?? []).map((point: any) => ({
-          ...point,
-          ...(point.ts ? { ts: new Date(point.ts) } : {}),
-        })),
-      ]);
-    }
-    const buffered = bufferedBounds(input.bounds, input.zoom);
-    const detailed: any[] = [];
-    let pointCount = 0;
-    for (const row of visible) {
-      const points =
-        byFragment.get(`${String(row.trackId)}:${row.fragmentIndex}`) ?? [];
-      for (const [runIndex, run] of clipRuns(points, buffered).entries()) {
-        const path = simplifyRun(run, input.zoom);
-        pointCount += path.length;
-        detailed.push({
-          id: `${row._id}:${runIndex}`,
-          trackId: row.trackId,
-          fragmentIndex: row.fragmentIndex,
-          path,
-          pointCount: run.length,
-          displayName: row.displayName,
-          sourceRefs: row.sourceRefs,
-          timeStart: row.timeStart,
-          timeEnd: row.timeEnd,
-        });
-      }
-    }
-    const detailBytes = new TextEncoder().encode(JSON.stringify(detailed))
-      .byteLength;
-    if (
-      pointCount <= DETAIL_POINT_LIMIT &&
-      detailBytes <= MAP_GEOMETRY_PAYLOAD_BUDGET
-    ) {
-      fragments = detailed;
-      lod = "detail";
-    } else {
-      detailLimited = true;
+      const points = byFragment.get(key) ?? [];
+      const batch = row.points.slice(0, remaining);
+      points.push(...batch);
+      byFragment.set(key, points);
+      remaining -= batch.length;
+      if (remaining === 0) break;
     }
   }
-  const connectors = (await (
-    input.includeConnectors
-      ? db.collection(LOCATION_ROUTE_BREAKS).find({
+  const buffered = bufferedBounds(input.bounds, input.zoom);
+  const displayRuns: Array<{ row: FragmentRow; run: RoutePoint[] }> = [];
+  const MAX_MAP_CONNECTORS = 400;
+  const connectors: Array<DisplayConnector | StoredConnector> = [];
+  const addConnector = (connector: typeof connectors[number]) => {
+    if (
+      !intersects(
+        pointBounds([
+          { index: 0, coordinates: connector.from.coordinates },
+          { index: 1, coordinates: connector.to.coordinates },
+        ]),
+        input.bounds,
+      )
+    ) return;
+    if (connectors.length >= MAX_MAP_CONNECTORS) {
+      detailLimited = true;
+      return;
+    }
+    connectors.push(connector);
+  };
+  // Reserve room for both indexed breaks and gaps detected by display thresholds.
+  if (input.includeConnectors) {
+    const storedGaps = db.collection<StoredConnector>(LOCATION_ROUTE_BREAKS)
+      .find({
         generation: state.activeGeneration,
         $or: [
           { "from.ts": { $exists: false } },
@@ -637,15 +691,79 @@ export async function getMapRouteDetail(
           { "to.ts": { $lte: input.end }, "from.ts": { $gte: input.start } },
         ],
       }, {
-        projection: { reason: 1, distanceM: 1, durationMs: 1, from: 1, to: 1 },
-      }).toArray()
-      : Promise.resolve([])
-  )).filter((connector: any) => {
-    const connectorBounds = pointBounds([
-      { index: 0, coordinates: connector.from.coordinates },
-      { index: 1, coordinates: connector.to.coordinates },
-    ]);
-    return intersects(connectorBounds, input.bounds);
+        projection: {
+          trackId: 1,
+          reason: 1,
+          distanceM: 1,
+          durationMs: 1,
+          from: 1,
+          to: 1,
+        },
+      });
+    for await (const connector of storedGaps) {
+      if (hiddenTrackIds.has(String(connector.trackId))) continue;
+      addConnector(connector);
+      if (connectors.length >= MAX_MAP_CONNECTORS / 4) {
+        detailLimited = true;
+        break;
+      }
+    }
+  }
+  for (const row of candidates) {
+    const points =
+      byFragment.get(`${String(row.trackId)}:${row.fragmentIndex}`) ?? [];
+    const split = splitDisplayRuns(points, {
+      id: row._id,
+      start: input.start,
+      end: input.end,
+      distanceM: input.gapDistanceM ?? DEFAULT_GAP_DISTANCE_M,
+      durationMs: (input.gapMinutes ?? DEFAULT_GAP_MINUTES) * 60_000,
+      collectConnectors: input.includeConnectors,
+    });
+    for (const run of split.runs) {
+      for (const clipped of clipRuns(run, buffered)) {
+        displayRuns.push({ row, run: clipped });
+      }
+    }
+    if (input.includeConnectors) split.connectors.forEach(addConnector);
+  }
+  const makeFragments = (pixels: number) =>
+    displayRuns.flatMap(({ row, run }) => {
+      const path = simplifyRun(run, input.zoom, pixels);
+      // Share endpoints across response chunks, without adding a new edge.
+      const parts = [];
+      for (let offset = 0; offset < path.length - 1; offset += 1024) {
+        parts.push({
+          id: `${row.trackId}:${row.fragmentIndex}:${run[0].index}:${offset}`,
+          trackId: row.trackId,
+          fragmentIndex: row.fragmentIndex,
+          path: path.slice(offset, offset + 1025),
+          pointCount: run.length,
+          displayName: row.displayName,
+          timeStart: run[0].ts,
+          timeEnd: run.at(-1)?.ts,
+        });
+      }
+      return parts;
+    });
+  const encoder = new TextEncoder();
+  const byteSize = (row: unknown) =>
+    encoder.encode(JSON.stringify(row)).byteLength + 1;
+  let fragments = makeFragments(0.75);
+  const sumBytes = (rows: unknown[]) =>
+    rows.reduce<number>((total, row) => total + byteSize(row), 2);
+  if (sumBytes(fragments) > MAP_GEOMETRY_PAYLOAD_BUDGET) {
+    fragments = makeFragments(1.5);
+  }
+  let remainingBytes = MAP_GEOMETRY_PAYLOAD_BUDGET;
+  fragments = fragments.filter((row) => {
+    const bytes = byteSize(row);
+    if (bytes > remainingBytes) {
+      detailLimited = true;
+      return false;
+    }
+    remainingBytes -= bytes;
+    return true;
   });
   const conflicts = overlappingConflicts.filter((conflict: any) =>
     conflict.status === "pending"
@@ -660,7 +778,7 @@ export async function getMapRouteDetail(
     fragments,
     connectors,
     conflicts,
-    lod,
+    lod: "detail",
     detailLimited,
   };
 }
