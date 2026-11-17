@@ -584,6 +584,7 @@ const MapExperiencePage = () => {
                 <PhotoClustersLayer
                   focusedAssetId={focusedPhotoAssetId}
                   onFocusedAssetClose={closeFocusedPhoto}
+                  fitOnLoad={!initialUrl.viewport}
                 />
               )}
               {layers.has("presence") && showPresenceClusters && (

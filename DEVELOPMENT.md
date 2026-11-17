@@ -1767,3 +1767,5 @@ each continuous section. The settings are stored in `gapM` and `gapMin`.
 Budget limits omit sections and mark the response as limited; the map no longer
 falls back to a point-stride overview that can draw shortcuts across a route.
 Display thresholds do not alter the source or require rebuilding the route index.
+When a map link already has a viewport, Photos starts with a bounded query
+and does not auto-fit the map to the entire collection.

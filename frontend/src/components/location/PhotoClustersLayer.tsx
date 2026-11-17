@@ -102,6 +102,7 @@ export function PhotoClustersLayer({
   onStats,
   focusedAssetId,
   onFocusedAssetClose,
+  fitOnLoad = true,
 }: {
   onStats?: (stats: {
     totalPlaced: number;
@@ -111,6 +112,7 @@ export function PhotoClustersLayer({
   }) => void;
   focusedAssetId?: string;
   onFocusedAssetClose?: () => void;
+  fitOnLoad?: boolean;
 }) {
   const map = useMap();
   const fittedOnce = useRef(false);
@@ -137,7 +139,7 @@ export function PhotoClustersLayer({
     const serial = ++loadSerial.current;
     try {
       const bounds = map.getBounds();
-      const initialLoad = !fittedOnce.current;
+      const initialLoad = fitOnLoad && !fittedOnce.current;
       const result = await callResource("media-library", {
         action: "map",
         ...(initialLoad ? {} : {
@@ -186,7 +188,7 @@ export function PhotoClustersLayer({
         },
       });
     }
-  }, [focusedAssetId, map, onStats]);
+  }, [fitOnLoad, focusedAssetId, map, onStats]);
 
   useEffect(() => {
     void load();

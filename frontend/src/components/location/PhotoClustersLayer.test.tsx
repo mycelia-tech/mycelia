@@ -134,6 +134,22 @@ describe("PhotoClustersLayer", () => {
     mocks.state.maxZoom = 18;
   });
 
+  it("loads photos inside a saved viewport without fitting to all photos", async () => {
+    mocks.callResource.mockResolvedValueOnce({
+      points,
+      totalPlaced: points.length,
+    });
+    render(<PhotoClustersLayer fitOnLoad={false} />);
+    await screen.findByRole("button", { name: /2 photos near this location/i });
+    await waitFor(() =>
+      expect(mocks.callResource).toHaveBeenCalledWith(
+        "media-library",
+        expect.objectContaining({ action: "map", bounds: expect.any(Object) }),
+      )
+    );
+    expect(mocks.fitBounds).not.toHaveBeenCalled();
+  });
+
   it("zooms a merged low-zoom marker to its bounded cluster", async () => {
     mocks.state.zoom = 12;
     mocks.state.maxZoom = 18;
