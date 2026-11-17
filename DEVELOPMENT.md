@@ -1763,7 +1763,10 @@ selection details only. Optional recording-gap connectors remain separate,
 faint dashed geometry; `layers=connectors` controls their visibility in the URL.
 `map-route-detail` uses the original indexed points at every zoom. It splits
 them at the selected distance or time limit before clipping and simplifying
-each continuous section. The settings are stored in `gapM` and `gapMin`.
+each continuous section. The map remembers edited thresholds and independent
+route and gap opacities in the browser's settings store. Explicit `gapM` and
+`gapMin` in a link override the thresholds for that view. Opening a link
+leaves the saved preferences intact. Opacity changes only affect rendering.
 Budget limits omit sections and mark the response as limited; the map no longer
 falls back to a point-stride overview that can draw shortcuts across a route.
 Display thresholds do not alter the source or require rebuilding the route index.

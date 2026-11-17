@@ -1,7 +1,18 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { BrowserRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createJSONStorage } from "zustand/middleware";
+import {
+  DEFAULT_MAP_ROUTE_DISPLAY,
+  useSettingsStore,
+} from "@/stores/settingsStore";
 import MapExperiencePage from "./MapExperiencePage";
 
 const mocks = vi.hoisted(() => ({
@@ -152,6 +163,59 @@ describe("Map photo focus", () => {
       "",
       "/map?photoAssetId=photo-1&start=100&end=200&layers=routes",
     );
+  });
+
+  it("remembers edited gap limits for a new map and respects shared limits for the current view", async () => {
+    const previous = useSettingsStore.getState().mapRouteDisplay;
+    const previousStorage = useSettingsStore.persist.getOptions().storage;
+    const values = new Map<string, string>();
+    useSettingsStore.persist.setOptions({
+      storage: createJSONStorage(() => ({
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => {
+          values.set(key, value);
+        },
+        removeItem: (key) => {
+          values.delete(key);
+        },
+      })),
+    });
+    const renderMap = () =>
+      render(
+        <BrowserRouter>
+          <MapExperiencePage />
+        </BrowserRouter>,
+      );
+    try {
+      useSettingsStore.getState().setMapRouteDisplay(DEFAULT_MAP_ROUTE_DISPLAY);
+      history.replaceState({}, "", "/map?layers=routes&gapMin=1");
+      const linkedMap = renderMap();
+      const distance = screen.getByLabelText<HTMLSelectElement>(
+        "Gap distance threshold",
+      );
+      const time = screen.getByLabelText<HTMLSelectElement>(
+        "Gap time threshold",
+      );
+      expect([distance.value, time.value]).toEqual(["100", "1"]);
+      fireEvent.change(distance, { target: { value: "50" } });
+      expect(new URLSearchParams(location.search).get("gapM")).toBe("50");
+      linkedMap.unmount();
+
+      await useSettingsStore.persist.rehydrate();
+      history.replaceState({}, "", "/map?layers=routes");
+      renderMap();
+      expect(
+        screen.getByLabelText<HTMLSelectElement>("Gap distance threshold")
+          .value,
+      ).toBe("50");
+      expect(
+        screen.getByLabelText<HTMLSelectElement>("Gap time threshold").value,
+      )
+        .toBe("2");
+    } finally {
+      act(() => useSettingsStore.getState().setMapRouteDisplay(previous));
+      useSettingsStore.persist.setOptions({ storage: previousStorage });
+    }
   });
 
   it("hides source-coloured routes with Routes and enables routes for gap display", async () => {

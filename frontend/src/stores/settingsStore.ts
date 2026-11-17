@@ -18,6 +18,20 @@ type TimeFormat =
   | "si-int"
   | "si-formatted";
 
+export interface MapRouteDisplay {
+  gapDistanceM: number;
+  gapMinutes: number;
+  routeOpacity: number;
+  gapOpacity: number;
+}
+
+export const DEFAULT_MAP_ROUTE_DISPLAY: MapRouteDisplay = {
+  gapDistanceM: 100,
+  gapMinutes: 2,
+  routeOpacity: 82,
+  gapOpacity: 30,
+};
+
 interface SettingsState {
   apiEndpoint: string;
   clientId: string;
@@ -40,6 +54,7 @@ interface SettingsState {
   volume: number;
   autoSave: boolean;
   mapTileUrl: string;
+  mapRouteDisplay: MapRouteDisplay;
   setApiEndpoint: (endpoint: string) => void;
   setClientId: (id: string) => void;
   setClientSecret: (secret: string) => void;
@@ -58,6 +73,7 @@ interface SettingsState {
   setVolume: (volume: number) => void;
   setAutoSave: (enabled: boolean) => void;
   setMapTileUrl: (url: string) => void;
+  setMapRouteDisplay: (patch: Partial<MapRouteDisplay>) => void;
   clearSettings: () => void;
 }
 
@@ -91,6 +107,7 @@ export const useSettingsStore = create<SettingsState>()(
       favoriteTimeZones: [],
       transcriptThresholdHours: DEFAULT_TRANSCRIPT_THRESHOLD_HOURS,
       mapTileUrl: DEFAULT_MAP_TILE_URL,
+      mapRouteDisplay: DEFAULT_MAP_ROUTE_DISPLAY,
       preferredAudioDeviceId: null,
       echoCancellation: true,
       noiseSuppression: false,
@@ -126,6 +143,10 @@ export const useSettingsStore = create<SettingsState>()(
       setAutoSave: (enabled) => set({ autoSave: enabled }),
       setMapTileUrl: (url) =>
         set({ mapTileUrl: url.trim() || DEFAULT_MAP_TILE_URL }),
+      setMapRouteDisplay: (patch) =>
+        set((state) => ({
+          mapRouteDisplay: { ...state.mapRouteDisplay, ...patch },
+        })),
       clearSettings: () =>
         set({
           apiEndpoint: DEFAULT_API_ENDPOINT,
@@ -140,6 +161,7 @@ export const useSettingsStore = create<SettingsState>()(
           favoriteTimeZones: [],
           transcriptThresholdHours: DEFAULT_TRANSCRIPT_THRESHOLD_HOURS,
           mapTileUrl: DEFAULT_MAP_TILE_URL,
+          mapRouteDisplay: DEFAULT_MAP_ROUTE_DISPLAY,
           preferredAudioDeviceId: null,
           echoCancellation: true,
           noiseSuppression: false,

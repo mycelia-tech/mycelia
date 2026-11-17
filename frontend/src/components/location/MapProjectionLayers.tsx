@@ -113,12 +113,16 @@ export function RouteProjectionLayer({
   showConnectors,
   sourceTracks,
   onSelectTrack,
+  routeOpacity = 0.82,
+  gapOpacity = 0.3,
   stale = false,
 }: {
   data: MapRouteDetailResponse | undefined;
   showConnectors: boolean;
   sourceTracks?: RecordedLocationTrack[];
   onSelectTrack?: (track: RecordedLocationTrack) => void;
+  routeOpacity?: number;
+  gapOpacity?: number;
   stale?: boolean;
 }) {
   const sourceById = new Map(
@@ -152,7 +156,7 @@ export function RouteProjectionLayer({
             pathOptions={{
               color: conflicted ? "#f59e0b" : color,
               weight: conflicted ? 4 : 3,
-              opacity: stale ? 0.38 : 0.82,
+              opacity: routeOpacity * (stale ? 0.46 : 1),
             }}
           >
             <Tooltip sticky>
@@ -174,7 +178,7 @@ export function RouteProjectionLayer({
             color: "#9ca3af",
             weight: 1.25,
             dashArray: "4 8",
-            opacity: stale ? 0.15 : 0.3,
+            opacity: gapOpacity * (stale ? 0.5 : 1),
           }}
         >
           <Tooltip sticky>

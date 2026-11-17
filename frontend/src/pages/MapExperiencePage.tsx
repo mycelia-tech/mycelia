@@ -14,14 +14,25 @@ import {
   MapPin,
   MessageSquare,
   Route,
+  SlidersHorizontal,
   Upload,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { callResource } from "@/lib/api";
 import { useTimelineRange } from "@/stores/timelineRange";
+import {
+  DEFAULT_MAP_ROUTE_DISPLAY,
+  useSettingsStore,
+} from "@/stores/settingsStore";
 import {
   useLocationAt,
   useLocationConflicts,
@@ -62,19 +73,18 @@ import type {
 } from "@/types/location";
 import { formatPlace, segmentDurationMs } from "@/types/location";
 
-const GAP_DISTANCES_M = [100, 200, 300, 500, 1000, 2000];
+const GAP_DISTANCES_M = [50, 100, 200, 300, 500, 1000, 2000];
 const GAP_MINUTES = [1, 2, 5, 10, 30];
-const DEFAULT_GAP_DISTANCE_M = 300;
-const DEFAULT_GAP_MINUTES = 2;
 
 function readGapThresholds(params: URLSearchParams) {
+  const saved = useSettingsStore.getState().mapRouteDisplay;
   const distance = Number(params.get("gapM"));
   const minutes = Number(params.get("gapMin"));
   return {
     gapDistanceM: GAP_DISTANCES_M.includes(distance)
       ? distance
-      : DEFAULT_GAP_DISTANCE_M,
-    gapMinutes: GAP_MINUTES.includes(minutes) ? minutes : DEFAULT_GAP_MINUTES,
+      : saved.gapDistanceM,
+    gapMinutes: GAP_MINUTES.includes(minutes) ? minutes : saved.gapMinutes,
   };
 }
 
@@ -174,8 +184,8 @@ export function updateMapUrl(
   viewport: { center: [number, number]; zoom: number } | null,
   layers: Set<MapLayer>,
   at?: Date,
-  gapDistanceM = DEFAULT_GAP_DISTANCE_M,
-  gapMinutes = DEFAULT_GAP_MINUTES,
+  gapDistanceM = DEFAULT_MAP_ROUTE_DISPLAY.gapDistanceM,
+  gapMinutes = DEFAULT_MAP_ROUTE_DISPLAY.gapMinutes,
 ) {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -190,10 +200,8 @@ export function updateMapUrl(
   );
   if (at) url.searchParams.set("at", String(at.getTime()));
   else url.searchParams.delete("at");
-  if (gapDistanceM === DEFAULT_GAP_DISTANCE_M) url.searchParams.delete("gapM");
-  else url.searchParams.set("gapM", String(gapDistanceM));
-  if (gapMinutes === DEFAULT_GAP_MINUTES) url.searchParams.delete("gapMin");
-  else url.searchParams.set("gapMin", String(gapMinutes));
+  url.searchParams.set("gapM", String(gapDistanceM));
+  url.searchParams.set("gapMin", String(gapMinutes));
   window.history.replaceState({}, "", url);
 }
 
@@ -241,6 +249,12 @@ const MapExperiencePage = () => {
   const { start, end, setRange } = useTimelineRange();
   const [gapDistanceM, setGapDistanceM] = useState(initialUrl.gapDistanceM);
   const [gapMinutes, setGapMinutes] = useState(initialUrl.gapMinutes);
+  const { routeOpacity, gapOpacity } = useSettingsStore(
+    (state) => state.mapRouteDisplay,
+  );
+  const setMapRouteDisplay = useSettingsStore((state) =>
+    state.setMapRouteDisplay
+  );
   const [layers, setLayers] = useState(initialUrl.layers);
   const [viewport, setViewport] = useState<
     {
@@ -607,6 +621,8 @@ const MapExperiencePage = () => {
                 <RouteProjectionLayer
                   data={routes.data}
                   showConnectors={layers.has("connectors")}
+                  routeOpacity={routeOpacity / 100}
+                  gapOpacity={gapOpacity / 100}
                   sourceTracks={layers.has("sourceTracks")
                     ? sourceTracks.data?.tracks ?? []
                     : undefined}
@@ -741,9 +757,13 @@ const MapExperiencePage = () => {
                 <label>
                   <span className="sr-only">Gap distance threshold</span>
                   <select
-                    className="rounded border bg-background px-1 py-0.5 text-foreground"
+                    className="h-7 rounded-md border border-blue-500/40 bg-blue-500/10 px-2 text-xs font-semibold text-foreground"
                     value={gapDistanceM}
-                    onChange={(e) => setGapDistanceM(Number(e.target.value))}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      setGapDistanceM(value);
+                      setMapRouteDisplay({ gapDistanceM: value });
+                    }}
                   >
                     {GAP_DISTANCES_M.map((value) => (
                       <option key={value} value={value}>{value} m</option>
@@ -754,9 +774,13 @@ const MapExperiencePage = () => {
                 <label>
                   <span className="sr-only">Gap time threshold</span>
                   <select
-                    className="rounded border bg-background px-1 py-0.5 text-foreground"
+                    className="h-7 rounded-md border border-blue-500/40 bg-blue-500/10 px-2 text-xs font-semibold text-foreground"
                     value={gapMinutes}
-                    onChange={(e) => setGapMinutes(Number(e.target.value))}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      setGapMinutes(value);
+                      setMapRouteDisplay({ gapMinutes: value });
+                    }}
                   >
                     {GAP_MINUTES.map((value) => (
                       <option key={value} value={value}>{value} min</option>
@@ -764,6 +788,52 @@ const MapExperiencePage = () => {
                   </select>
                 </label>
                 <span>between fixes</span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-xs"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" /> Opacity
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="grid w-64 gap-4">
+                    <div className="grid gap-2">
+                      <div className="flex justify-between text-sm">
+                        <span>Recorded routes</span>
+                        <span>{routeOpacity}%</span>
+                      </div>
+                      <Slider
+                        value={[routeOpacity]}
+                        min={5}
+                        max={100}
+                        step={1}
+                        thumbLabels={["Recorded route opacity"]}
+                        thumbValueTexts={[`${routeOpacity}%`]}
+                        onValueChange={([value]) =>
+                          setMapRouteDisplay({ routeOpacity: value })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <div className="flex justify-between text-sm">
+                        <span>Recording gaps</span>
+                        <span>{gapOpacity}%</span>
+                      </div>
+                      <Slider
+                        value={[gapOpacity]}
+                        min={5}
+                        max={100}
+                        step={1}
+                        thumbLabels={["Recording gap opacity"]}
+                        thumbValueTexts={[`${gapOpacity}%`]}
+                        onValueChange={([value]) =>
+                          setMapRouteDisplay({ gapOpacity: value })}
+                      />
+                    </div>
+                  </PopoverContent>
+                </Popover>
                 {routes.isFetching && (
                   <span role="status">Updating routes…</span>
                 )}

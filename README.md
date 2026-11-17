@@ -989,7 +989,8 @@ range slider has two handles and labelled start/end dates; click a chart bar
 to inspect a moment. **Source colours** colours the same continuity-aware
 recorded sections by source track. **Show recording gaps** is off by default;
 when enabled, faint dashed lines indicate unknown travel between recordings,
-not a recorded route. In the legend, adjust the distance and time limits for
-consecutive GPS fixes (300 m or 2 min by default). Time applies only to pairs
-with timestamps. The map link preserves your limits. If the map omits sections,
-zoom in or shorten the selected period to see more.
+not a recorded route. The legend has distance limits starting at 50 m and
+time limits for fixes with timestamps. New maps start at 100 m and 2 min until
+you change either limit. The browser remembers your limits and the **Opacity**
+settings for recorded routes and recording gaps. A map link can specify limits
+for the current view. If the map omits sections, zoom in or shorten the period.
