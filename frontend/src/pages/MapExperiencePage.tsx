@@ -14,17 +14,10 @@ import {
   MapPin,
   MessageSquare,
   Route,
-  SlidersHorizontal,
   Upload,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Slider } from "@/components/ui/slider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { callResource } from "@/lib/api";
@@ -58,6 +51,11 @@ import {
 } from "@/components/location/MapProjectionLayers";
 import { ConversationMapPanel } from "@/components/location/ConversationMapPanel";
 import { PhotoClustersLayer } from "@/components/location/PhotoClustersLayer";
+import {
+  GAP_DISTANCES_M,
+  GAP_MINUTES,
+  MapDisplaySettings,
+} from "@/components/location/MapDisplaySettings";
 import { MapTimeNavigator } from "@/components/location/MapTimeNavigator";
 import { ImportTracksDialog } from "@/components/location/ImportTracksDialog";
 import { SavedPlacesLayer } from "@/components/location/LocationSourceLayers";
@@ -72,9 +70,6 @@ import type {
   SavedPlace,
 } from "@/types/location";
 import { formatPlace, segmentDurationMs } from "@/types/location";
-
-const GAP_DISTANCES_M = [50, 100, 200, 300, 500, 1000, 2000];
-const GAP_MINUTES = [1, 2, 5, 10, 30];
 
 function readGapThresholds(params: URLSearchParams) {
   const saved = useSettingsStore.getState().mapRouteDisplay;
@@ -226,8 +221,8 @@ function LayerButton({
     <Button
       type="button"
       size="sm"
-      variant={active ? "secondary" : "outline"}
-      className="h-8 bg-background/95 shadow-sm"
+      variant={active ? "default" : "outline"}
+      className={active ? "h-8 shadow-sm" : "h-8 bg-background/95 shadow-sm"}
       onClick={onClick}
       aria-pressed={active}
     >
@@ -325,11 +320,14 @@ const MapExperiencePage = () => {
     return () => clearTimeout(timeout);
   }, [viewport]);
 
+  const showRoutes = layers.has("routes") || layers.has("sourceTracks");
+  const showConversations = layers.has("conversations");
+  const showGaps = layers.has("connectors");
   const showPresenceClusters = layers.has("presence") &&
     (queryViewport?.zoom ?? 2) < 14;
   const densityLayers = [
     ...(showPresenceClusters ? ["presence" as const] : []),
-    ...(layers.has("conversations") ? ["conversations" as const] : []),
+    ...(showConversations ? ["conversations" as const] : []),
   ];
   const density = useMapDensity(
     start,
@@ -343,8 +341,8 @@ const MapExperiencePage = () => {
     end,
     queryViewport?.bounds,
     queryViewport?.zoom ?? 2,
-    layers.has("routes") || layers.has("sourceTracks"),
-    layers.has("connectors"),
+    showRoutes,
+    showGaps,
     gapDistanceM,
     gapMinutes,
   );
@@ -495,6 +493,54 @@ const MapExperiencePage = () => {
 
   const isRefreshing = density.data?.projection.stale === true ||
     (density.isFetching && !density.isLoading);
+  const layerMessages: string[] = [];
+  if (showConversations) {
+    const projection = density.data?.projection.status;
+    if (density.isError) layerMessages.push("Could not load conversations.");
+    else if (
+      density.isFetching && (!density.data || density.isPlaceholderData)
+    ) {
+      layerMessages.push("Loading conversations…");
+    } else if (projection === "building") {
+      layerMessages.push("Updating the conversation map index…");
+    } else if (projection === "failed") {
+      layerMessages.push("Conversation map index failed. Retry it from Jobs.");
+    } else if (projection === "not-built") {
+      layerMessages.push(
+        "Build the Location map index in Jobs to show conversations.",
+      );
+    } else if (density.data?.conversationClusters.length === 0) {
+      layerMessages.push(
+        "No indexed conversations with a location in this area and period.",
+      );
+    }
+  }
+  if (showRoutes) {
+    if (routes.isError) layerMessages.push("Could not load routes.");
+    else if (routes.isFetching && !routes.data) {
+      layerMessages.push("Loading routes…");
+    } else if (routes.data && !routes.data.projection.ready) {
+      layerMessages.push(
+        routes.data.projection.status === "building"
+          ? "Preparing the route index…"
+          : "Build the Location map index in Jobs to show routes.",
+      );
+    } else if (routes.data) {
+      if (routes.data.fragments.length === 0) {
+        layerMessages.push(
+          `No continuous routes here in this period at ${gapDistanceM} m / ${gapMinutes} min.`,
+        );
+      }
+      if (showGaps) {
+        const count = routes.data.connectors.length;
+        layerMessages.push(
+          count > 0
+            ? `Recording gap links: ${count}`
+            : "No recording gaps in this area and period.",
+        );
+      }
+    }
+  }
   const pendingConflicts = (pointConflicts.data?.total ?? 0) +
     (metadataConflicts.data?.total ?? 0) + (routeConflicts.data?.total ?? 0);
   const hasSelection = selectedCluster || selectedSegment ||
@@ -607,7 +653,7 @@ const MapExperiencePage = () => {
                   stale={isRefreshing}
                 />
               )}
-              {layers.has("conversations") && (
+              {showConversations && (
                 <ConversationDensityLayer
                   clusters={density.data?.conversationClusters ?? []}
                   stale={isRefreshing}
@@ -617,10 +663,10 @@ const MapExperiencePage = () => {
                   }}
                 />
               )}
-              {(layers.has("routes") || layers.has("sourceTracks")) && (
+              {showRoutes && (
                 <RouteProjectionLayer
                   data={routes.data}
-                  showConnectors={layers.has("connectors")}
+                  showConnectors={showGaps}
                   routeOpacity={routeOpacity / 100}
                   gapOpacity={gapOpacity / 100}
                   sourceTracks={layers.has("sourceTracks")
@@ -663,22 +709,6 @@ const MapExperiencePage = () => {
               >
                 <Route className="mr-1 h-3.5 w-3.5" /> Routes
               </LayerButton>
-              <label
-                className="flex h-8 cursor-pointer items-center gap-2 rounded-md border bg-background/95 px-3 text-xs shadow-sm"
-                title="Straight links across gaps in GPS recording. These are not recorded routes."
-              >
-                <input
-                  type="checkbox"
-                  checked={layers.has("connectors")}
-                  onChange={() => toggleLayer("connectors")}
-                  className="accent-slate-500"
-                />
-                <span
-                  className="w-5 border-t-2 border-dashed border-slate-400"
-                  aria-hidden="true"
-                />
-                Show recording gaps
-              </label>
               <LayerButton
                 active={layers.has("sourceTracks")}
                 onClick={() => toggleLayer("sourceTracks")}
@@ -693,39 +723,12 @@ const MapExperiencePage = () => {
               </LayerButton>
             </div>
 
-            {density.data?.projection.status === "building" && (
-              <div className="absolute left-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
-                Preparing map index
-                {density.data.projection.progress?.total
-                  ? ` · ${density.data.projection.progress.processed}/${density.data.projection.progress.total}`
-                  : ""}
-              </div>
-            )}
-            {density.data?.projection.status === "failed" && (
-              <div className="absolute left-3 top-3 z-[1000] rounded bg-destructive px-3 py-2 text-sm text-destructive-foreground shadow">
-                Conversation map index failed. Retry it from Jobs.
-              </div>
-            )}
-            {layers.has("conversations") &&
-              density.data?.projection.status === "not-built" && (
-              <div className="absolute left-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
-                Conversation map index is not built yet. Start Location map
-                index in Jobs.
-              </div>
-            )}
-            {(layers.has("routes") || layers.has("sourceTracks")) &&
-              routes.data &&
-              !routes.data.projection.ready && (
-              <div className="absolute right-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
-                Route detail index is not built yet.
-              </div>
-            )}
-            {routes.data?.detailLimited && (
+            {showRoutes && routes.data?.detailLimited && (
               <div className="absolute right-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
                 Some sections omitted · zoom in or shorten the period
               </div>
             )}
-            {(routes.data?.conflicts.length ?? 0) > 0 && (
+            {showRoutes && (routes.data?.conflicts.length ?? 0) > 0 && (
               <div className="absolute right-3 top-14 z-[1000] rounded bg-amber-500/95 px-3 py-2 text-sm text-black shadow">
                 {routes.data!.conflicts.length} overlapping route source
                 {routes.data!.conflicts.length === 1 ? "" : "s"}{" "}
@@ -734,115 +737,65 @@ const MapExperiencePage = () => {
             )}
           </div>
 
-          <div
-            className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground"
-            aria-label="Map route legend"
-          >
-            <span className="flex items-center gap-1.5">
-              <span className="w-5 border-t-2 border-blue-600" />
-              {layers.has("sourceTracks")
-                ? "Recorded sections · source colours"
-                : "Recorded route"}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-5 border-t-2 border-dashed border-slate-400" />Recording
-              gap · route unknown{layers.has("connectors") ? "" : " · hidden"}
-            </span>
-            {(layers.has("routes") || layers.has("sourceTracks")) && (
-              <div
-                className="flex flex-wrap items-center gap-x-2 gap-y-1"
-                title="Split a route when consecutive GPS fixes exceed either limit. Time applies only when both fixes have timestamps."
-              >
-                <span>Gap if fixes are more than</span>
-                <label>
-                  <span className="sr-only">Gap distance threshold</span>
-                  <select
-                    className="h-7 rounded-md border border-blue-500/40 bg-blue-500/10 px-2 text-xs font-semibold text-foreground"
-                    value={gapDistanceM}
-                    onChange={(e) => {
-                      const value = Number(e.target.value);
-                      setGapDistanceM(value);
-                      setMapRouteDisplay({ gapDistanceM: value });
-                    }}
-                  >
-                    {GAP_DISTANCES_M.map((value) => (
-                      <option key={value} value={value}>{value} m</option>
-                    ))}
-                  </select>
-                </label>
-                <span>apart or</span>
-                <label>
-                  <span className="sr-only">Gap time threshold</span>
-                  <select
-                    className="h-7 rounded-md border border-blue-500/40 bg-blue-500/10 px-2 text-xs font-semibold text-foreground"
-                    value={gapMinutes}
-                    onChange={(e) => {
-                      const value = Number(e.target.value);
-                      setGapMinutes(value);
-                      setMapRouteDisplay({ gapMinutes: value });
-                    }}
-                  >
-                    {GAP_MINUTES.map((value) => (
-                      <option key={value} value={value}>{value} min</option>
-                    ))}
-                  </select>
-                </label>
-                <span>between fixes</span>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 gap-1.5 px-2 text-xs"
-                    >
-                      <SlidersHorizontal className="h-3.5 w-3.5" /> Opacity
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="grid w-64 gap-4">
-                    <div className="grid gap-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Recorded routes</span>
-                        <span>{routeOpacity}%</span>
-                      </div>
-                      <Slider
-                        value={[routeOpacity]}
-                        min={5}
-                        max={100}
-                        step={1}
-                        thumbLabels={["Recorded route opacity"]}
-                        thumbValueTexts={[`${routeOpacity}%`]}
-                        onValueChange={([value]) =>
-                          setMapRouteDisplay({ routeOpacity: value })}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Recording gaps</span>
-                        <span>{gapOpacity}%</span>
-                      </div>
-                      <Slider
-                        value={[gapOpacity]}
-                        min={5}
-                        max={100}
-                        step={1}
-                        thumbLabels={["Recording gap opacity"]}
-                        thumbValueTexts={[`${gapOpacity}%`]}
-                        onValueChange={([value]) =>
-                          setMapRouteDisplay({ gapOpacity: value })}
-                      />
-                    </div>
-                  </PopoverContent>
-                </Popover>
-                {routes.isFetching && (
-                  <span role="status">Updating routes…</span>
-                )}
-                {routes.isError && (
-                  <span role="status">Could not load routes</span>
-                )}
-              </div>
-            )}
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1">
+            <div
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground"
+              aria-label="Map layer legend"
+            >
+              {showConversations && (
+                <span>
+                  <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-violet-500" />
+                  {" "}
+                  Conversations
+                </span>
+              )}
+              {showRoutes && (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-5 border-t-2 border-blue-600" />
+                  {layers.has("sourceTracks")
+                    ? "Recorded routes · source colours"
+                    : "Recorded routes"}
+                </span>
+              )}
+              {showGaps && (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-5 border-t-2 border-dashed border-slate-400" />
+                  Recording gaps
+                </span>
+              )}
+            </div>
+            <MapDisplaySettings
+              gapDistanceM={gapDistanceM}
+              gapMinutes={gapMinutes}
+              routeOpacity={routeOpacity}
+              gapOpacity={gapOpacity}
+              showGaps={showGaps}
+              onToggleGaps={() => toggleLayer("connectors")}
+              onChange={(patch) => {
+                if (patch.gapDistanceM !== undefined) {
+                  setGapDistanceM(
+                    patch.gapDistanceM,
+                  );
+                }
+                if (patch.gapMinutes !== undefined) {
+                  setGapMinutes(
+                    patch.gapMinutes,
+                  );
+                }
+                setMapRouteDisplay(patch);
+              }}
+            />
           </div>
+          {layerMessages.length > 0 && (
+            <div
+              role="status"
+              className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-md border bg-muted/35 px-3 py-1.5 text-xs text-foreground"
+            >
+              {layerMessages.map((message) => (
+                <span key={message}>{message}</span>
+              ))}
+            </div>
+          )}
           <MapTimeNavigator
             summary={timeline.data}
             start={start}
@@ -933,8 +886,7 @@ const MapExperiencePage = () => {
                   </p>
                   <p className="text-xs text-muted-foreground">
                     Source colours identify recorded tracks within the selected
-                    dates. Recording gaps are hidden unless “Show recording
-                    gaps” is enabled.
+                    dates. To see recording gaps, enable them in Map settings.
                   </p>
                   {selectedRecordedTrack.routeBoundaryCompleteness !==
                       "full" && (

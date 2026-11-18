@@ -1767,6 +1767,8 @@ each continuous section. The map remembers edited thresholds and independent
 route and gap opacities in the browser's settings store. Explicit `gapM` and
 `gapMin` in a link override the thresholds for that view. Opening a link
 leaves the saved preferences intact. Opacity changes only affect rendering.
+The Map settings popover groups gap visibility, thresholds, and line opacity.
+The map reports loading, indexing, and empty results for enabled layers.
 Budget limits omit sections and mark the response as limited; the map no longer
 falls back to a point-stride overview that can draw shortcuts across a route.
 Display thresholds do not alter the source or require rebuilding the route index.

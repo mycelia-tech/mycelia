@@ -190,6 +190,7 @@ describe("Map photo focus", () => {
       useSettingsStore.getState().setMapRouteDisplay(DEFAULT_MAP_ROUTE_DISPLAY);
       history.replaceState({}, "", "/map?layers=routes&gapMin=1");
       const linkedMap = renderMap();
+      fireEvent.click(screen.getByRole("button", { name: "Map settings" }));
       const distance = screen.getByLabelText<HTMLSelectElement>(
         "Gap distance threshold",
       );
@@ -204,6 +205,7 @@ describe("Map photo focus", () => {
       await useSettingsStore.persist.rehydrate();
       history.replaceState({}, "", "/map?layers=routes");
       renderMap();
+      fireEvent.click(screen.getByRole("button", { name: "Map settings" }));
       expect(
         screen.getByLabelText<HTMLSelectElement>("Gap distance threshold")
           .value,
@@ -235,6 +237,9 @@ describe("Map photo focus", () => {
         "aria-pressed",
       ),
     ).toBe("false");
+    expect(screen.queryByRole("checkbox", { name: "Show recording gaps" }))
+      .toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Map settings" }));
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Show recording gaps" }),
     );
