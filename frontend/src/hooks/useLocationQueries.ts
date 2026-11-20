@@ -1,3 +1,4 @@
+import type { LocationSourceFilter } from "@myceliasdk/location-sources.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { callResource } from "@/lib/api";
 import { useWebSocketSubscription } from "@/hooks/useWebSocket";
@@ -25,16 +26,30 @@ import type {
 export type LocationReviewStatus = "pending" | "deferred" | "resolved";
 export const LOCATION_REVIEW_PAGE_SIZE = 100;
 
+type ImportListOptions = {
+  provider?: string;
+  search?: string;
+  skip?: number;
+  sort?: "recent" | "source";
+};
+
+function sameSourceFilter(previous: unknown, filter?: LocationSourceFilter) {
+  return JSON.stringify(previous) === JSON.stringify(filter);
+}
+
 export const locationKeys = {
   all: ["location"] as const,
   status: () => [...locationKeys.all, "status"] as const,
-  segments: (start: number, end: number, maxPoints?: number) =>
-    [...locationKeys.all, "segments", start, end, maxPoints] as const,
+  segments: (
+    start: number, end: number, maxPoints?: number, sourceFilter?: LocationSourceFilter,
+  ) => [...locationKeys.all, "segments", start, end, maxPoints, sourceFilter] as const,
   at: (time: number) => [...locationKeys.all, "at", time] as const,
   forRange: (start: number, end: number) =>
     [...locationKeys.all, "forRange", start, end] as const,
   places: (query: string) => [...locationKeys.all, "places", query] as const,
   imports: () => [...locationKeys.all, "imports"] as const,
+  importSources: () => [...locationKeys.all, "importSources"] as const,
+  sourceFiles: () => [...locationKeys.all, "sourceFiles"] as const,
   savedPlaces: () => [...locationKeys.all, "savedPlaces"] as const,
   recordedTracks: () => [...locationKeys.all, "recordedTracks"] as const,
   trackGeometry: (id: string) =>
@@ -60,6 +75,7 @@ export const locationKeys = {
     bounds: MapBounds | undefined,
     zoom: number,
     layers: string[],
+    sourceFilter?: LocationSourceFilter,
   ) =>
     [
       ...locationKeys.all,
@@ -69,6 +85,7 @@ export const locationKeys = {
       bounds,
       Math.round(zoom * 10) / 10,
       [...layers].sort(),
+      sourceFilter,
     ] as const,
   mapRoutes: (
     start: number,
@@ -79,6 +96,7 @@ export const locationKeys = {
     gapDistanceM: number,
     gapMinutes: number,
     includeSourceTracks: boolean,
+    sourceFilter?: LocationSourceFilter,
   ) =>
     [
       ...locationKeys.all,
@@ -91,6 +109,7 @@ export const locationKeys = {
       gapDistanceM,
       gapMinutes,
       includeSourceTracks,
+      sourceFilter,
     ] as const,
   mapTimeline: () => [...locationKeys.all, "mapTimeline"] as const,
   mapClusterGroups: (
@@ -152,6 +171,7 @@ export function useMapDensity(
   bounds: MapBounds | undefined,
   zoom: number,
   layers: Array<"presence" | "conversations">,
+  sourceFilter?: LocationSourceFilter,
 ) {
   return useQuery<MapDensityResponse>({
     queryKey: locationKeys.mapDensity(
@@ -160,6 +180,7 @@ export function useMapDensity(
       bounds,
       zoom,
       layers,
+      sourceFilter,
     ),
     queryFn: ({ signal }) =>
       callResource("location", {
@@ -169,11 +190,13 @@ export function useMapDensity(
         bounds,
         zoom,
         layers,
+        sourceFilter,
         maxClusters: 1200,
       }, { signal }),
     enabled: !!bounds && layers.length > 0,
     staleTime: 60 * 1000,
-    placeholderData: (previous) => previous,
+    placeholderData: (previous, query) =>
+      sameSourceFilter(query?.queryKey.at(-1), sourceFilter) ? previous : undefined,
   });
 }
 
@@ -187,6 +210,7 @@ export function useMapRouteDetail(
   gapDistanceM: number,
   gapMinutes: number,
   includeSourceTracks: boolean,
+  sourceFilter?: LocationSourceFilter,
 ) {
   return useQuery<MapRouteDetailResponse>({
     queryKey: locationKeys.mapRoutes(
@@ -198,6 +222,7 @@ export function useMapRouteDetail(
       gapDistanceM,
       gapMinutes,
       includeSourceTracks,
+      sourceFilter,
     ),
     queryFn: ({ signal }) =>
       callResource("location", {
@@ -210,6 +235,7 @@ export function useMapRouteDetail(
         gapDistanceM,
         gapMinutes,
         includeSourceTracks,
+        sourceFilter,
       }, { signal }),
     enabled: enabled && !!bounds,
     staleTime: 30 * 1000,
@@ -217,7 +243,8 @@ export function useMapRouteDetail(
     retry: 1,
     placeholderData: (previous, query) =>
       query?.queryKey[2] === start.getTime() &&
-        query.queryKey[3] === end.getTime()
+        query.queryKey[3] === end.getTime() &&
+        sameSourceFilter(query.queryKey.at(-1), sourceFilter)
         ? previous
         : undefined,
   });
@@ -320,9 +347,14 @@ export function useLocationStatus(enabled = true) {
 export function useLocationSegments(
   start: Date | undefined,
   end: Date | undefined,
-  options: { enabled?: boolean; maxPoints?: number; coalesceMs?: number } = {},
+  options: {
+    enabled?: boolean;
+    maxPoints?: number;
+    coalesceMs?: number;
+    sourceFilter?: LocationSourceFilter;
+  } = {},
 ) {
-  const { enabled = true, maxPoints, coalesceMs } = options;
+  const { enabled = true, maxPoints, coalesceMs, sourceFilter } = options;
   return useQuery<{
     segments: LocationSegment[];
     totalSegments: number;
@@ -331,18 +363,21 @@ export function useLocationSegments(
       start?.getTime() ?? 0,
       end?.getTime() ?? 0,
       maxPoints,
+      sourceFilter,
     ),
     queryFn: ({ signal }) =>
       callResource("location", {
         action: "list-segments",
         start,
         end,
+        sourceFilter,
         ...(maxPoints ? { maxPoints } : {}),
         ...(coalesceMs ? { coalesceMs } : {}),
       }, { signal }),
     enabled: enabled && !!start && !!end,
     staleTime: 30 * 1000,
-    placeholderData: (prev) => prev,
+    placeholderData: (prev, query) =>
+      sameSourceFilter(query?.queryKey.at(-1), sourceFilter) ? prev : undefined,
   });
 }
 
@@ -389,24 +424,70 @@ export function usePlaceSearch(query: string, enabled = true) {
   });
 }
 
-export function useLocationImports(enabled = true) {
+export function useLocationImports(enabled = true, options?: ImportListOptions) {
   return useQuery<LocationImport[]>({
-    queryKey: locationKeys.imports(),
-    queryFn: () => callResource("location", { action: "list-imports" }),
+    queryKey: options ? [...locationKeys.imports(), options] : locationKeys.imports(),
+    queryFn: ({ signal }) =>
+      callResource("location", { action: "list-imports", ...options }, { signal }),
     enabled,
-    staleTime: 15 * 1000,
+    staleTime: 30 * 1000,
   });
 }
 
-export function useSavedPlaces(enabled = true) {
+export function useLocationImportSources(enabled = true) {
+  return useQuery<Array<{ provider: string; count: number }>>({
+    queryKey: locationKeys.importSources(),
+    queryFn: ({ signal }) =>
+      callResource("location", { action: "list-import-sources" }, { signal }),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useLocationSourceFiles(
+  provider: string | undefined, search: string, page: number, enabled: boolean,
+) {
+  return useQuery<{ files: Array<{ _id: string; filename: string }>; hasMore: boolean }>({
+    queryKey: [...locationKeys.sourceFiles(), provider, search, page],
+    queryFn: ({ signal }) => callResource("location", {
+      action: "list-source-files", provider, search, skip: page * 40,
+    }, { signal }),
+    enabled: enabled && !!provider,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useUpdateLocationImportSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, provider }: { id: string; provider: string }) => {
+      const result = await callResource("location", { action: "update-import-source", id, provider });
+      if (!result?.success) throw new Error("Import source is unavailable.");
+    },
+    onSuccess: () => {
+      const sourceKeys = ["imports", "importSources", "sourceFiles", "segments", "geotags"];
+      const filteredKeys = ["mapRoutes", "mapDensity", "savedPlaces"];
+      void queryClient.invalidateQueries({
+        predicate: ({ queryKey }) => queryKey[0] === "location" &&
+          (sourceKeys.includes(String(queryKey[1])) ||
+            (filteredKeys.includes(String(queryKey[1])) && !!queryKey.at(-1) && typeof queryKey.at(-1) === "object")),
+      });
+    },
+  });
+}
+
+export function useSavedPlaces(enabled = true, sourceFilter?: LocationSourceFilter) {
   return useQuery<{ places: SavedPlace[]; total: number }>({
-    queryKey: locationKeys.savedPlaces(),
-    queryFn: () =>
+    queryKey: [...locationKeys.savedPlaces(), sourceFilter],
+    queryFn: ({ signal }) =>
       callResource("location", {
         action: "list-saved-places",
+        sourceFilter,
         limit: 2000,
         skip: 0,
-      }),
+      }, { signal }),
     enabled,
     staleTime: 30 * 1000,
   });
@@ -622,6 +703,7 @@ export function useGeotags(
     start?: Date;
     end?: Date;
     type?: string;
+    sourceFilter?: LocationSourceFilter;
     importId?: string;
     limit?: number;
     skip?: number;
@@ -633,11 +715,12 @@ export function useGeotags(
       start: filters.start?.getTime(),
       end: filters.end?.getTime(),
       type: filters.type,
+      sourceFilter: filters.sourceFilter,
       importId: filters.importId,
       limit: filters.limit,
       skip: filters.skip,
     }),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       callResource("location", {
         action: "list-geotags",
         ...(filters.start && filters.end
@@ -645,12 +728,16 @@ export function useGeotags(
           : {}),
         ...(filters.type ? { type: filters.type } : {}),
         ...(filters.importId ? { importId: filters.importId } : {}),
+        sourceFilter: filters.sourceFilter,
         limit: filters.limit ?? 100,
         skip: filters.skip ?? 0,
-      }),
+      }, { signal }),
     enabled,
     staleTime: 15 * 1000,
-    placeholderData: (prev) => prev,
+    placeholderData: (prev, query) => {
+      const previous = query?.queryKey.at(-1) as typeof filters | undefined;
+      return sameSourceFilter(previous?.sourceFilter, filters.sourceFilter) ? prev : undefined;
+    },
   });
 }
 

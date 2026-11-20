@@ -6,6 +6,7 @@ import {
   confirmLocationPreview,
   StaleLocationPreviewError,
 } from "@/lib/location/import.server.ts";
+import { locationProviderSchema } from "@/lib/location/sources.server.ts";
 import { asyncHandler } from "@/middleware/asyncHandler.ts";
 
 const upload = multer({
@@ -84,8 +85,17 @@ export const apiLocationImportsAnalyzeHandler = asyncHandler(
 export const apiLocationImportsConfirmHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const auth = await authenticateOr401(req, res);
+    const provider = locationProviderSchema.optional().safeParse(req.body?.provider);
+    if (!provider.success) {
+      res.status(400).json({ error: { message: "Invalid source application." } });
+      return;
+    }
     try {
-      const receipt = await confirmLocationPreview(auth, req.params.previewId);
+      const receipt = await confirmLocationPreview(
+        auth,
+        req.params.previewId,
+        provider.data ? { provider: provider.data, evidence: "confirmed" } : undefined,
+      );
       res.json({ success: true, receipt });
     } catch (error) {
       if (error instanceof StaleLocationPreviewError) {

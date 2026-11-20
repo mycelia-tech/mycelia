@@ -699,6 +699,7 @@ const capability: JobCapability = {
         filter: {
           event: "mongo.change",
           "data.operationType": "update",
+          "data.changedFields": { $in: ["status", "committedAt"] },
         },
       },
     ],

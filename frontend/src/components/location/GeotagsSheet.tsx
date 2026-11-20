@@ -1,3 +1,8 @@
+import {
+  activeSourceFilter,
+  ALL_LOCATION_SOURCES,
+  LocationSourceFilter,
+} from "./LocationSourceFilter";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Crosshair, Info, Pencil, Trash2 } from "lucide-react";
@@ -59,6 +64,7 @@ export function GeotagsSheet({
 }: GeotagsSheetProps) {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [pages, setPages] = useState(1);
+  const [sources, setSources] = useState(ALL_LOCATION_SOURCES);
   const [details, setDetails] = useState<LocationSegment | null>(null);
   const [editSegment, setEditSegment] = useState<LocationSegment | null>(null);
   const deleteSegment = useDeleteLocationSegment();
@@ -70,6 +76,7 @@ export function GeotagsSheet({
       end,
       type: typeFilter === "all" ? undefined : typeFilter,
       limit: pages * PAGE,
+      sourceFilter: activeSourceFilter(sources),
     },
     open,
   );
@@ -127,7 +134,11 @@ export function GeotagsSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <div className="flex flex-wrap items-center gap-2">
+          <Select value={typeFilter} onValueChange={(value) => {
+            setTypeFilter(value);
+            setPages(1);
+          }}>
             <SelectTrigger className="w-40">
               <SelectValue />
             </SelectTrigger>
@@ -139,6 +150,16 @@ export function GeotagsSheet({
               <SelectItem value="gap">⋯ Gaps</SelectItem>
             </SelectContent>
           </Select>
+          <LocationSourceFilter
+            label="Geotag sources"
+            includeManual
+            filter={sources}
+            onChange={(filter) => {
+              setSources(filter);
+              setPages(1);
+            }}
+          />
+          </div>
 
           <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
             {isLoading && (

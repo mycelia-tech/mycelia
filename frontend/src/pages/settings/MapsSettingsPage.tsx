@@ -218,7 +218,7 @@ export default function MapsSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <ImportsList
+          <ImportsList manageSources
             onShowOnMap={(imp) => {
               if (!imp.timeRange?.start) return;
               const s = new Date(imp.timeRange.start).getTime() -

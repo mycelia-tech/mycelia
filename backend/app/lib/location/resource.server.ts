@@ -1,3 +1,10 @@
+import type { LocationOrigin } from "@myceliasdk/location-sources.ts";
+import {
+  importProviderQuery,
+  locationProviderSchema,
+  locationSourceFilterSchema,
+  locationSourceQuery,
+} from "./sources.server.ts";
 import { ObjectId } from "bson";
 import { z } from "zod";
 import tzLookup from "tz-lookup";
@@ -59,6 +66,7 @@ const runMapConversationQuery = createSingleFlightBackoff<any[]>({
 const REPROCESS_PAD_MS = 6 * 60 * 60 * 1000;
 
 const listSegmentsSchema = z.object({
+  sourceFilter: locationSourceFilterSchema.optional(),
   action: z.literal("list-segments"),
   start: zDateOrString(),
   end: zDateOrString(),
@@ -110,6 +118,7 @@ const deleteSegmentSchema = z.object({
 });
 
 const listGeotagsSchema = z.object({
+  sourceFilter: locationSourceFilterSchema.optional(),
   action: z.literal("list-geotags"),
   start: zDateOrString().optional(),
   end: zDateOrString().optional(),
@@ -151,6 +160,7 @@ const mapBoundsSchema = z.object({
 });
 
 const mapDensitySchema = z.object({
+  sourceFilter: locationSourceFilterSchema.optional(),
   action: z.literal("map-density"),
   start: zDateOrString(),
   end: zDateOrString(),
@@ -190,6 +200,7 @@ const conversationMapGroupItemsSchema = z.object({
 });
 
 const mapRouteDetailSchema = z.object({
+  sourceFilter: locationSourceFilterSchema.optional(),
   action: z.literal("map-route-detail"),
   start: zDateOrString(),
   end: zDateOrString(),
@@ -244,6 +255,30 @@ const statusSchema = z.object({
 
 const listImportsSchema = z.object({
   action: z.literal("list-imports"),
+  provider: locationProviderSchema.optional(),
+  search: z.string().trim().max(200).optional(),
+  skip: z.number().int().min(0).default(0),
+  sort: z.enum(["recent", "source"]).default("recent"),
+});
+
+const listImportSourcesSchema = z.object({ action: z.literal("list-import-sources") });
+
+const listSourceFilesSchema = z.object({
+  action: z.literal("list-source-files"),
+  provider: locationProviderSchema,
+  search: z.string().trim().max(200).optional(),
+  skip: z.number().int().min(0).default(0),
+});
+
+function importFilenameQuery(search: string | undefined) {
+  if (!search) return {};
+  return { filename: { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } };
+}
+
+const updateImportSourceSchema = z.object({
+  action: z.literal("update-import-source"),
+  id: z.string().refine(ObjectId.isValid, "Invalid import id"),
+  provider: locationProviderSchema,
 });
 
 const deleteImportSchema = z.object({
@@ -252,6 +287,7 @@ const deleteImportSchema = z.object({
 });
 
 const listSavedPlacesSchema = z.object({
+  sourceFilter: locationSourceFilterSchema.optional(),
   action: z.literal("list-saved-places"),
   limit: z.number().int().min(1).max(2000).default(500),
   skip: z.number().int().min(0).default(0),
@@ -327,6 +363,9 @@ export const locationRequestSchema = z.discriminatedUnion("action", [
   routeConflictPreviewSchema,
   statusSchema,
   listImportsSchema,
+  listImportSourcesSchema,
+  listSourceFilesSchema,
+  updateImportSourceSchema,
   deleteImportSchema,
   listSavedPlacesSchema,
   listRecordedTracksSchema,
@@ -361,6 +400,7 @@ export interface SegmentSource {
   createdBy?: string;
   importId?: string;
   filename?: string | null;
+  origin?: LocationOrigin;
 }
 
 /**
@@ -377,16 +417,16 @@ async function attachSources(
       importIds.set(String(id), new ObjectId(String(id)));
     }
   }
-  let filenames = new Map<string, string>();
+  let files = new Map<string, { filename: string; origin?: LocationOrigin }>();
   if (importIds.size > 0) {
     const imports: any[] = await mongo({
       action: "find",
       collection: "location_imports",
       query: { _id: { $in: [...importIds.values()] } },
-      options: { projection: { filename: 1 } },
+      options: { projection: { filename: 1, origin: 1 } },
     });
-    filenames = new Map(
-      imports.map((doc) => [String(doc._id), doc.filename]),
+    files = new Map(
+      imports.map((doc) => [String(doc._id), doc]),
     );
   }
   for (const segment of segments) {
@@ -399,7 +439,8 @@ async function attachSources(
         id: unknown,
       ): SegmentSource => ({
         importId: String(id),
-        filename: filenames.get(String(id)) ?? null,
+        filename: files.get(String(id))?.filename ?? null,
+        origin: files.get(String(id))?.origin,
       }));
     }
   }
@@ -466,7 +507,13 @@ export class LocationResource
         const segments: any[] = await mongo({
           action: "find",
           collection: SEGMENTS,
-          query: { start: { $lt: input.end }, end: { $gt: input.start } },
+          query: {
+            start: { $lt: input.end },
+            end: { $gt: input.start },
+            ...(input.sourceFilter
+              ? await locationSourceQuery(await getRootDB(), input.sourceFilter, "importIds", true)
+              : {}),
+          },
           options: { sort: { start: 1 } },
         });
 
@@ -809,6 +856,11 @@ export class LocationResource
         if (input.importId) {
           query.importIds = new ObjectId(input.importId);
         }
+        if (input.sourceFilter) {
+          query.$and = [
+            await locationSourceQuery(await getRootDB(), input.sourceFilter, "importIds", true),
+          ];
+        }
         const [segments, total] = await Promise.all([
           mongo({
             action: "find",
@@ -1120,6 +1172,7 @@ export class LocationResource
           layers: input.layers,
           maxClusters: input.maxClusters,
           cacheScope: auth.principal,
+          sourceFilter: input.sourceFilter,
         });
       }
 
@@ -1235,18 +1288,75 @@ export class LocationResource
       }
 
       case "list-imports": {
+        const query = {
+          ...(input.provider ? importProviderQuery(input.provider) : {}),
+          ...importFilenameQuery(input.search),
+        };
         return await mongo({
           action: "find",
           collection: IMPORTS,
-          query: {},
-          options: { sort: { createdAt: -1 }, limit: 100 },
+          query,
+          options: {
+            sort: input.sort === "source"
+              ? { "origin.provider": 1, filename: 1, createdAt: -1, _id: 1 }
+              : { createdAt: -1, _id: 1 },
+            skip: input.skip,
+            limit: 100,
+          },
         });
+      }
+
+      case "list-import-sources": {
+        return await mongo({
+          action: "aggregate",
+          collection: IMPORTS,
+          pipeline: [
+            { $match: { committedAt: { $type: "date" } } },
+            { $group: { _id: { $ifNull: ["$origin.provider", "unknown"] }, count: { $sum: 1 } } },
+            { $project: { _id: 0, provider: "$_id", count: 1 } },
+          ],
+          options: { maxTimeMS: 3000 },
+        });
+      }
+
+      case "list-source-files": {
+        const files = await mongo({
+          action: "find",
+          collection: IMPORTS,
+          query: {
+            committedAt: { $type: "date" },
+            ...importProviderQuery(input.provider),
+            ...importFilenameQuery(input.search),
+          },
+          options: {
+            projection: { filename: 1 },
+            sort: { filename: 1, createdAt: -1, _id: 1 },
+            skip: input.skip,
+            limit: 41,
+            maxTimeMS: 3000,
+          },
+        });
+        return { files: files.slice(0, 40), hasMore: files.length > 40 };
+      }
+
+      case "update-import-source": {
+        const result = await mongo({
+          action: "updateOne",
+          collection: IMPORTS,
+          query: { _id: new ObjectId(input.id), committedAt: { $type: "date" } },
+          update: { $set: { origin: { provider: input.provider, evidence: "confirmed" } } },
+          options: { touchUpdatedAt: false },
+        });
+        return { success: result.matchedCount === 1 };
       }
 
       case "list-saved-places": {
         const query = {
           reviewStatus: { $ne: "rejected" },
           visible: { $ne: false },
+          ...(input.sourceFilter
+            ? await locationSourceQuery(await getRootDB(), input.sourceFilter, "sourceRefs.importId")
+            : {}),
         };
         const [places, total] = await Promise.all([
           mongo({

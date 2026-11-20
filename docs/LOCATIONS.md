@@ -93,6 +93,10 @@ The Map has one shared selected period for presence, routes and conversations:
   untimed, including elevation) remains available in normalized geometry chunks.
   Untimed `LineString`/GPX routes are map-only and never generate stays or
   timezone periods.
+- **Marker sources** and **Route sources** independently control the visibility
+  of location markers and route geometry by application or by file. Any
+  enabled source keeps a shared item visible. **Show all** restores visibility
+  for that layer. The choices are saved locally in the browser.
 - **Import tracks** button — preview/confirm import with a durable receipt:
   source size/hash/parser, the selected KML member, new and matched GPS points,
   repeated items inside the file, track kinds and coordinate counts, saved
@@ -129,7 +133,7 @@ assignment — shown as source chips everywhere.
   timezone and source, with **details** (ⓘ), **edit** (✎) and, inside the
   details card, **Delete / Override / Open in map**.
 - **Map page → Geotags** button: the full list for the current period with type
-  filter, source chips, overlap warnings, and per-row actions (show on map,
+  and source filters, source chips, overlap warnings, and per-row actions (show on map,
   details, edit, delete).
 - **Deleting** a manual geotag removes the assignment (derived data reappears).
   Deleting a _derived_ geotag permanently deletes the GPS points behind it —
@@ -148,7 +152,7 @@ assignment — shown as source chips everywhere.
 ## Settings → Maps
 
 One place for everything geo: GeoNames status (count, last update) with a
-live-progress download/update button, the list of track imports with delete, the
+live-progress download/update button, the list of track imports with source editing, filename search, sorting and delete, the
 tile-server URL (point it at your own server for fully offline maps), a toggle
 for the timeline Locations track, and a full-reprocess button.
 

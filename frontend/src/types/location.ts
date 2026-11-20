@@ -1,3 +1,7 @@
+import {
+  type LocationOrigin,
+  locationProviderLabel,
+} from "@myceliasdk/location-sources.ts";
 import type { ObjectId } from "bson";
 
 export interface LocationPlace {
@@ -16,6 +20,7 @@ export interface SegmentSource {
   createdBy?: string;
   importId?: string;
   filename?: string | null;
+  origin?: LocationOrigin;
 }
 
 export interface LocationSegment {
@@ -41,7 +46,7 @@ export function formatSources(sources?: SegmentSource[]): string[] {
   return sources.map((s) =>
     s.manual
       ? `✍️ manual${s.createdBy ? ` (${s.createdBy})` : ""}`
-      : `📄 ${s.filename ?? "deleted import"}`
+      : `📄 ${s.filename ?? "deleted import"}${s.origin ? ` · ${locationProviderLabel(s.origin.provider)}` : ""}`
   );
 }
 
@@ -70,10 +75,14 @@ export interface GeonamesCity {
   tz?: string;
 }
 
-export interface LocationImport {
+export interface LocationImportSource {
   _id: ObjectId | string;
   filename: string;
   format: "gpx" | "kml" | "kmz";
+  origin?: LocationOrigin;
+}
+
+export interface LocationImport extends LocationImportSource {
   pointCount: number;
   dedupedCount?: number;
   skippedCount: number;
@@ -200,6 +209,7 @@ export interface LocationImportCounts {
 }
 
 export interface LocationImportPreview {
+  origin?: LocationOrigin;
   previewId: string;
   filename: string;
   format: "gpx" | "kml" | "kmz";

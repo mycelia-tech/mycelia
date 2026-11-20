@@ -49,6 +49,8 @@ vi.mock("@/stores/timelineRange", () => ({
 }));
 
 vi.mock("@/hooks/useLocationQueries", () => ({
+  useLocationImportSources: () => ({ data: [] }),
+  useLocationSourceFiles: () => ({ data: undefined }),
   useLocationAt: () => ({
     data: mocks.locationAtData,
     isLoading: false,

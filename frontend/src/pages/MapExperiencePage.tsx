@@ -1,3 +1,7 @@
+import {
+  activeSourceFilter,
+  LocationSourceFilter,
+} from "@/components/location/LocationSourceFilter";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMap } from "react-leaflet";
@@ -250,6 +254,12 @@ const MapExperiencePage = () => {
   const setMapRouteDisplay = useSettingsStore((state) =>
     state.setMapRouteDisplay
   );
+  const { markers: markerSources, routes: routeSources } = useSettingsStore(
+    (state) => state.mapSourceFilters,
+  );
+  const setMapSourceFilter = useSettingsStore((state) => state.setMapSourceFilter);
+  const markerSourceFilter = activeSourceFilter(markerSources);
+  const routeSourceFilter = activeSourceFilter(routeSources);
   const [layers, setLayers] = useState(initialUrl.layers);
   const [viewport, setViewport] = useState<
     {
@@ -313,7 +323,8 @@ const MapExperiencePage = () => {
     fitRequest.status === "ready";
   const segmentsQuery = useLocationSegments(start, end, {
     maxPoints: maxPointsForRange(rangeMs),
-    enabled: showPresence || fitPending,
+    enabled: (showPresence && (viewport?.zoom ?? 2) >= 14) || fitPending || autoFitSegments,
+    sourceFilter: markerSourceFilter,
   });
   useLocationLiveUpdates();
   const segments = segmentsQuery.data?.segments;
@@ -359,16 +370,20 @@ const MapExperiencePage = () => {
   const showGaps = layers.has("connectors");
   const showPresenceClusters = showPresence &&
     (queryViewport?.zoom ?? 2) < 14;
-  const densityLayers = [
-    ...(showPresenceClusters ? ["presence" as const] : []),
-    ...(showConversations ? ["conversations" as const] : []),
-  ];
   const density = useMapDensity(
     start,
     end,
     queryViewport?.bounds,
     queryViewport?.zoom ?? 2,
-    densityLayers,
+    showConversations ? ["conversations"] : [],
+  );
+  const presence = useMapDensity(
+    start,
+    end,
+    queryViewport?.bounds,
+    queryViewport?.zoom ?? 2,
+    showPresenceClusters ? ["presence"] : [],
+    showPresenceClusters ? markerSourceFilter : undefined,
   );
   const routes = useMapRouteDetail(
     start,
@@ -380,10 +395,11 @@ const MapExperiencePage = () => {
     gapDistanceM,
     gapMinutes,
     layers.has("sourceTracks"),
+    routeSourceFilter,
   );
   const timeline = useMapTimelineSummary();
   const locationAt = useLocationAt(cursorTime, !!cursorTime);
-  const savedPlaces = useSavedPlaces(true);
+  const savedPlaces = useSavedPlaces(true, markerSourceFilter);
   const pointConflicts = useLocationConflicts("pending", true);
   const metadataConflicts = useLocationMetadataConflicts("pending", true);
   const routeConflicts = useLocationRouteConflicts("pending", true);
@@ -535,9 +551,12 @@ const MapExperiencePage = () => {
   const isRefreshing = density.data?.projection.stale === true ||
     (density.isFetching && !density.isLoading);
   const isLoadingLayers = fitPending || segmentsQuery.isLoading ||
-    density.isLoading ||
+    density.isLoading || presence.isLoading || savedPlaces.isLoading ||
     (showRoutes && routes.isLoading);
   const layerMessages: string[] = [];
+  if (presence.isError || savedPlaces.isError || segmentsQuery.isError) {
+    layerMessages.push("Could not load location markers.");
+  }
   if (showConversations) {
     const projection = density.data?.projection.status;
     if (density.isError) layerMessages.push("Could not load conversations.");
@@ -693,7 +712,7 @@ const MapExperiencePage = () => {
               )}
               {layers.has("presence") && showPresenceClusters && (
                 <PresenceDensityLayer
-                  clusters={density.data?.presenceClusters ?? []}
+                  clusters={presence.data?.presenceClusters ?? []}
                   stale={isRefreshing}
                 />
               )}
@@ -737,6 +756,18 @@ const MapExperiencePage = () => {
               >
                 <MapPin className="mr-1 h-3.5 w-3.5" /> Presence
               </LayerButton>
+              <LocationSourceFilter
+                label="Marker sources"
+                includeManual
+                filter={markerSources}
+                onChange={(filter) => {
+                  setAutoFitSegments(false);
+                  setFitRequest(undefined);
+                  setSelectedSegment(null);
+                  setSelectedSavedPlace(null);
+                  setMapSourceFilter("markers", filter);
+                }}
+              />
               <LayerButton
                 active={layers.has("conversations")}
                 onClick={() => toggleLayer("conversations")}
@@ -749,6 +780,14 @@ const MapExperiencePage = () => {
               >
                 <Route className="mr-1 h-3.5 w-3.5" /> Routes
               </LayerButton>
+              <LocationSourceFilter
+                label="Route sources"
+                filter={routeSources}
+                onChange={(filter) => {
+                  setSelectedRecordedTrack(null);
+                  setMapSourceFilter("routes", filter);
+                }}
+              />
               <LayerButton
                 active={layers.has("sourceTracks")}
                 onClick={() => toggleLayer("sourceTracks")}

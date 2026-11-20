@@ -1,3 +1,4 @@
+import type { LocationSourceFilter } from "@myceliasdk/location-sources.ts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { BROWSER_TIME_ZONE, type DefaultTimeZone } from "@/lib/timeZones";
@@ -32,6 +33,12 @@ export const DEFAULT_MAP_ROUTE_DISPLAY: MapRouteDisplay = {
   gapOpacity: 30,
 };
 
+type MapSourceLayer = "markers" | "routes";
+const DEFAULT_MAP_SOURCE_FILTERS: Record<MapSourceLayer, LocationSourceFilter> = {
+  markers: { excludedProviders: [], excludedImportIds: [] },
+  routes: { excludedProviders: [], excludedImportIds: [] },
+};
+
 interface SettingsState {
   apiEndpoint: string;
   clientId: string;
@@ -55,6 +62,8 @@ interface SettingsState {
   autoSave: boolean;
   mapTileUrl: string;
   mapRouteDisplay: MapRouteDisplay;
+  mapSourceFilters: Record<MapSourceLayer, LocationSourceFilter>;
+  setMapSourceFilter: (layer: MapSourceLayer, filter: LocationSourceFilter) => void;
   setApiEndpoint: (endpoint: string) => void;
   setClientId: (id: string) => void;
   setClientSecret: (secret: string) => void;
@@ -108,6 +117,10 @@ export const useSettingsStore = create<SettingsState>()(
       transcriptThresholdHours: DEFAULT_TRANSCRIPT_THRESHOLD_HOURS,
       mapTileUrl: DEFAULT_MAP_TILE_URL,
       mapRouteDisplay: DEFAULT_MAP_ROUTE_DISPLAY,
+      mapSourceFilters: DEFAULT_MAP_SOURCE_FILTERS,
+      setMapSourceFilter: (layer, filter) => set((state) => ({
+        mapSourceFilters: { ...state.mapSourceFilters, [layer]: filter },
+      })),
       preferredAudioDeviceId: null,
       echoCancellation: true,
       noiseSuppression: false,
@@ -162,6 +175,7 @@ export const useSettingsStore = create<SettingsState>()(
           transcriptThresholdHours: DEFAULT_TRANSCRIPT_THRESHOLD_HOURS,
           mapTileUrl: DEFAULT_MAP_TILE_URL,
           mapRouteDisplay: DEFAULT_MAP_ROUTE_DISPLAY,
+          mapSourceFilters: DEFAULT_MAP_SOURCE_FILTERS,
           preferredAudioDeviceId: null,
           echoCancellation: true,
           noiseSuppression: false,

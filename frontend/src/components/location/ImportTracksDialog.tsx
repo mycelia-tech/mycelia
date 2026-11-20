@@ -1,3 +1,4 @@
+import { LocationProviderSelect } from "./LocationProviderSelect";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -117,7 +118,13 @@ export function ImportTracksDialog({
       const authHeaders = await api.getAuthHeaders();
       const response = await fetch(
         `${api.baseURL}/api/location/imports/${preview.previewId}/confirm`,
-        { method: "POST", headers: authHeaders },
+        {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: preview.origin?.evidence === "confirmed" ? preview.origin.provider : undefined,
+          }),
+        },
       );
       const data = await response.json();
       if (response.status === 409 && data.preview) {
@@ -149,7 +156,12 @@ export function ImportTracksDialog({
       } else {
         toast.success("Metadata and source provenance were saved.");
       }
-      queryClient.invalidateQueries({ queryKey: locationKeys.all });
+      const keys = ["imports", "importSources", "sourceFiles", "savedPlaces", "recordedTracks", "conflicts", "metadataConflicts"];
+      if (!receipt.duplicate) {
+        for (const key of keys) {
+          void queryClient.invalidateQueries({ queryKey: [...locationKeys.all, key] });
+        }
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -249,6 +261,24 @@ export function ImportTracksDialog({
                     {preview.format}
                   </Badge>
                 </div>
+                {preview.canConfirm && !receipt && (
+                  <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    Source application
+                    <LocationProviderSelect
+                      label={`Source application for ${preview.filename}`}
+                      provider={preview.origin?.provider}
+                      disabled={confirming.has(preview.previewId)}
+                      onChange={(provider) => setPreviews((current) =>
+                        current.map((item) =>
+                          !isFailure(item) && item.previewId === preview.previewId
+                            ? { ...item, origin: { provider, evidence: "confirmed" } }
+                            : item
+                        )
+                      )}
+                    />
+                    {preview.origin?.evidence === "exporter" && <span>Detected from file</span>}
+                  </label>
+                )}
                 <p className="text-xs text-muted-foreground">
                   {(preview.fileSize / 1024 / 1024).toFixed(1)} MB · parser v
                   {preview.parserVersion}

@@ -1096,6 +1096,24 @@ docker compose ps mongo
 
 Recreating Mongo is not required for backend or frontend source reloads.
 
+#### Location import sources
+
+Run the source audit against the current Compose backend. The first command
+reports counts by application. The second adds missing metadata using Reitti
+checkpoints or a recognized GPX exporter header. Rerunning the audit preserves
+explicit labels and unresolved files.
+
+```sh
+docker compose exec -T backend deno run -A --cached-only utils/backfill-location-sources.ts
+docker compose exec -T backend deno run -A --cached-only utils/backfill-location-sources.ts --apply
+```
+
+Source labels live on `location_imports.origin`. Map reads use the existing
+file references and apply a source filter before loading route geometry or
+aggregating presence. Source pickers load application counts on open and fetch
+one page of filenames when an application is expanded. Processing listens for
+import lifecycle changes. Source label changes require no processing job.
+
 #### Location import recovery
 
 Location imports use a two-phase `analyze → confirm` contract. Analysis may

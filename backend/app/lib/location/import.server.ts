@@ -1,9 +1,12 @@
+import type { LocationOrigin } from "@myceliasdk/location-sources.ts";
+import { originFromExporter } from "./sources.server.ts";
 import { createHash } from "node:crypto";
 import { ObjectId } from "bson";
 import type { Auth } from "@/lib/auth/core.server.ts";
 import { getMongoResource } from "@/lib/mongo/core.server.ts";
 import { getFsResource, uploadToGridFS } from "@/lib/mongo/fs.server.ts";
 import {
+  detectFormat,
   type ParsedBookmark,
   type ParsedMetadata,
   type ParsedPoint,
@@ -66,6 +69,7 @@ export interface LocationImportCounts {
 }
 
 export interface LocationImportPreview {
+  origin?: LocationOrigin;
   previewId: string;
   filename: string;
   format: TrackFormat;
@@ -808,18 +812,14 @@ export async function analyzeLocationDataset(
 export async function analyzeLocationFile(
   auth: Auth,
   file: { originalname: string; mimetype: string; buffer: Uint8Array },
+  originOverride?: LocationOrigin,
 ): Promise<LocationImportPreview> {
-  const format = file.originalname.toLowerCase().endsWith(".gpx")
-    ? "gpx"
-    : file.originalname.toLowerCase().endsWith(".kml")
-    ? "kml"
-    : file.originalname.toLowerCase().endsWith(".kmz")
-    ? "kmz"
-    : null;
+  const format = detectFormat(file.originalname);
   if (!format) throw new Error("UNSUPPORTED_FORMAT");
   const bytes = new Uint8Array(file.buffer);
   const contentHash = sha256(bytes);
   const dataset = parseTrackFile(format, bytes);
+  const origin = originOverride ?? originFromExporter(dataset.exporter);
   if (
     dataset.points.length === 0 && dataset.tracks.length === 0 &&
     dataset.bookmarks.length === 0
@@ -857,6 +857,7 @@ export async function analyzeLocationFile(
       format,
       contentHash,
       ...(stagedFileId ? { stagedFileId } : {}),
+      ...(origin ? { origin } : {}),
       status: "ready",
       parserVersion: LOCATION_PARSER_VERSION,
       pointHashVersion: LOCATION_POINT_HASH_VERSION,
@@ -868,7 +869,7 @@ export async function analyzeLocationFile(
       createdBy: auth.principal || "web",
     },
   });
-  return { previewId: String(previewId), expiresAt, ...analysis.public };
+  return { previewId: String(previewId), expiresAt, ...analysis.public, origin };
 }
 
 async function recordEntityMetadataConflicts(
@@ -1493,6 +1494,7 @@ export class StaleLocationPreviewError extends Error {
 export async function confirmLocationPreview(
   auth: Auth,
   previewIdString: string,
+  originOverride?: LocationOrigin,
 ): Promise<any> {
   if (!ObjectId.isValid(previewIdString)) throw new Error("PREVIEW_NOT_FOUND");
   const previewId = new ObjectId(previewIdString);
@@ -1535,6 +1537,8 @@ export async function confirmLocationPreview(
     throw new Error("PREVIEW_FILE_CHANGED");
   }
   const dataset = parseTrackFile(preview.format, bytes);
+  const origin: LocationOrigin | undefined = originOverride ?? preview.origin ??
+    originFromExporter(dataset.exporter);
   const analysis = await analyzeLocationDataset(
     mongo,
     preview.filename,
@@ -1555,6 +1559,7 @@ export async function confirmLocationPreview(
       previewId: String(previewId),
       expiresAt,
       ...analysis.public,
+      origin,
     };
     await mongo({
       action: "updateOne",
@@ -1565,6 +1570,7 @@ export async function confirmLocationPreview(
           revision: analysis.revision,
           analysisFingerprint: analysis.fingerprint,
           analysis: analysis.public,
+          ...(origin ? { origin } : {}),
           expiresAt,
         },
       },
@@ -1576,7 +1582,13 @@ export async function confirmLocationPreview(
     action: "findOneAndUpdate",
     collection: PREVIEWS,
     query: { _id: previewId, status: "ready" },
-    update: { $set: { status: "committing", commitStartedAt: new Date() } },
+    update: {
+      $set: {
+        status: "committing",
+        commitStartedAt: new Date(),
+        ...(origin ? { origin } : {}),
+      },
+    },
     options: { returnDocument: "after" },
   });
   if (!claimed) {
@@ -1621,6 +1633,7 @@ export async function confirmLocationPreview(
         doc: {
           _id: importId,
           filename: preview.filename,
+          ...(origin ? { origin } : {}),
           format: preview.format,
           contentHash: preview.contentHash,
           fileId: preview.stagedFileId,
@@ -1643,7 +1656,13 @@ export async function confirmLocationPreview(
         action: "updateOne",
         collection: IMPORTS,
         query: { _id: importId },
-        update: { $set: { status: "committing", lastError: null } },
+        update: {
+          $set: {
+            status: "committing",
+            lastError: null,
+            ...(origin ? { origin } : {}),
+          },
+        },
       });
     }
 

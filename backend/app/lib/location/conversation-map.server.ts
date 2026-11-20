@@ -1,3 +1,5 @@
+import type { LocationSourceFilter } from "@myceliasdk/location-sources.ts";
+import { locationSourceQuery } from "./sources.server.ts";
 import type { Db } from "mongodb";
 import {
   cellsForBounds,
@@ -105,6 +107,7 @@ export type MapDensityInput = {
   layers: Array<"presence" | "conversations">;
   maxClusters?: number;
   cacheScope?: string;
+  sourceFilter?: LocationSourceFilter;
 };
 
 type SummaryCacheEntry = {
@@ -791,10 +794,11 @@ function presenceClusters(
   }));
 }
 
-function cacheKey(input: MapDensityInput, revision: number): string {
+function cacheKey(input: MapDensityInput, revision: number, sourceQuery: object): string {
   return JSON.stringify({
     scope: input.cacheScope ?? "default",
     revision,
+    sourceQuery,
     start: input.start.getTime(),
     end: input.end.getTime(),
     bounds: input.bounds,
@@ -837,15 +841,20 @@ export async function getMapDensity(db: Db, input: MapDensityInput) {
     LOCATION_CONVERSATION_STATE,
   ).findOne({ _id: "current" }, { maxTimeMS: 1_000 });
   const revision = Number(state?.revision ?? 0);
-  return await cachedSummary(cacheKey(input, revision), async () => {
+  const showPresence = input.layers.includes("presence");
+  const sourceQuery = showPresence
+    ? await locationSourceQuery(db, input.sourceFilter, "importIds", true)
+    : {};
+  return await cachedSummary(cacheKey(input, revision, sourceQuery), async () => {
     const requestedCellZoom = selectMapCellZoom(input.zoom);
-    const stays = input.layers.includes("presence")
+    const stays = showPresence
       ? await db.collection<LocationSegmentProjection>(SEGMENTS).find(
         {
           type: { $in: ["stay", "manual"] },
           start: { $lt: input.end },
           end: { $gt: input.start },
           loc: { $exists: true },
+          ...sourceQuery,
         },
         { projection: { type: 1, start: 1, end: 1, loc: 1 } },
       ).toArray()

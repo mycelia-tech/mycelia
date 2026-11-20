@@ -25,9 +25,9 @@ Deno.test(
     const newerImport = new ObjectId();
     const reimport = new ObjectId();
     await db.collection("location_imports").insertMany([
-      { _id: firstImport, filename: "first.kmz", committedAt: new Date(1000) },
-      { _id: newerImport, filename: "second.gpx", committedAt: new Date(2000) },
-      { _id: reimport, filename: "reimport.gpx", committedAt: new Date(3000) },
+      { _id: firstImport, filename: "first.kmz", committedAt: new Date(1000), origin: { provider: "comaps" } },
+      { _id: newerImport, filename: "second.gpx", committedAt: new Date(2000), origin: { provider: "reitti" } },
+      { _id: reimport, filename: "reimport.gpx", committedAt: new Date(3000), origin: { provider: "reitti" } },
     ]);
     await db.collection("location_tracks").insertMany([
       {
@@ -99,6 +99,26 @@ Deno.test(
     ).toBe(2);
     expect(detail.connectors).toEqual([]);
     expect(detail.conflicts).toHaveLength(1);
+    const onlyCoMaps = await getMapRouteDetail(db, {
+      ...query,
+      sourceFilter: { excludedProviders: ["reitti"], excludedImportIds: [] },
+    });
+    const visibleTracks = (result: typeof detail) =>
+      [...new Set(result.fragments.map((fragment) => String(fragment.trackId)))];
+    expect(visibleTracks(onlyCoMaps)).toEqual([capeId.toString()]);
+    expect(onlyCoMaps.conflicts).toEqual([]);
+
+    const noImports = await getMapRouteDetail(db, {
+      ...query,
+      includeConnectors: true,
+      sourceFilter: {
+        excludedProviders: ["reitti", "unknown"],
+        excludedImportIds: [String(firstImport)],
+      },
+    });
+    expect(noImports.fragments).toEqual([]);
+    expect(noImports.connectors).toEqual([]);
+
     const localDetail = await getMapRouteDetail(db, {
       ...query,
       bounds: { west: 44.79, east: 44.82, south: 41.69, north: 41.71 },

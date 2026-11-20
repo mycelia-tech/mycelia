@@ -1,3 +1,7 @@
+import { useEffect, useState } from "react";
+import { locationProviderLabel } from "@myceliasdk/location-sources.ts";
+import { LocationProviderSelect } from "./LocationProviderSelect";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Crosshair, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -5,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import {
   useDeleteLocationImport,
   useLocationImports,
+  useLocationImportSources,
+  useUpdateLocationImportSource,
 } from "@/hooks/useLocationQueries";
 import type { LocationImport } from "@/types/location";
 import { useActionDialog } from "@/components/ActionDialogProvider";
@@ -14,6 +20,7 @@ interface ImportsListProps {
   /** Fly the map (or navigate) to the import's time range. */
   onShowOnMap?: (imp: LocationImport) => void;
   emptyText?: string;
+  manageSources?: boolean;
 }
 
 function formatBytes(value: number | undefined): string {
@@ -32,8 +39,26 @@ export function ImportsList({
   enabled = true,
   onShowOnMap,
   emptyText = "No tracks imported yet.",
+  manageSources = false,
 }: ImportsListProps) {
-  const { data: imports, isLoading } = useLocationImports(enabled);
+  const [filename, setFilename] = useState("");
+  const [search, setSearch] = useState("");
+  const [provider, setProvider] = useState("");
+  const [sort, setSort] = useState<"recent" | "source">("recent");
+  const [page, setPage] = useState(0);
+  const [editing, setEditing] = useState<string>();
+  const { data: imports, isLoading, isError } = useLocationImports(enabled, manageSources
+    ? { search, provider: provider || undefined, sort, skip: page * 100 }
+    : undefined);
+  const { data: sources } = useLocationImportSources(enabled && manageSources);
+  const updateSource = useUpdateLocationImportSource();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(filename.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [filename]);
   const deleteImport = useDeleteLocationImport();
   const { confirmAction } = useActionDialog();
   const number = new Intl.NumberFormat();
@@ -59,16 +84,45 @@ export function ImportsList({
     }
   };
 
-  if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
-  }
-  if (!imports || imports.length === 0) {
-    return <p className="text-sm text-muted-foreground">{emptyText}</p>;
-  }
+  const groups = [...(sources ?? [])].sort((a, b) =>
+    locationProviderLabel(a.provider).localeCompare(locationProviderLabel(b.provider))
+  );
+  const selectClass = "h-9 rounded-md border bg-background px-2 text-sm";
 
   return (
-    <div className="space-y-1.5">
-      {imports.map((imp) => (
+    <div className="space-y-2">
+      {manageSources && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input className="w-full sm:w-48" placeholder="Find by filename…" aria-label="Find imports by filename"
+            value={filename} onChange={(event) => setFilename(event.target.value)} />
+          <select className={selectClass} aria-label="Filter by source application" value={provider}
+            onChange={(event) => {
+              setProvider(event.target.value);
+              setPage(0);
+            }}>
+            <option value="">All applications</option>
+            {groups.map(({ provider, count }) => (
+              <option value={provider} key={provider}>{locationProviderLabel(provider)} ({count})</option>
+            ))}
+          </select>
+          <select className={selectClass} aria-label="Sort imports" value={sort}
+            onChange={(event) => {
+              setSort(event.target.value === "source" ? "source" : "recent");
+              setPage(0);
+            }}>
+            <option value="recent">Newest first</option>
+            <option value="source">Application, then filename</option>
+          </select>
+        </div>
+      )}
+      {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {isError && <p role="alert" className="text-sm text-destructive">Could not load imports.</p>}
+      {!isLoading && !isError && !imports?.length && (
+        <p className="text-sm text-muted-foreground">
+          {provider || search ? "No matching imports." : emptyText}
+        </p>
+      )}
+      {(imports ?? []).map((imp) => (
         <div
           key={String(imp._id)}
           className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
@@ -88,6 +142,26 @@ export function ImportsList({
                   {imp.status === "parsed" ? "processing" : imp.status}
                 </Badge>
               )}
+            </div>
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{locationProviderLabel(imp.origin?.provider)}</span>
+              {manageSources && imp.committedAt && (editing === String(imp._id)
+                ? (
+                  <LocationProviderSelect
+                    provider={imp.origin?.provider}
+                    label={`Source application for ${imp.filename}`}
+                    disabled={updateSource.isPending}
+                    onChange={(provider) => {
+                      updateSource.mutate({ id: String(imp._id), provider }, {
+                        onSuccess: () => setEditing(undefined),
+                        onError: (error) => toast.error(error.message),
+                      });
+                    }}
+                  />
+                )
+                : <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
+                    aria-label={`Edit source for ${imp.filename}`}
+                    onClick={() => setEditing(String(imp._id))}>Edit source</Button>)}
             </div>
             <div className="text-xs text-muted-foreground">
               {imp.receipt
@@ -272,6 +346,15 @@ export function ImportsList({
           </div>
         </div>
       ))}
+      {manageSources && (page > 0 || imports?.length === 100) && (
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="outline" size="sm" disabled={page === 0}
+            onClick={() => setPage((current) => current - 1)}>Previous</Button>
+          <span className="text-xs text-muted-foreground">Page {page + 1}</span>
+          <Button variant="outline" size="sm" disabled={imports?.length !== 100}
+            onClick={() => setPage((current) => current + 1)}>Next</Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -65,6 +65,8 @@ export interface ParsedBookmark extends ParsedMetadata, ParsedCoordinate {
 }
 
 export interface ParseResult {
+  /** Application declared in the source format, when provided. */
+  exporter?: string;
   /** Canonical timestamped observations only. Bookmarks never appear here. */
   points: ParsedPoint[];
   tracks: ParsedTrack[];
@@ -337,6 +339,7 @@ export function parseGpx(text: string): ParseResult {
     points: [],
     tracks: [],
     bookmarks: [],
+    exporter: nonEmptyString(gpx["@_creator"]),
     datasetMetadata: metadataFromGpx(gpx.metadata ?? gpx),
     skipped: 0,
     untimedCoordinates: 0,

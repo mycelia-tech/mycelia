@@ -62,6 +62,8 @@ verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-a
   timeline, zoom-aware full route geometry with reviewable source conflicts,
   dwell/visit density, saved places/source tracks, and persistent paginated
   conversation clusters that do not scan raw objects.
+- Independent marker and route source filters by exporting application and
+  file. Maps settings can search, sort and correct the source of past imports.
 - Fully offline reverse geocoding (GeoNames) and automatic timezone periods
   derived from your movements; manual location assignment for ranges without
   data. See [LOCATIONS.md](docs/LOCATIONS.md) for the full manual.

@@ -1,3 +1,5 @@
+import type { LocationSourceFilter } from "@myceliasdk/location-sources.ts";
+import { locationSourceQuery } from "./sources.server.ts";
 import type { Db, MongoClient, ObjectId } from "mongodb";
 import simplify from "simplify-js";
 import type { MapBounds } from "./map-spatial.ts";
@@ -599,6 +601,7 @@ export async function getMapRouteDetail(
     gapDistanceM?: number;
     gapMinutes?: number;
     reviewTrackIds?: unknown[];
+    sourceFilter?: LocationSourceFilter;
   },
 ) {
   const deadline = performance.now() + ROUTE_READ_TIMEOUT_MS;
@@ -623,9 +626,18 @@ export async function getMapRouteDetail(
       detailLimited: false,
     };
   }
+  const sourceQuery = await locationSourceQuery(db, input.sourceFilter, "sourceRefs.importId");
+  const selectedIds = Object.keys(sourceQuery).length > 0
+    ? (await db.collection(TRACKS).find(
+      sourceQuery,
+      { projection: { _id: 1 }, ...readOptions() },
+    ).toArray()).map((track) => track._id)
+    : undefined;
+  const selectedKeys = selectedIds && new Set(selectedIds.map(String));
+  const trackQuery = input.reviewTrackIds ?? selectedIds;
   const rows = await db.collection<FragmentRow>(LOCATION_ROUTE_FRAGMENTS).find({
     generation: state.activeGeneration,
-    ...(input.reviewTrackIds ? { trackId: { $in: input.reviewTrackIds } } : {}),
+    ...(trackQuery ? { trackId: { $in: trackQuery } } : {}),
     $or: [
       { timeStart: { $exists: false } },
       { timeStart: { $lte: input.end }, timeEnd: { $gte: input.start } },
@@ -790,6 +802,7 @@ export async function getMapRouteDetail(
     const storedGaps = db.collection<StoredConnector>(LOCATION_ROUTE_BREAKS)
       .find({
         generation: state.activeGeneration,
+        ...(trackQuery ? { trackId: { $in: trackQuery } } : {}),
         $or: [
           { "from.ts": { $exists: false } },
           { "from.ts": { $lte: input.end }, "to.ts": { $gte: input.start } },
@@ -877,7 +890,8 @@ export async function getMapRouteDetail(
     return true;
   });
   const conflicts = overlappingConflicts.filter((conflict: any) =>
-    conflict.status === "pending"
+    conflict.status === "pending" &&
+    (!selectedKeys || conflict.trackIds?.every((id: unknown) => selectedKeys.has(String(id))))
   );
   const sourceTracks = input.includeSourceTracks && fragments.length
     ? await db.collection(TRACKS).find({
