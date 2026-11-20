@@ -799,12 +799,14 @@ model name Mycelia sends for request validation. It does not load a model into
 the GPU. The model that is actually loaded is controlled by `ASR_MODEL` in the
 Portainer stack and is loaded when the Whisper container starts.
 
-Whisper's internal VAD filter is controlled by the single stack variable
-`WHISPER_VAD_FILTER` (default `true` in the GPU compose files). When enabled,
-the proxy passes `vad_filter=true` to Whisper and records the effective value in
-`transcriptions.metadata.whisperVadFilter`. Set it to `false` and redeploy the
-proxy if this filtering should be disabled. The status endpoint exposes the
-current value as `whisperVadFilter`.
+Keep `WHISPER_VAD_FILTER=true` on the GPU file proxy, which is the default in
+the GPU Compose files. Mycelia's chunk VAD selects which audio to send. Faster
+Whisper's internal VAD filters that audio for decoding and maps the resulting
+timestamps back to the input. This matters when Mycelia adds the preceding
+chunk as context for a short utterance. The effective setting is exposed as
+`whisperVadFilter` by the proxy's status endpoint and saved in
+`transcriptions.metadata.whisperVadFilter` for new transcriptions. See
+[shared audio VAD checks](gpu/SHARED_AUDIO.md#file-and-live-voice-activity-detection).
 
 To change it, for example to `large-v3-turbo`:
 

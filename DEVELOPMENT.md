@@ -1493,6 +1493,15 @@ Speech-to-text is a separate external dependency. An unavailable STT provider
 blocks transcription but does not block conversation extraction or summarization
 when their LLM provider is healthy.
 
+#### Check speech boundaries after transcription
+
+For an isolated speech chunk, the sequence creator may include the preceding
+10 s chunk as context. A transcription segment at offset zero can include that
+silent lead-in in the conversation's playback range. Check the effective
+`whisperVadFilter` on the provider and compare the segment offset with the
+actual audio or diarization before changing the ingest VAD threshold. See
+[shared audio VAD checks](gpu/SHARED_AUDIO.md#file-and-live-voice-activity-detection).
+
 ### Automatic pending-work contract
 
 Every worker with a change-event or interval trigger must declare a cheap,

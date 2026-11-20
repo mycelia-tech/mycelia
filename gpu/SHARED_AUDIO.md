@@ -89,6 +89,28 @@ briefly stop new proxy admissions before replacement. Retain previous images,
 Compose files, environment and volumes for rollback. Recreate only affected
 services; no database or Redis restart is required.
 
+## File and live voice activity detection
+
+Keep the default `WHISPER_VAD_FILTER=true` in the file proxy's deployment
+environment. Mycelia's ingest Silero VAD selects 10-second chunks for
+transcription. It lets the sequence creator add a neighboring chunk for
+context on short speech. Faster Whisper applies its own VAD during decoding
+and maps timestamps back to the supplied audio. The private live adapter
+already requests this filter independently, with word timestamps.
+
+Check the file proxy's authenticated `GET /v1/stt/status` and the
+`X-Whisper-VAD-Filter` header on a file response. An explicit `false` in a
+rendered deployment overrides the Compose default. Change the canonical
+configuration and recreate only the file proxy once its requests have finished.
+Existing transcriptions retain the timestamps and VAD provenance of their
+original run.
+
+Use public fixtures to check leading silence, short quiet speech and
+silence-only input. Compare the first speech timestamp to the input offset and
+check that the short utterance survives. A segment can still span an internal
+pause. Clients that need sub-segment timing can request word timestamps with
+`timestamp_granularities[]=word` and use the word intervals for display.
+
 ## Updating an existing deployment
 
 Keep the existing Compose project names (`mycelia-stt` and `sky-livekit` on
