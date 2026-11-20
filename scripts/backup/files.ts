@@ -44,6 +44,7 @@ import {
   runResticJsonBackup,
 } from "./restic-io.ts";
 import { RESTIC_BACKUP_TIMEOUT_MS } from "./limits.ts";
+import { assertOmittedRootsAbsent } from "./sources.ts";
 
 export type FilesDependencies = {
   runner?: Runner;
@@ -199,6 +200,12 @@ export async function runFilesBackup(
           bytes: artifacts.sourceBytes,
           total: manifest.coverage.total,
           covered: manifest.coverage.covered,
+          ...(manifest.omittedRoots?.length
+            ? {
+              skipped: manifest.coverage.skipped ?? 0,
+              omittedRoots: manifest.omittedRoots.length,
+            }
+            : {}),
           missing: 0,
           unreadable: 0,
           outsideRoots: 0,
@@ -289,6 +296,7 @@ export async function runFilesBackup(
             readback.byteCount !== digest.byteCount
           ) throw failureError("RESTIC_VERIFY_FAILED");
         }
+        await assertOmittedRootsAbsent(manifest);
         await cleanup();
         const accepted: FilesAcceptedReceipt = {
           schema: 1,

@@ -3,6 +3,26 @@ import { Buffer } from "node:buffer";
 import { Binary as MongoBinary } from "mongodb";
 import { teeOutput } from "./subprocess.ts";
 
+// ffmpeg writes mono PCM16 at 16 kHz. Read the data chunk size so optional
+// WAV metadata (including a LIST chunk) is never counted as audio.
+export function combinedWavDurationSeconds(wav: Uint8Array): number {
+  const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
+  const decoder = new TextDecoder();
+  let bytesPerSecond = 0;
+  for (let offset = 12; offset + 8 <= wav.length;) {
+    const id = decoder.decode(wav.subarray(offset, offset + 4));
+    const size = view.getUint32(offset + 4, true);
+    const start = offset + 8;
+    if (start + size > wav.length) break;
+    if (id === "fmt " && size >= 16 && view.getUint16(start, true) === 1) {
+      bytesPerSecond = view.getUint32(start + 8, true);
+    }
+    if (id === "data" && bytesPerSecond > 0) return size / bytesPerSecond;
+    offset = start + size + (size % 2);
+  }
+  throw new Error("Combined WAV has no readable PCM data chunk");
+}
+
 export async function combineChunks(chunks: any[]): Promise<Uint8Array> {
   const tempFiles: string[] = [];
 

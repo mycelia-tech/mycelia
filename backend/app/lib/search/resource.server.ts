@@ -11,7 +11,7 @@ const searchTranscriptionsSchema = z.object({
     "Search through transcribed audio recordings. Use this to find what was said in voice recordings, meetings, or any transcribed content.",
   ),
   query: z.string().describe(
-    "Search text to find in transcriptions (case-insensitive, partial match). Examples: 'therapy', 'project deadline', 'dinner plans'",
+    "Case-insensitive partial match. Use an empty string with startDate and endDate to list recordings in a date range without a keyword.",
   ),
   startDate: zDateOrRelativeTime(
     "Filter results from this date onwards (ISO 8601 or relative like '7d' for 7 days ago)",

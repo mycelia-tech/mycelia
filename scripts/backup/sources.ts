@@ -13,12 +13,16 @@ export type Coverage = {
   outsideRoots: number;
   invalid: number;
   complete: boolean;
+  skipped?: number;
 };
 export type SourceManifest = {
   backupId: string;
   labels: Array<{ label: string; canonicalRoot: string }>;
   files: string[];
   coverage: Coverage;
+  omittedRoots?: Array<
+    { path: string; claimRoots: string[]; reason: "optional_source_absent" }
+  >;
 };
 type ActivePath = { active: boolean; path?: string };
 export type ProtectedConfig = {
@@ -63,6 +67,45 @@ export type ManifestOptions = {
 };
 const DEFAULT_ARCHIVE_ROOT = "/Volumes/TM_data/iCloudArchive";
 const DEFAULT_IMPORT_ROOT = "/Users/pk/Pictures/Mycelia-Import";
+
+// Only absence of an explicitly selected entire root is optional. Permission
+// errors, dangling symlinks and files disappearing in a present root fail.
+export async function optionalSourceAbsent(
+  config: Pick<BackupConfig, "optionalSourceRoots">,
+  path: string,
+): Promise<boolean> {
+  if (!config.optionalSourceRoots?.includes(path)) return false;
+  let current = path;
+  while (true) {
+    try {
+      const info = await Deno.lstat(current);
+      if (info.isSymlink || !info.isDirectory) {
+        throw failureError("SOURCE_COVERAGE_INCOMPLETE");
+      }
+      return current !== path;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
+}
+
+export async function assertOmittedRootsAbsent(
+  manifest: SourceManifest,
+): Promise<void> {
+  for (const item of manifest.omittedRoots ?? []) {
+    if (
+      !await optionalSourceAbsent(
+        { optionalSourceRoots: [item.path] },
+        item.path,
+      )
+    ) {
+      throw failureError("SOURCE_COVERAGE_INCOMPLETE");
+    }
+  }
+}
 const deniedComponents = new Set([
   ".git",
   "node_modules",
@@ -134,10 +177,15 @@ function safeRelative(path: string): boolean {
       part !== ".." && part !== "." && part !== ""
     );
 }
-function excluded(path: string, explicitlyReviewed = false): boolean {
+function excluded(
+  path: string,
+  explicitlyReviewed = false,
+  allowStaging = false,
+): boolean {
   const parts = path.split(sep);
   return parts.some((part) =>
-    deniedComponents.has(part) ||
+    (deniedComponents.has(part) &&
+      !(allowStaging && part === "voice-memos-staging")) ||
     (part === ".env.backup" && !explicitlyReviewed) ||
     part.startsWith(".env.backup-")
   ) ||
@@ -265,12 +313,28 @@ export async function buildSourceManifest(
   const stage = options.voiceMemos?.publishedAudioRoot ??
     config.voiceMemosRoot ??
     join(config.homeDir, "Library/mycelia/voice-memos-staging/audio-original");
+  const archiveRoot = options.archiveRoot ?? DEFAULT_ARCHIVE_ROOT;
+  const fallbackVoiceRoot = await optionalSourceAbsent(config, archiveRoot)
+    ? stage
+    : undefined;
+  const configuredRoots = [
+    options.archiveRoot ?? DEFAULT_ARCHIVE_ROOT,
+    config.mediaSourceHostPath,
+    config.mediaSourceExtraHostPath,
+  ];
+  if (
+    config.optionalSourceRoots?.some((root) => !configuredRoots.includes(root))
+  ) {
+    throw failureError("CONFIG_INVALID");
+  }
   for (
     const path of [
       config.stateDir,
-      dirname(stage),
-      ...(config.voiceMemosRoot ? [dirname(config.voiceMemosRoot)] : []),
-      join(config.homeDir, "Library/mycelia/voice-memos-staging"),
+      ...(fallbackVoiceRoot ? [] : [
+        dirname(stage),
+        ...(config.voiceMemosRoot ? [dirname(config.voiceMemosRoot)] : []),
+        join(config.homeDir, "Library/mycelia/voice-memos-staging"),
+      ]),
       // .env.example documents these Mongo/Redis bind-mount defaults.
       join(config.homeDir, ".mycelia/data/mongo"),
       join(config.homeDir, ".mycelia/data/redis"),
@@ -287,7 +351,11 @@ export async function buildSourceManifest(
     }
   }
   const denied = (path: string, explicitlyReviewed = false) =>
-    excluded(path, explicitlyReviewed) ||
+    excluded(
+      path,
+      explicitlyReviewed,
+      !!fallbackVoiceRoot && contains(fallbackVoiceRoot, path),
+    ) ||
     deniedRoots.some((root) => contains(root, path));
   if (options.voiceMemos && config.voiceMemosRoot) {
     try {
@@ -388,11 +456,11 @@ export async function buildSourceManifest(
       record(error);
     }
   }
-  const archiveRoot = options.archiveRoot ?? DEFAULT_ARCHIVE_ROOT;
   const roots = [
     { path: archiveRoot, label: "voice-memos-archive", optional: false },
     { path: config.mediaSourceHostPath, label: "media", optional: false },
     { path: config.mediaSourceExtraHostPath, label: "media", optional: false },
+    { path: fallbackVoiceRoot, label: "local-voice-memos", optional: true },
     {
       path: options.picturesImportRoot ?? DEFAULT_IMPORT_ROOT,
       label: "media",
@@ -403,6 +471,17 @@ export async function buildSourceManifest(
     if (item.path === undefined) continue;
     try {
       absolute(item.path);
+      if (await optionalSourceAbsent(config, item.path)) {
+        manifest.omittedRoots ??= [];
+        if (!manifest.omittedRoots.some((r) => r.path === item.path)) {
+          manifest.omittedRoots.push({
+            path: item.path,
+            claimRoots: [item.path],
+            reason: "optional_source_absent",
+          });
+        }
+        continue;
+      }
       const root = await Deno.realPath(item.path);
       if (
         !(await Deno.stat(root)).isDirectory ||
@@ -532,6 +611,7 @@ export async function reconcileSourcePaths(
     ...manifest.coverage,
     total: sources.filteredCount,
     covered: 0,
+    ...(manifest.omittedRoots?.length ? { skipped: 0 } : {}),
   };
   const files = new Set(manifest.files);
   if (
@@ -550,6 +630,14 @@ export async function reconcileSourcePaths(
   for (const entry of sources.records) {
     try {
       absolute(entry.path);
+      if (
+        manifest.omittedRoots?.some((item) =>
+          item.claimRoots.some((root) => contains(root, entry.path))
+        )
+      ) {
+        coverage.skipped = (coverage.skipped ?? 0) + 1;
+        continue;
+      }
       let canonical: string;
       if (
         voiceMemos &&
@@ -570,6 +658,8 @@ export async function reconcileSourcePaths(
       problem(coverage, error);
     }
   }
-  coverage.complete = coverage.complete && coverage.covered === coverage.total;
+  await assertOmittedRootsAbsent(manifest);
+  coverage.complete = coverage.complete &&
+    coverage.covered + (coverage.skipped ?? 0) === coverage.total;
   return { ...manifest, files: [...files].sort(), coverage };
 }

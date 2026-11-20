@@ -3,8 +3,16 @@ import {
   chatStatusLabel,
   isChatRunActive,
   isNearBottom,
+  messageText,
   shouldNotifyForChatEvent,
 } from "./chat";
+
+it("copies only readable text when an assistant returns raw tool syntax", () => {
+  const text = "Partial answer\n<｜DSML｜tool_calls>";
+  const message = { id: "test", parts: [{ type: "text" as const, text }] };
+  expect(messageText({ ...message, role: "assistant" })).toBe("Partial answer");
+  expect(messageText({ ...message, role: "user" })).toBe(text);
+});
 
 describe("chatStatusLabel", () => {
   it("prioritizes approval and live SDK states", () => {

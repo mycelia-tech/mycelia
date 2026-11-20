@@ -1,129 +1,180 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
-import _ from "lodash";
 import { useTimelineRange } from "../stores/timelineRange.ts";
+import {
+  clampTimelineRange,
+  MAX_TIMELINE_DATE,
+  MAX_TIMELINE_SPAN,
+  MIN_TIMELINE_DATE,
+  MIN_TIMELINE_SPAN,
+  normalizeTimelineRange,
+  paddedTimelineBounds,
+  timelineBaseScale,
+  type TimelineBounds,
+  timelineTransform,
+} from "@/lib/timelineViewport";
 
-interface TimelineDimensions {
-  width: number;
-  height: number;
-}
-
-export function useTimeline() {
-  const [containerRef, setContainerRef] = useState<HTMLDivElement | null>(null);
-  const [dimensions, setDimensions] = useState<TimelineDimensions>({
-    width: 800,
-    height: 100,
-  });
-  const [transform, setTransform] = useState<d3.ZoomTransform>(d3.zoomIdentity);
-
+export function useTimeline(dataBounds?: TimelineBounds) {
+  const bounds = useMemo(() => paddedTimelineBounds(dataBounds), [dataBounds]);
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(800);
   const { start, end, setRange } = useTimelineRange();
+  // Keep the reference domain fixed: never apply a transform to an already zoomed range.
+  const base = useRef(normalizeTimelineRange(start, end));
+  const timeScale = useMemo(
+    () => timelineBaseScale(base.current.start, base.current.end, width),
+    [width],
+  );
+  const transform = useMemo(
+    () => timelineTransform(timeScale, width, start, end),
+    [timeScale, width, start, end],
+  );
+  const currentTransform = useRef(transform);
+  currentTransform.current = transform;
+  const pending = useRef<ReturnType<typeof normalizeTimelineRange> | null>(
+    null,
+  );
+  const frame = useRef<number | null>(null);
+  const cancelPending = useCallback(() => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+    pending.current = null;
+  }, []);
 
   useEffect(() => {
-    if (!containerRef) return;
-    const ro = new ResizeObserver(([{ contentRect }]) => {
-      setDimensions((prev) => ({ ...prev, width: contentRect.width }));
+    if (!container) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setWidth(entry.contentRect.width);
     });
-    ro.observe(containerRef);
-    return () => ro.disconnect();
-  }, [containerRef]);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [container]);
 
-  const timeScale = useMemo(() =>
-    d3.scaleTime()
-      .domain([start, end])
-      .range([0, dimensions.width]), [dimensions.width]);
-
-  const onZoom = useCallback(
-    _.debounce((start: Date, end: Date) => {
-      setRange(start, end);
-    }, 10),
-    [setRange],
-  );
-
-  const handleZoom = useCallback(
-    (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
-      const t = event.transform;
-      setTransform(t);
-
-      const [start, end] = t.rescaleX(timeScale).domain();
-      if (!isNaN(start.getTime())) onZoom(start, end);
-
-      d3.selectAll<SVGSVGElement, unknown>(".zoomable, .zoomed").each(function () {
-        const svg = d3.select(this);
-        const node = svg.node();
-
-        if (!node || node.contains(event.sourceEvent?.target as Element)) {
-          return;
-        }
-
-        svg.property("__zoom", t);
-      });
-    },
-    [timeScale, onZoom],
-  );
-
-  const zoomBehavior = useMemo(() =>
-    d3.zoom<SVGSVGElement, unknown>()
-      .on("zoom", handleZoom)
-      .wheelDelta((event) => -event.deltaY * 0.002)
+  const zoomBehavior = useMemo(() => {
+    const baseSpan = +base.current.end - +base.current.start;
+    return d3.zoom<SVGSVGElement, unknown>()
+      .extent([[0, 0], [width, 100]])
+      .scaleExtent([
+        baseSpan /
+        Math.min(
+          MAX_TIMELINE_SPAN,
+          bounds ? +bounds.end - +bounds.start : MAX_TIMELINE_SPAN,
+        ),
+        baseSpan / MIN_TIMELINE_SPAN,
+      ])
+      .translateExtent([[
+        timeScale(bounds?.start ?? new Date(MIN_TIMELINE_DATE)),
+        -Infinity,
+      ], [
+        timeScale(bounds?.end ?? new Date(MAX_TIMELINE_DATE)),
+        Infinity,
+      ]])
       .touchable(() => true)
-      .filter((event) => {
-        if (event.type === "dblclick") return false;
-        if (event.button && event.button !== 0) return false;
-        return true;
-      }), [
-    handleZoom,
-    dimensions.width,
-    dimensions.height,
-  ]);
+      .filter((event) => event.type !== "dblclick" && !event.button)
+      .on("zoom", (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
+        const [s, e] = event.transform.rescaleX(timeScale).domain();
+        if (!Number.isFinite(+s) || !Number.isFinite(+e)) return;
+        pending.current = clampTimelineRange(s, e, bounds);
+        const t = timelineTransform(
+          timeScale,
+          width,
+          pending.current.start,
+          pending.current.end,
+        );
+        currentTransform.current = t;
+        d3.select(container).selectAll<SVGSVGElement, unknown>(
+          ".zoomable, .zoomed",
+        ).property("__zoom", t);
+        if (frame.current === null) {
+          frame.current = requestAnimationFrame(() => {
+            frame.current = null;
+            if (pending.current) {
+              setRange(pending.current.start, pending.current.end);
+            }
+            pending.current = null;
+          });
+        }
+      });
+  }, [container, timeScale, width, setRange, bounds]);
 
   useEffect(() => {
-    const svgs = d3.selectAll<SVGSVGElement, unknown>(".zoomable");
-
-    svgs.each(function () {
-      const svg = d3.select(this);
-      const node = svg.node();
-
-      if (node) {
-        node.style.touchAction = "none";
-        node.style.webkitUserSelect = "none";
-        node.style.userSelect = "none";
-      }
-
-      svg.call(zoomBehavior as any);
-      svg.property("__zoom", transform);
-    });
-
-    return () => {
-      svgs.on("zoom", null);
+    if (!container) return;
+    const attached = new Set<SVGSVGElement>();
+    const attach = () => {
+      container.querySelectorAll<SVGSVGElement>(".zoomable").forEach((node) => {
+        if (attached.has(node)) return;
+        attached.add(node);
+        d3.select(node).call(zoomBehavior).property(
+          "__zoom",
+          currentTransform.current,
+        );
+      });
     };
-  }, [zoomBehavior, dimensions.width, dimensions.height]);
+    attach();
+    const observer = new MutationObserver(attach);
+    observer.observe(container, { childList: true, subtree: true });
+    return () => {
+      cancelPending();
+      observer.disconnect();
+      for (const node of attached) d3.select(node).on(".zoom", null);
+    };
+  }, [container, zoomBehavior, cancelPending]);
+
+  useEffect(() => {
+    if (!container) return;
+    d3.select(container).selectAll<SVGSVGElement, unknown>(".zoomable, .zoomed")
+      .property("__zoom", transform);
+  }, [container, transform]);
 
   const zoomTo = useCallback((newStart: Date, newEnd: Date) => {
-    if (!dimensions.width) return;
-    console.log("Zooming to", newStart, newEnd);
+    cancelPending();
+    const range = clampTimelineRange(newStart, newEnd, bounds);
+    setRange(range.start, range.end);
+  }, [setRange, cancelPending, bounds]);
 
-    const s0 = timeScale(newStart);
-    const s1 = timeScale(newEnd);
+  useEffect(() => {
+    const range = clampTimelineRange(start, end, bounds);
+    if (+range.start !== +start || +range.end !== +end) {
+      zoomTo(range.start, range.end);
+    }
+  }, [start, end, bounds, zoomTo]);
 
-    if (s0 === undefined || s1 === undefined || s0 === s1) return;
-
-    const k = dimensions.width / (s1 - s0);
-    const tx = -s0 * k;
-
-    const t = d3.zoomIdentity.translate(tx, 0).scale(k);
-
-    d3.selectAll<SVGSVGElement, unknown>(".zoomable, .zoomed")
-      .transition()
-      .duration(750)
-      .call(zoomBehavior.transform as any, t);
-  }, [dimensions.width, timeScale, zoomBehavior]);
+  useEffect(() => {
+    if (!container) return;
+    // Forward wheel gestures over gaps and labels to the ruler's D3 handler.
+    const onWheel = (event: WheelEvent) => {
+      if (
+        (event.target as Element).closest("input,select,button,[role=dialog]")
+      ) return;
+      event.preventDefault();
+      if ((event.target as Element).closest(".zoomable")) return;
+      const ruler = container.querySelector<SVGSVGElement>(".zoomable");
+      if (!ruler) return;
+      event.preventDefault();
+      ruler.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: event.deltaY,
+          deltaX: event.deltaX,
+          deltaMode: event.deltaMode,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          bubbles: false,
+          cancelable: true,
+        }),
+      );
+    };
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => container.removeEventListener("wheel", onWheel);
+  }, [container]);
 
   return {
-    containerRef: setContainerRef,
-    dimensions,
+    containerRef: setContainer,
+    dimensions: { width, height: 100 },
     transform,
     timeScale,
-    width: dimensions.width,
+    width,
     zoomTo,
   };
 }

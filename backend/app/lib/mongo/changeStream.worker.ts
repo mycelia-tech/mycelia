@@ -4,6 +4,7 @@ import {
   getRootDB,
 } from "./core.server.ts";
 import { publishEvent } from "@/lib/events/publisher.ts";
+import { invalidateLocationPointCount } from "@/lib/location/point-count-cache.ts";
 import type { ChangeStreamDocument } from "mongodb";
 import { debounce } from "@std/async/debounce";
 import {
@@ -330,6 +331,15 @@ async function publishMongoChange(
   // This is an internal durable work queue. Its insert/delete churn has no UI
   // consumer and must not produce websocket invalidations.
   if (shouldSuppressMongoChange(collectionName)) return;
+  // Importing a batch can mark an already stale route projection dirty many
+  // times. Only changes to the published geometry or its status affect maps.
+  if (
+    collectionName === "location_route_projection_state" &&
+    operationType === "update" &&
+    !eventData.changedFields.some((field) =>
+      ["activeGeneration", "revision", "status", "ready"].includes(field)
+    )
+  ) return;
 
   if (
     [
@@ -413,6 +423,16 @@ export async function startChangeStreamWorker(): Promise<void> {
             ? change.ns.coll
             : undefined;
           if (!collectionName || collectionName.startsWith("system.")) return;
+          if (collectionName === "location_points") {
+            const fields = change.operationType === "update"
+              ? normalizeChangedFields(change.updateDescription)
+              : null;
+            if (!fields || fields.some((field) =>
+              field === "visible" || field === "selection"
+            )) {
+              invalidateLocationPointCount(db.databaseName);
+            }
+          }
           try {
             const operationType = change.operationType;
             let documentId: string;

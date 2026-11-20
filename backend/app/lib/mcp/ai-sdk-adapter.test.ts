@@ -66,6 +66,19 @@ Deno.test("union tools enforce deny policies before resource use", async () => {
   expect(calls).toBe(0);
 });
 
+Deno.test("refined union tool omits the action and still validates input on execution", async () => {
+  const resource = new DiscriminatedUnionResource();
+  const tools = resourceToTools(resource, mockAuth, {
+    resourceManager: managerFor([resource]),
+  });
+  expect(Object.keys(tools.test_discriminated_get.inputSchema.shape))
+    .toEqual(["id"]);
+  await expect(tools.test_discriminated_get.execute({ id: "disallowed" }))
+    .rejects.toThrow("This ID cannot be queried");
+  expect(await tools.test_discriminated_get.execute({ id: "valid" }))
+    .toEqual({ type: "json", value: { result: "Got valid" } });
+});
+
 Deno.test("union tool execution preserves policy modifiers", async () => {
   const resource = new DiscriminatedUnionResource();
   const scopedResource = Object.assign(resource, {
@@ -125,7 +138,10 @@ class DiscriminatedUnionResource implements
   description = "Test discriminated union resource";
   schemas = {
     request: z.discriminatedUnion("action", [
-      z.object({ action: z.literal("get"), id: z.string() }),
+      z.object({ action: z.literal("get"), id: z.string() }).refine(
+        ({ id }) => id !== "disallowed",
+        "This ID cannot be queried",
+      ),
       z.object({ action: z.literal("set"), id: z.string(), value: z.string() }),
     ]),
     response: z.object({ result: z.any() }),

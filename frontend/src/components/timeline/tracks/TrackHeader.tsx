@@ -10,9 +10,14 @@ export const TrackHeader = memo(function TrackHeader({
 }: TrackHeaderProps) {
   return (
     <div
-      className="absolute left-0 top-0 px-2 py-0.5 text-xs font-medium text-muted-foreground bg-background/80 backdrop-blur-sm rounded-br z-10"
+      className="flex min-h-6 items-center gap-2 px-2 py-1 text-xs font-medium text-muted-foreground"
       style={{ pointerEvents: "none" }}
     >
+      <span
+        aria-hidden="true"
+        className="h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{ backgroundColor: config.color }}
+      />
       {config.label}
     </div>
   );

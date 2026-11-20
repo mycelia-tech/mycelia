@@ -128,6 +128,7 @@ const chatCompletionRequestSchema = z.object({
 
 const listModelsRequestSchema = z.object({
   action: z.literal("list"),
+  includeUnavailable: z.boolean().optional(),
 });
 
 const providerModelsRequestSchema = z.object({
@@ -961,6 +962,7 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
             await this.getInferenceProviders(),
           );
           if (providers.length === 0) {
+            if (input.includeUnavailable) return { models: [], providers: [] };
             span.setStatus({
               code: 2,
               message: "Inference provider not configured",
@@ -975,8 +977,8 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
           // annotate their own entry instead of failing the whole listing.
           const providerListings = await Promise.all(
             providers.map(async (candidate) => {
-              const baseUrl = normalizeOpenAIBaseUrl(candidate.baseUrl);
               try {
+                const baseUrl = normalizeOpenAIBaseUrl(candidate.baseUrl);
                 assertGoogleAccess(await this.#loadConfig().catch(() => ({})), {
                   baseUrl,
                 });
@@ -986,20 +988,19 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
                   redirect: "error",
                 });
                 if (!response.ok) {
-                  const errorText = await response.text();
                   return {
                     provider: candidate,
                     entries: [] as unknown[],
-                    error: `HTTP ${response.status}: ${
-                      errorText.slice(0, 200)
-                    }`,
+                    error: `Model catalogue returned HTTP ${response.status}`,
                   };
                 }
                 const data = await response.json();
                 return {
                   provider: candidate,
                   entries: Array.isArray(data?.data) ? data.data : [],
-                  error: undefined,
+                  error: Array.isArray(data?.data)
+                    ? undefined
+                    : "Invalid model catalogue response",
                 };
               } catch (error) {
                 return {
@@ -1011,7 +1012,10 @@ export class LLMResource implements Resource<LLMRequest, LLMResponse> {
             }),
           );
 
-          if (providerListings.every((listing) => listing.error)) {
+          if (
+            !input.includeUnavailable &&
+            providerListings.every((listing) => listing.error)
+          ) {
             span.setStatus({
               code: 2,
               message: "Failed to fetch models from every provider",

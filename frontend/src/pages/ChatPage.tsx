@@ -33,7 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { apiClient, callResource } from "@/lib/api";
+import { apiClient, ApiRequestError, callResource } from "@/lib/api";
 import { ObjectId } from "bson";
 import { createUserUIMessage, dbMessageToUIMessage } from "@/lib/chatMessages";
 import { formatToolName } from "@/lib/toolPresentation";
@@ -48,6 +48,7 @@ import { useChatSummaries } from "@/hooks/useChatSummaries";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatThreadHeader } from "@/components/chat/ChatThreadHeader";
 import { ChatActivity } from "@/components/chat/ChatActivity";
+import { ChatResponseProgress } from "@/components/chat/ChatResponseProgress";
 import { ChatPinnedNavigation } from "@/components/chat/ChatPinnedNavigation";
 import {
   type ChatMessageMetadata,
@@ -69,12 +70,14 @@ import {
 } from "@/lib/messageDeepLink";
 
 interface ChatErrorState {
+  stage?: "createDraft";
   message: string;
   model?: string;
   requestId?: string;
 }
 
 interface PendingChatMessage {
+  chatId: string;
   id: string;
   text: string;
 }
@@ -254,18 +257,34 @@ export default function ChatPage() {
   const [archivedOnly, setArchivedOnly] = useState(false);
   const chatList = useChatSummaries(query, favoritesOnly, archivedOnly);
   const [historyChat, setHistoryChat] = useState<MemoryChatSummary>();
+  const loadedChat = historyChat?._id.toString() === routeChatId
+    ? historyChat
+    : undefined;
   const selectedChat =
     chatList.items.find((chat) => chat._id.toString() === routeChatId) ??
-      historyChat;
+      loadedChat;
 
-  const [input, setInput] = useState("");
-  const [pendingMessage, setPendingMessage] = useState<
-    PendingChatMessage | null
-  >(
+  const [draftInputs, setDraftInputs] = useState<Record<string, string>>({});
+  const input = draftInputs[effectiveChatId] ?? "";
+  const setInput = (text: string) =>
+    setDraftInputs((current) => ({ ...current, [effectiveChatId]: text }));
+  const [queue, setQueue] = useState<PendingChatMessage[]>([]);
+  const queuedMessages = queue.filter((message) =>
+    message.chatId === effectiveChatId
+  );
+  const nextQueuedMessage = queuedMessages[0];
+  const [pending, setPendingMessage] = useState<PendingChatMessage | null>(
     null,
   );
+  const pendingMessage = pending?.chatId === effectiveChatId ? pending : null;
   const [mobileDraftOpen, setMobileDraftOpen] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [sendingChatId, setSendingChatId] = useState<string>();
+  const [responseStart, setResponseStart] = useState<{
+    chatId: string;
+    time: number;
+  }>();
+  const [loadedChatId, setLoadedChatId] = useState<string>();
   const [historyState, setHistoryState] = useState<
     "idle" | "loading" | "ready" | "not-found" | "error"
   >("idle");
@@ -278,6 +297,7 @@ export default function ChatPage() {
     DEFAULT_CHAT_TOOL_POLICY,
   );
   const [toolCatalog, setToolCatalog] = useState<ChatToolCatalogEntry[]>([]);
+  const [toolCatalogError, setToolCatalogError] = useState<string>();
   const [savingToolPolicy, setSavingToolPolicy] = useState(false);
   const [resolvedAliases, setResolvedAliases] = useState<
     Record<string, string>
@@ -289,55 +309,69 @@ export default function ChatPage() {
   const historyVersionRef = useRef(0);
   const historyAbortRef = useRef<AbortController | null>(null);
   const localDraftNavigationRef = useRef<string | undefined>(undefined);
+  const submittingChatRef = useRef<string | null>(null);
   const selectedModelRef = useRef("");
   const latestRequestRef = useRef<ChatMessageMetadata>({});
   const toolPolicySaveRef = useRef<Promise<void>>(Promise.resolve());
   const focusedDeepLinkRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    selectedModelRef.current = selectedModel;
-  }, [selectedModel]);
+    selectedModelRef.current = selectedModel || defaultChatModel;
+  }, [selectedModel, defaultChatModel]);
 
   useEffect(() => {
-    void Promise.all([
-      callResource("llm", { action: "list" }),
-      callResource("chat", { action: "listTools" }),
-    ]).then(([llm, tools]) => {
-      const configured = typeof llm?.chatDefaultModel === "string"
-        ? llm.chatDefaultModel.trim()
-        : "";
-      if (configured) setDefaultChatModel(configured);
-      if (llm?.resolvedAliases && typeof llm.resolvedAliases === "object") {
-        setResolvedAliases(llm.resolvedAliases);
-      }
-      setToolCatalog(tools?.tools ?? []);
+    const controller = new AbortController();
+    void callResource("chat", { action: "listTools" }, {
+      signal: controller.signal,
+    }).then((result) => {
+      if (!controller.signal.aborted) setToolCatalog(result?.tools ?? []);
     }).catch((error) => {
-      console.warn("[ChatPage] Could not load chat configuration", error);
+      if (!controller.signal.aborted) {
+        setToolCatalogError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     });
+    return () => controller.abort();
+  }, []);
+
+  const loadModelDefaults = useCallback((catalog: {
+    chatDefaultModel?: string;
+    resolvedAliases?: Record<string, string>;
+  }) => {
+    setDefaultChatModel(catalog.chatDefaultModel ?? "");
+    setResolvedAliases(catalog.resolvedAliases ?? {});
   }, []);
 
   useEffect(() => {
     if (!routeChatId) {
-      setSelectedModel(defaultChatModel);
+      setSelectedModel("");
       setSelectedProviderId(undefined);
       setToolPolicy(DEFAULT_CHAT_TOOL_POLICY);
       setHistoryChat(undefined);
       return;
     }
     if (!selectedChat) return;
-    setSelectedModel(selectedChat.model || defaultChatModel);
+    setSelectedModel(selectedChat.model || "");
     setSelectedProviderId(selectedChat.providerProfileId || undefined);
     setToolPolicy({
       mode: selectedChat.toolMode ?? "auto",
       enabledTools: selectedChat.enabledTools ?? [],
     });
-  }, [defaultChatModel, routeChatId, selectedChat]);
+  }, [routeChatId, selectedChat]);
 
   const transport = useMemo(() =>
     new DefaultChatTransport<any>({
       api: "/api/chat",
       body: { chatId: effectiveChatId },
       fetch: async (request, init) => {
+        const time = Date.now();
+        setResponseStart((current) =>
+          current?.chatId === effectiveChatId
+            ? current
+            : { chatId: effectiveChatId, time }
+        );
+        latestRequestRef.current = {};
         const response = await apiClient.fetchRaw(request.toString(), init);
         const responseModel = response.headers.get("X-Mycelia-Model") ||
           selectedModelRef.current;
@@ -346,11 +380,13 @@ export default function ChatPage() {
         const runId = response.headers.get("X-Mycelia-Run-Id") || undefined;
         latestRequestRef.current = { model: responseModel, requestId, runId };
         if (!response.ok) {
-          let message = `Chat request failed with HTTP ${response.status}`;
+          let message = response.status === 502 || response.status === 504
+            ? `The Mycelia gateway could not reach the backend (HTTP ${response.status}). Try again when the backend is ready.`
+            : `Chat request failed (HTTP ${response.status}).`;
           try {
-            const payload = await response.clone().json();
+            const payload = await response.json();
             if (typeof payload?.error === "string" && payload.error.trim()) {
-              message = payload.error;
+              message = `${payload.error} (HTTP ${response.status})`;
             }
             latestRequestRef.current = {
               model: payload?.model || responseModel,
@@ -358,8 +394,7 @@ export default function ChatPage() {
               runId: payload?.runId || runId,
             };
           } catch {
-            const body = await response.clone().text();
-            if (body.trim()) message = body.slice(0, 800);
+            // Proxy error pages may be HTML.
           }
           throw new Error(message);
         }
@@ -378,15 +413,17 @@ export default function ChatPage() {
         model: latestRequestRef.current.model || selectedModelRef.current,
         requestId: latestRequestRef.current.requestId,
       });
-      setPendingMessage(null);
       void chatList.refresh(false);
     },
-    onFinish: ({ message, isError }) => {
+    onFinish: ({ message, isAbort, isError }) => {
+      setResponseStart((current) =>
+        current?.chatId === effectiveChatId ? undefined : current
+      );
       const metadata = message.metadata || latestRequestRef.current;
-      if (
-        !isError && message.role === "assistant" &&
-        !hasRenderableAssistantOutput(message)
-      ) {
+      const emptyResponse = !isAbort && !isError &&
+        message.role === "assistant" &&
+        !hasRenderableAssistantOutput(message);
+      if (emptyResponse) {
         setChatError({
           message: `Model "${
             metadata.model || selectedModelRef.current
@@ -395,35 +432,46 @@ export default function ChatPage() {
           requestId: metadata.requestId,
         });
       }
-      setPendingMessage(null);
+      if (!isError && !emptyResponse) {
+        setPendingMessage((current) =>
+          current?.chatId === effectiveChatId ? null : current
+        );
+      }
       void chatList.refresh(false);
       if (document.visibilityState === "visible") {
         void callResource("chat", {
           action: "markRead",
           chatId: effectiveChatId,
-        });
+        }).catch((error) =>
+          console.warn("[ChatPage] Could not mark chat read", error)
+        );
       }
     },
   });
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (quiet = false) => {
     historyAbortRef.current?.abort();
     const version = ++historyVersionRef.current;
     if (!routeChatId) {
       chat.setMessages([]);
+      setLoadedChatId(undefined);
       setHistoryState("idle");
       return;
     }
     if (localDraftNavigationRef.current === routeChatId) {
       localDraftNavigationRef.current = undefined;
+      setLoadedChatId(routeChatId);
       setHistoryState("ready");
       return;
     }
     const controller = new AbortController();
     historyAbortRef.current = controller;
-    setHistoryState("loading");
-    setHistoryError(undefined);
-    setChatError(null);
+    if (!quiet) {
+      setLoadedChatId(undefined);
+      setHistoryState("loading");
+      setHistoryError(undefined);
+      setChatError(null);
+    }
     try {
       const result = await callResource(
         "chat",
@@ -441,8 +489,9 @@ export default function ChatPage() {
       }
       chat.setMessages((result.messages ?? []).map(dbMessageToUIMessage));
       setHistoryChat(result.chat);
+      setLoadedChatId(routeChatId);
       setHistoryState("ready");
-      if (!requestedMessageId) {
+      if (!quiet && !requestedMessageId) {
         requestAnimationFrame(() =>
           messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
         );
@@ -451,6 +500,7 @@ export default function ChatPage() {
       if (
         controller.signal.aborted || version !== historyVersionRef.current
       ) return;
+      if (quiet) return;
       setHistoryError(
         error instanceof Error ? error.message : "Could not load chat history",
       );
@@ -469,17 +519,6 @@ export default function ChatPage() {
   useEffect(() => {
     if (routeChatId) setMobileDraftOpen(false);
   }, [routeChatId]);
-
-  useEffect(() => {
-    if (
-      pendingMessage &&
-      chat.messages.some((message) =>
-        message.role === "user" && message.id === pendingMessage.id
-      )
-    ) {
-      setPendingMessage(null);
-    }
-  }, [chat.messages, pendingMessage]);
 
   useEffect(() => {
     if (!routeChatId || !linkedMessageId || historyState !== "ready") return;
@@ -526,22 +565,23 @@ export default function ChatPage() {
     }
   }, [routeChatId, selectedChat?.unread]);
 
-  const handleSubmit = async (
-    value: { text?: string },
-    _event: React.FormEvent<HTMLFormElement>,
-  ) => {
-    const text = value.text?.trim();
+  const sendUserMessage = async (text: string, messageId: string) => {
     if (
-      !text || chat.status === "submitted" || chat.status === "streaming"
+      submittingChatRef.current || chat.status === "submitted" ||
+      chat.status === "streaming"
     ) return;
-    await toolPolicySaveRef.current;
-    const messageId = new ObjectId().toString();
-    setInput("");
-    setPendingMessage({ id: messageId, text });
+    submittingChatRef.current = effectiveChatId;
+    historyAbortRef.current?.abort();
+    setSendingChatId(effectiveChatId);
+    setResponseStart({ chatId: effectiveChatId, time: Date.now() });
+    setPendingMessage({ chatId: effectiveChatId, id: messageId, text });
     setChatError(null);
+    latestRequestRef.current = {};
+    let creating = !routeChatId;
     const runId = crypto.randomUUID();
     try {
-      if (!routeChatId) {
+      await toolPolicySaveRef.current;
+      if (creating) {
         setCreatingDraft(true);
         const result = await callResource("chat", {
           action: "createDraft",
@@ -563,6 +603,8 @@ export default function ChatPage() {
         }
         localDraftNavigationRef.current = effectiveChatId;
         navigate(`/chat/${effectiveChatId}`, { replace: true });
+        creating = false;
+        setCreatingDraft(false);
       }
       await chat.sendMessage(
         createUserUIMessage<ChatMessageMetadata>(messageId, text),
@@ -578,15 +620,37 @@ export default function ChatPage() {
       );
     } catch (error) {
       setChatError({
+        stage: creating ? "createDraft" : undefined,
         message: error instanceof Error
           ? error.message
           : "Could not send message",
-        model: selectedModel,
+        model: selectedModelRef.current,
+        requestId: error instanceof ApiRequestError
+          ? error.requestId
+          : latestRequestRef.current.requestId,
       });
-      setPendingMessage(null);
     } finally {
+      submittingChatRef.current = null;
+      setSendingChatId(undefined);
+      setResponseStart((current) =>
+        current?.chatId === effectiveChatId ? undefined : current
+      );
       setCreatingDraft(false);
     }
+  };
+
+  const handleSubmit = (value: { text?: string }) => {
+    const text = value.text?.trim();
+    if (!text || composerDisabled) return;
+    const id = new ObjectId().toString();
+    setInput("");
+    if (waitToSend || submittingChatRef.current) {
+      setQueue((
+        current,
+      ) => [...current, { chatId: effectiveChatId, id, text }]);
+      return;
+    }
+    return sendUserMessage(text, id);
   };
 
   const handleNewChat = () => {
@@ -596,7 +660,7 @@ export default function ChatPage() {
     setFavoritesOnly(false);
     setMobileDraftOpen(true);
     setHistoryChat(undefined);
-    setSelectedModel(defaultChatModel);
+    setSelectedModel("");
     setSelectedProviderId(undefined);
     setToolPolicy(DEFAULT_CHAT_TOOL_POLICY);
     setPendingMessage(null);
@@ -826,8 +890,7 @@ export default function ChatPage() {
     }
   };
 
-  const copyMessage = async (message: MemoryChatMessage) => {
-    const text = messageText(message);
+  const copyMessage = async (text: string) => {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -842,8 +905,21 @@ export default function ChatPage() {
   const retry = () => {
     chat.clearError();
     setChatError(null);
+    if (
+      pendingMessage &&
+      !chat.messages.some((item) => item.id === pendingMessage.id)
+    ) {
+      void sendUserMessage(pendingMessage.text, pendingMessage.id);
+      return;
+    }
     void chat.regenerate({
-      body: { chatId: effectiveChatId, runId: crypto.randomUUID() },
+      body: {
+        chatId: effectiveChatId,
+        runId: crypto.randomUUID(),
+        ...(selectedModel ? { model: selectedModel } : {}),
+        providerProfileId: selectedProviderId ?? null,
+        toolPolicy,
+      },
     });
   };
 
@@ -851,10 +927,16 @@ export default function ChatPage() {
     message.role === "assistant"
   );
   const needsApproval = messageNeedsApproval(latestAssistant);
-  const persistedRunActive = isChatRunActive(selectedChat?.lastRun?.state);
+  const serverRun = selectedChat?.lastRun;
+  const loadedRun = loadedChat?.lastRun;
+  const lastRun = loadedRun &&
+      (!serverRun || loadedRun.updatedAt >= serverRun.updatedAt)
+    ? loadedRun
+    : serverRun;
+  const persistedRunActive = isChatRunActive(lastRun?.state);
   const status = chatStatusLabel(
-    chat.status,
-    selectedChat?.lastRun,
+    chatError ? "error" : chat.status,
+    lastRun,
     needsApproval,
   );
   const pinnedMessages = chat.messages.filter((message) =>
@@ -869,12 +951,85 @@ export default function ChatPage() {
     next.delete("messageId");
     setSearchParams(next, { replace: true });
   };
-  const controlsDisabled = creatingDraft || savingToolPolicy ||
-    chat.status === "submitted" || chat.status === "streaming" ||
-    persistedRunActive || needsApproval ||
-    Boolean(selectedChat?.archivedAt);
-  const resolvedModel = resolvedAliases[selectedModel] || selectedModel ||
+  const streamActive = chat.status === "submitted" ||
+    chat.status === "streaming";
+  const localResponseStartedAt = responseStart?.chatId === effectiveChatId
+    ? responseStart.time
+    : undefined;
+  const responseProgressLabel = chat.status === "streaming"
+    ? "Generating response…"
+    : chat.status === "submitted"
+    ? "Waiting for response…"
+    : chatError || chat.status === "error" || needsApproval
+    ? undefined
+    : sendingChatId === effectiveChatId && localResponseStartedAt !== undefined
+    ? "Sending message…"
+    : lastRun?.state === "streaming"
+    ? "Generating response…"
+    : lastRun?.state === "submitted"
+    ? "Waiting for response…"
+    : undefined;
+  const serverResponseStartedAt = persistedRunActive
+    ? (lastRun?.startedAt ?? lastRun?.updatedAt)?.getTime()
+    : undefined;
+  const historyNeedsSync = isChatRunActive(loadedRun?.state);
+  const composerDisabled = Boolean(selectedChat?.archivedAt) ||
+    historyState === "not-found" || historyState === "error";
+  const busy = creatingDraft || savingToolPolicy || Boolean(sendingChatId) ||
+    streamActive || persistedRunActive || historyNeedsSync || needsApproval ||
+    Boolean(routeChatId && routeChatId !== loadedChatId);
+  const controlsDisabled = composerDisabled || busy;
+  const waitToSend = busy || Boolean(nextQueuedMessage);
+
+  // Another browser can finish a run while this tab is open. Reload its
+  // messages before draining the queue so the next prompt includes its answer.
+  useEffect(() => {
+    if (
+      !routeChatId || loadedChatId !== routeChatId || streamActive ||
+      sendingChatId ||
+      (!historyNeedsSync && !persistedRunActive)
+    ) return;
+    let cancelled = false;
+    const refresh = async () => {
+      await loadHistory(true);
+      if (!cancelled) timer = globalThis.setTimeout(refresh, 5000);
+    };
+    let timer = globalThis.setTimeout(
+      refresh,
+      historyNeedsSync && !persistedRunActive ? 0 : 5000,
+    );
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timer);
+    };
+  }, [
+    routeChatId,
+    loadedChatId,
+    streamActive,
+    sendingChatId,
+    historyNeedsSync,
+    persistedRunActive,
+    loadHistory,
+  ]);
+
+  useEffect(() => {
+    if (
+      !nextQueuedMessage || controlsDisabled || chatError ||
+      submittingChatRef.current || chat.status === "error"
+    ) return;
+    setQueue((current) =>
+      current.filter((message) => message.id !== nextQueuedMessage.id)
+    );
+    void sendUserMessage(nextQueuedMessage.text, nextQueuedMessage.id);
+  }, [nextQueuedMessage, controlsDisabled, chatError, chat.status]);
+  const nextModel = selectedModel || defaultChatModel;
+  const resolvedModel = resolvedAliases[nextModel] || nextModel ||
     "Configured chat default";
+  const latestUser = [...chat.messages].reverse().find((message) =>
+    message.role === "user"
+  );
+  const failedText = pendingMessage?.text ||
+    (latestUser ? messageText(latestUser) : "");
   const title = selectedChat?.title || selectedChat?.name || "New chat";
 
   const sidebar = (
@@ -912,11 +1067,12 @@ export default function ChatPage() {
         chat={selectedChat}
         title={title}
         status={status}
-        selectedModel={selectedModel}
+        selectedModel={nextModel}
         selectedProviderId={selectedProviderId}
         resolvedModel={resolvedModel}
         toolPolicy={toolPolicy}
         toolCatalog={toolCatalog}
+        toolCatalogError={toolCatalogError}
         controlsDisabled={controlsDisabled}
         onBack={() => {
           setMobileDraftOpen(false);
@@ -935,6 +1091,7 @@ export default function ChatPage() {
             ? handleArchive(routeChatId, archived)
             : Promise.resolve()}
         onModelChange={handleModelChange}
+        onCatalogLoaded={loadModelDefaults}
         onToolPolicyChange={handleToolPolicyChange}
       />
       <ChatPinnedNavigation
@@ -960,8 +1117,8 @@ export default function ChatPage() {
         <ChatActivity
           messages={chat.messages}
           sdkStatus={chat.status}
-          runState={selectedChat?.lastRun?.state}
-          error={chatError?.message}
+          runState={lastRun?.state}
+          error={chatError ? undefined : lastRun?.error}
         />
         {historyState === "loading"
           ? (
@@ -1026,7 +1183,7 @@ export default function ChatPage() {
               </div>
             </div>
           )
-          : chat.messages.length === 0 && !pendingMessage &&
+          : chat.messages.length === 0 && !pendingMessage && !chatError &&
               chat.status === "ready"
           ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -1079,7 +1236,7 @@ export default function ChatPage() {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7"
-                      onClick={() => void copyMessage(message)}
+                      onClick={() => void copyMessage(messageText(message))}
                       disabled={!messageText(message)}
                       aria-label="Copy message"
                     >
@@ -1089,7 +1246,10 @@ export default function ChatPage() {
                   <ChatMessageContent
                     message={message}
                     chatId={effectiveChatId}
-                    addToolApprovalResponse={chat.addToolApprovalResponse}
+                    addToolApprovalResponse={(response) => {
+                      historyAbortRef.current?.abort();
+                      void chat.addToolApprovalResponse(response);
+                    }}
                   />
                 </div>
               ))}
@@ -1106,11 +1266,16 @@ export default function ChatPage() {
                 </div>
               )}
               {chatError && (
-                <div className="my-3 flex gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+                <div
+                  role="alert"
+                  className="my-3 flex gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4"
+                >
                   <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-red-700 dark:text-red-400">
-                      Message failed
+                      {chatError.stage === "createDraft"
+                        ? "Could not create the chat"
+                        : "Response failed"}
                     </div>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {chatError.message}
@@ -1132,10 +1297,25 @@ export default function ChatPage() {
                         )}
                       </div>
                     )}
-                    <div className="mt-3 flex gap-2">
-                      <Button size="sm" variant="outline" onClick={retry}>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={retry}
+                        disabled={controlsDisabled ||
+                          (!pendingMessage && !latestUser)}
+                      >
                         <RefreshCw className="mr-1 h-4 w-4" /> Retry
                       </Button>
+                      {failedText && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void copyMessage(failedText)}
+                        >
+                          <Copy className="mr-1 h-4 w-4" /> Copy message
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -1173,24 +1353,65 @@ export default function ChatPage() {
         )}
       </div>
       <div className="border-t p-3 sm:p-4">
+        {responseProgressLabel && (
+          <ChatResponseProgress
+            label={responseProgressLabel}
+            startedAt={localResponseStartedAt ?? serverResponseStartedAt}
+          />
+        )}
+        {queuedMessages.length > 0 && (
+          <section
+            aria-label="Queued messages"
+            className="mb-2 rounded-md border"
+          >
+            <div
+              className="px-3 pt-2 text-xs font-medium text-muted-foreground"
+              role="status"
+            >
+              {queuedMessages.length} queued
+              {chatError && " · paused after response error"}
+              {needsApproval && " · waiting for tool approval"}
+            </div>
+            <ul className="max-h-36 overflow-y-auto p-1">
+              {queuedMessages.map((message) => (
+                <li key={message.id} className="flex items-start gap-2 px-2">
+                  <p className="min-w-0 flex-1 whitespace-pre-wrap break-words py-1 text-sm">
+                    {message.text}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    aria-label="Remove queued message"
+                    onClick={() =>
+                      setQueue((current) =>
+                        current.filter((item) =>
+                          item.id !== message.id
+                        )
+                      )}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         <PromptInput
           onSubmit={handleSubmit}
           className="rounded-lg border bg-background shadow-sm"
         >
           <PromptInputTextarea
             ref={textareaRef}
-            placeholder={needsApproval
-              ? "Approve or deny the pending tool first"
-              : savingToolPolicy
-              ? "Saving tool selection…"
-              : persistedRunActive
-              ? "Wait for the active response to finish"
-              : selectedChat?.archivedAt
+            placeholder={selectedChat?.archivedAt
               ? "Restore this chat to continue"
+              : waitToSend
+              ? "Queue your next message…"
               : "Type a message…"}
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            disabled={controlsDisabled}
+            disabled={composerDisabled}
           />
           <PromptInputFooter>
             <PromptInputTools>
@@ -1209,7 +1430,9 @@ export default function ChatPage() {
                 </Button>
               )}
               <PromptInputSubmit
-                disabled={!input.trim() || controlsDisabled}
+                aria-label={waitToSend ? "Queue message" : "Submit"}
+                title={waitToSend ? "Queue message" : "Send message"}
+                disabled={!input.trim() || composerDisabled}
               />
             </div>
           </PromptInputFooter>

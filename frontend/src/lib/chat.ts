@@ -1,5 +1,6 @@
 import { ObjectId } from "bson";
 import type { UIMessage } from "ai";
+import { splitUnparsedToolText } from "@myceliasdk/chat-tool-text.ts";
 import type {
   ChatRunState,
   ChatSummary,
@@ -48,7 +49,12 @@ export function createDraftChatId(): string {
 export function messageText(message: MemoryChatMessage): string {
   return (message.parts ?? [])
     .filter((part: any) => part?.type === "text" && part?.text)
-    .map((part: any) => part.text)
+    .map((part: any) =>
+      message.role === "assistant"
+        ? splitUnparsedToolText(part.text).content
+        : part.text
+    )
+    .filter(Boolean)
     .join("\n\n");
 }
 
@@ -81,6 +87,8 @@ export function chatStatusLabel(
   if (sdkStatus === "submitted") return "Sending";
   if (sdkStatus === "streaming") return "Answering";
   if (sdkStatus === "error" || lastRun?.state === "failed") return "Error";
+  if (lastRun?.state === "submitted") return "Sending";
+  if (lastRun?.state === "streaming") return "Answering";
   if (lastRun?.state === "cancelled") return "Stopped";
   if (lastRun?.state === "interrupted") return "Interrupted";
   return "Ready";

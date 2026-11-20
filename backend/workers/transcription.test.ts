@@ -1,9 +1,52 @@
 import { expect } from "@std/expect";
+import { combinedWavDurationSeconds } from "@/lib/audio-combiner.ts";
+import { filterSegments } from "@/lib/transcription-filters.ts";
 import transcription, {
   aggregateBatchTranscriptionResult,
   buildTranscribedChunkQuery,
   buildTranscriptionSequenceClaimQuery,
 } from "./transcription.ts";
+
+Deno.test("standalone subtitle credits are empty and quoted credits survive", () => {
+  for (const text of [" Субтитры делал DimaTorzok", "Субтитры сделал DIMATORZOK… "]) {
+    expect(filterSegments([{ text, start: 0, end: 29.98 }], 20)).toEqual([]);
+  }
+  const quote = { text: "Он сказал: субтитры делал DimaTorzok.", start: 5, end: 8 };
+  expect(filterSegments([quote], 20)).toEqual([quote]);
+});
+
+Deno.test("ASR segments and words stay within the decoded PCM, including WAV metadata", () => {
+  // A mono PCM16 WAV with an odd-sized metadata chunk before 20 s of samples.
+  const pcmBytes = 20 * 16000 * 2;
+  const bytes = new Uint8Array(54 + pcmBytes);
+  const header = new DataView(bytes.buffer);
+  const put = (offset: number, tag: string) =>
+    bytes.set(new TextEncoder().encode(tag), offset);
+  put(0, "RIFF");
+  header.setUint32(4, bytes.length - 8, true);
+  put(8, "WAVEfmt ");
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, 16000, true);
+  header.setUint32(28, 32000, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  put(36, "JUNK");
+  header.setUint32(40, 1, true);
+  put(46, "data");
+  header.setUint32(50, pcmBytes, true);
+
+  const duration = combinedWavDurationSeconds(bytes);
+  expect(duration).toBe(20);
+  const word = { word: " Да", start: 19, end: 29.98, probability: 0.9 };
+  const segment = { text: " Да", start: 19, end: 29.98, words: [word] };
+  expect(filterSegments([
+    segment,
+    { text: "Субтитры делал DimaTorzok", start: 0, end: 29.98 },
+    { text: "After the recording", start: 20, end: 30 },
+  ], duration)).toEqual([{ ...segment, end: 20, words: [{ ...word, end: 20 }] }]);
+});
 
 Deno.test("batch result remains transcribed when its final sequence is empty", () => {
   const transcribed = {

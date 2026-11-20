@@ -18,6 +18,7 @@ import MapExperiencePage from "./MapExperiencePage";
 const mocks = vi.hoisted(() => ({
   flyTo: vi.fn(),
   setRange: vi.fn(),
+  useLocationSegments: vi.fn(),
   locationAtData: undefined as
     | undefined
     | { point: { loc: { coordinates: [number, number] } } },
@@ -56,10 +57,7 @@ vi.mock("@/hooks/useLocationQueries", () => ({
   useLocationLiveUpdates: vi.fn(),
   useLocationMetadataConflicts: () => ({ data: { total: 0 } }),
   useLocationRouteConflicts: () => ({ data: { total: 0 } }),
-  useLocationSegments: () => ({
-    data: { segments: [] },
-    isLoading: false,
-  }),
+  useLocationSegments: mocks.useLocationSegments,
   useLocationStatus: () => ({ data: { geonamesReady: true } }),
   useMapDensity: () => ({
     data: undefined,
@@ -158,6 +156,10 @@ describe("Map photo focus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.locationAtData = undefined;
+    mocks.useLocationSegments.mockReturnValue({
+      data: { segments: [] },
+      isLoading: false,
+    });
     history.replaceState(
       {},
       "",
@@ -320,17 +322,19 @@ describe("Map photo focus", () => {
     expect(screen.queryByTestId("photo-layer")).toBeNull();
   });
 
-  it("preserves an explicit viewport until Fit selected data is requested", async () => {
+  it("loads segments only for Presence or an on-demand fit in a routes view", async () => {
     history.replaceState(
       {},
       "",
       "/map?lat=46.948&lng=7.4474&z=15.25&layers=routes",
     );
-    render(
+    const page = (
       <BrowserRouter>
         <MapExperiencePage />
-      </BrowserRouter>,
+      </BrowserRouter>
     );
+    const view = render(page);
+    expect(mocks.useLocationSegments.mock.lastCall?.[2].enabled).toBe(false);
 
     expect(
       screen.getByTestId("location-map").getAttribute(
@@ -341,9 +345,31 @@ describe("Map photo focus", () => {
       screen.getByTestId("location-map").getAttribute("data-fit-request-key"),
     ).toBe("0");
 
-    fireEvent.click(screen.getByRole("button", {
+    const fitButton = screen.getByRole<HTMLButtonElement>("button", {
       name: "Fit selected data",
-    }));
+    });
+    mocks.useLocationSegments.mockReturnValue({
+      data: { segments: [] },
+      isLoading: false,
+      isPlaceholderData: true,
+    });
+    fireEvent.click(fitButton);
+    expect(mocks.useLocationSegments.mock.lastCall?.[2].enabled).toBe(true);
+    expect(fitButton.disabled).toBe(true);
+    expect(
+      screen.getByTestId("location-map").getAttribute("data-fit-request-key"),
+    ).toBe("0");
+
+    mocks.useLocationSegments.mockReturnValue({
+      data: { segments: [] },
+      isLoading: false,
+      isPlaceholderData: false,
+    });
+    view.rerender(
+      <BrowserRouter>
+        <MapExperiencePage />
+      </BrowserRouter>,
+    );
 
     await waitFor(() =>
       expect(
@@ -355,6 +381,11 @@ describe("Map photo focus", () => {
     expect(
       screen.getByTestId("location-map").getAttribute("data-fit-request-key"),
     ).toBe("1");
+    expect(fitButton.disabled).toBe(false);
+    expect(mocks.useLocationSegments.mock.lastCall?.[2].enabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Presence" }));
+    expect(mocks.useLocationSegments.mock.lastCall?.[2].enabled).toBe(true);
   });
 
   it("does not let an at cursor override a focused photo viewport", async () => {

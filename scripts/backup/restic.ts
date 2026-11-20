@@ -969,46 +969,68 @@ async function initializeKeychainMutation(
   }
   if (!record) {
     const compiled = await compileHelper(composeRoot, dependencies, run);
-    await assertHelperSourceIdentity(compiled.sourceIdentity);
-    const resolveResult = await callHelper(
-      compiled.identity,
-      "resolve-default",
-      { schema: 1 },
-      run,
-    );
-    if (
-      resolveResult.code !== 0 ||
-      !exactKeys(resolveResult.value, ["schema", "keychainPath"]) ||
-      resolveResult.value.schema !== 1 ||
-      typeof resolveResult.value.keychainPath !== "string" ||
-      !safeAbsolute(resolveResult.value.keychainPath)
-    ) helperFailure(resolveResult.value);
-    const started = (dependencies.now ?? (() => new Date().toISOString()))();
-    const installationId = (dependencies.uuid ?? crypto.randomUUID)();
-    const credentialGenerationId = (dependencies.uuid ?? crypto.randomUUID)();
-    if (!UUID.test(installationId) || !UUID.test(credentialGenerationId)) {
-      throw failureError("KEYCHAIN_PROVENANCE_MISMATCH");
+    try {
+      await assertHelperSourceIdentity(compiled.sourceIdentity);
+      const resolveResult = await callHelper(
+        compiled.identity,
+        "resolve-default",
+        { schema: 1 },
+        run,
+      );
+      if (
+        resolveResult.code !== 0 ||
+        !exactKeys(resolveResult.value, ["schema", "keychainPath"]) ||
+        resolveResult.value.schema !== 1 ||
+        typeof resolveResult.value.keychainPath !== "string" ||
+        !safeAbsolute(resolveResult.value.keychainPath)
+      ) helperFailure(resolveResult.value);
+      const started = (dependencies.now ?? (() => new Date().toISOString()))();
+      const uuid = dependencies.uuid ?? (() => crypto.randomUUID());
+      const installationId = uuid();
+      const credentialGenerationId = uuid();
+      if (!UUID.test(installationId) || !UUID.test(credentialGenerationId)) {
+        throw failureError("KEYCHAIN_PROVENANCE_MISMATCH");
+      }
+      record = {
+        schema: 1,
+        installationId,
+        credentialGenerationId,
+        account: config.resticKeychainAccount,
+        service: config.resticKeychainService,
+        label: config.resticKeychainService,
+        keychainPath: resolveResult.value.keychainPath,
+        helperSourceSha256: compiled.sourceSha256,
+        helperExecutableSha256: compiled.executableSha256,
+        bootstrapStartedAtUtc: started,
+        phaseUpdatedAtUtc: started,
+        phase: "creation_pending",
+      };
+      const before = await inspectCredential(compiled.identity, record, run);
+      if (before.kind !== "missing") {
+        throw failureError("KEYCHAIN_ITEM_AMBIGUOUS");
+      }
+      await writeBootstrapStateAtomic(composeRoot, record);
+      inspection = before;
+    } catch (error) {
+      // No credential can be created before the durable pending record. A
+      // normal preparation failure may remove only this freshly built helper,
+      // never a pre-existing/replaced executable or one needed for recovery.
+      if (!isCommandTerminationError(error)) {
+        try {
+          if (await readBootstrapState(composeRoot) === null) {
+            await assertProtectedExecutableIdentity(compiled.identity);
+            await Deno.remove(compiled.identity.path);
+            const directory = await Deno.open(paths.binDir, { read: true });
+            try {
+              await directory.sync();
+            } finally {
+              directory.close();
+            }
+          }
+        } catch { /* Preserve ambiguous state and the original failure. */ }
+      }
+      throw error;
     }
-    record = {
-      schema: 1,
-      installationId,
-      credentialGenerationId,
-      account: config.resticKeychainAccount,
-      service: config.resticKeychainService,
-      label: config.resticKeychainService,
-      keychainPath: resolveResult.value.keychainPath,
-      helperSourceSha256: compiled.sourceSha256,
-      helperExecutableSha256: compiled.executableSha256,
-      bootstrapStartedAtUtc: started,
-      phaseUpdatedAtUtc: started,
-      phase: "creation_pending",
-    };
-    const before = await inspectCredential(compiled.identity, record, run);
-    if (before.kind !== "missing") {
-      throw failureError("KEYCHAIN_ITEM_AMBIGUOUS");
-    }
-    await writeBootstrapStateAtomic(composeRoot, record);
-    inspection = before;
   }
 
   const helper = await verifyHelperProvenance(composeRoot, record);

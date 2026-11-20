@@ -3,6 +3,7 @@ import { defaultPlatform } from "./default.tsx";
 import { User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { ToolUIPart } from "ai";
+import { splitUnparsedToolText } from "@myceliasdk/chat-tool-text.ts";
 import { formatRelativeTime } from "@/lib/formatTime";
 import { cn } from "@/lib/utils";
 import { Response } from "@/components/ai-elements/response";
@@ -44,6 +45,7 @@ interface ToolResultPart {
 interface ParsedMessageContent {
   role: "user" | "assistant";
   content: string;
+  hasUnparsedCalls: boolean;
   toolCalls: Array<{
     toolCallId: string;
     toolName: string;
@@ -56,6 +58,13 @@ interface ParsedMessageContent {
 
 function parseMessageContent(raw: any): ParsedMessageContent {
   const role = raw?.role === "user" ? "user" : "assistant";
+  let hasUnparsedCalls = false;
+  const visibleText = (text: string) => {
+    if (role === "user") return text;
+    const result = splitUnparsedToolText(text);
+    hasUnparsedCalls ||= result.hasUnparsedCalls;
+    return result.content;
+  };
 
   // Prefer UIMessage parts: live streaming messages and new-format persisted
   // messages carry them, including tool state and approval info.
@@ -63,7 +72,8 @@ function parseMessageContent(raw: any): ParsedMessageContent {
   if (Array.isArray(uiParts)) {
     const textContent = uiParts
       .filter((part: any) => part?.type === "text" && part?.text)
-      .map((part: any) => part.text)
+      .map((part: any) => visibleText(part.text))
+      .filter(Boolean)
       .join("\n\n");
     const toolCalls: ParsedMessageContent["toolCalls"] = uiParts
       .filter((part: any) =>
@@ -80,7 +90,7 @@ function parseMessageContent(raw: any): ParsedMessageContent {
         error: part.errorText,
         state: part.state ?? "input-available",
       }));
-    return { role, content: textContent, toolCalls };
+    return { role, content: textContent, hasUnparsedCalls, toolCalls };
   }
 
   const content = raw?.content;
@@ -88,11 +98,12 @@ function parseMessageContent(raw: any): ParsedMessageContent {
   const toolCalls: ParsedMessageContent["toolCalls"] = [];
 
   if (typeof content === "string") {
-    textContent = content;
+    textContent = visibleText(content);
   } else if (Array.isArray(content)) {
     const textParts = content
       .filter((part: any) => part?.type === "text" && part?.text)
-      .map((part: any) => part.text)
+      .map((part: any) => visibleText(part.text))
+      .filter(Boolean)
       .join("\n\n");
 
     textContent = textParts;
@@ -124,7 +135,7 @@ function parseMessageContent(raw: any): ParsedMessageContent {
     }
   }
 
-  return { role, content: textContent, toolCalls };
+  return { role, content: textContent, hasUnparsedCalls, toolCalls };
 }
 
 function ToolCallDisplay(
@@ -179,7 +190,9 @@ function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
   const formattedDate = formatRelativeTime(new Date(message.timestamp));
   const raw = message.raw;
 
-  const { role, content, toolCalls } = parseMessageContent(raw);
+  const { role, content, hasUnparsedCalls, toolCalls } = parseMessageContent(
+    raw,
+  );
   const isUser = role === "user";
   const hasToolCalls = toolCalls.length > 0;
   const hasContent = content.length > 0;
@@ -313,23 +326,36 @@ function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
             </div>
           )}
 
-          {/* Fallback for completely empty messages */}
-          {!hasContent && !hasToolCalls && responseError && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
-              <div className="font-medium text-red-700 dark:text-red-400">
-                Model returned an unusable response
-              </div>
-              <div className="mt-1 text-muted-foreground">{responseError}</div>
-              {requestId && (
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Request ID:{" "}
-                  <code className="break-all text-foreground">{requestId}</code>
-                </div>
-              )}
-            </div>
+          {hasUnparsedCalls && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
+              The provider returned tool syntax as text. Those calls were
+              skipped.
+            </p>
           )}
 
-          {!hasContent && !hasToolCalls && !responseError && (
+          {/* Fallback for completely empty messages */}
+          {!hasUnparsedCalls && !hasContent && !hasToolCalls && responseError &&
+            (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
+                <div className="font-medium text-red-700 dark:text-red-400">
+                  Model returned an unusable response
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  {responseError}
+                </div>
+                {requestId && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Request ID:{" "}
+                    <code className="break-all text-foreground">
+                      {requestId}
+                    </code>
+                  </div>
+                )}
+              </div>
+            )}
+
+          {!hasUnparsedCalls && !hasContent && !hasToolCalls &&
+            !responseError && (
             <div
               className={cn(
                 "relative rounded-2xl px-4 py-3",

@@ -10,7 +10,7 @@ import {
   MAX_SOURCE_FILES,
   MAX_SOURCE_PATH_BYTES,
 } from "./limits.ts";
-import type { SourceManifest } from "./sources.ts";
+import { assertOmittedRootsAbsent, type SourceManifest } from "./sources.ts";
 import type { VerifiedResticContext } from "./restic.ts";
 import type { Runner, StreamDigest } from "./types.ts";
 
@@ -156,9 +156,11 @@ export async function prepareFileArtifacts(options: {
   sourceBytes: number;
 }> {
   const { manifest, stateDir, context, runner, composeRoot } = options;
+  await assertOmittedRootsAbsent(manifest);
   if (
     !manifest.coverage.complete ||
-    manifest.coverage.total !== manifest.coverage.covered ||
+    manifest.coverage.total !==
+      manifest.coverage.covered + (manifest.coverage.skipped ?? 0) ||
     [
       manifest.coverage.missing,
       manifest.coverage.unreadable,
@@ -292,6 +294,7 @@ export async function prepareFileArtifacts(options: {
         repositoryId: context.repositoryId,
         labels: manifest.labels,
         coverage: manifest.coverage,
+        omittedRoots: manifest.omittedRoots ?? [],
         git: { revision, dirty },
         tools: context.preflight.versions,
         sourceCounts: { files: files.length, bytes: sourceBytes },

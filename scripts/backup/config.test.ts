@@ -18,6 +18,7 @@ Deno.test("configuration defaults and overrides expose only selected settings", 
     assert(defaults.resticKeychainService === "tech.mycelia.backup.restic");
     assert(defaults.resticKeychainAccount === "mycelia");
     assert(defaults.remoteMinFreeBytes > 0);
+    assert(defaults.optionalSourceRoots?.length === 0);
     assert(defaults.mediaSourceHostPath === `${root}/media library`);
     assert(!JSON.stringify(defaults).includes("do-not-return"));
     await Deno.writeTextFile(
@@ -46,6 +47,10 @@ Deno.test("configuration rejects malformed, conflicting, unsafe, and unknown bac
       ["", "not an assignment\n"],
       ["", "BACKUP_REMOTE_MIN_FREE_BYTES=-1\n"],
       ["", "BACKUP_REMOTE_MIN_FREE_BYTES=1.5\n"],
+      ["", 'BACKUP_OPTIONAL_SOURCE_ROOTS_JSON=["/"]\n'],
+      ["", 'BACKUP_OPTIONAL_SOURCE_ROOTS_JSON=["relative"]\n'],
+      ["", 'BACKUP_OPTIONAL_SOURCE_ROOTS_JSON=["/a/../b"]\n'],
+      ["", 'BACKUP_OPTIONAL_SOURCE_ROOTS_JSON=["/a","/a"]\n'],
       ["", 'BACKUP_OPERATIONAL_UNTRACKED_JSON=["../escape"]\n'],
       ["", 'BACKUP_OPERATIONAL_UNTRACKED_JSON=["/private/file"]\n'],
       ["", "BACKUP_OPERATIONAL_UNTRACKED_JSON={}\n"],

@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import { callResource } from "@/lib/api";
 import { extractModelIds } from "@/lib/inferenceModels";
+import { Link } from "react-router-dom";
 
 // Model categories with hints
 const MODEL_CATEGORIES = [
@@ -111,6 +112,11 @@ interface ModelSelectorProps {
   placeholder?: string;
   className?: string;
   prefetch?: boolean;
+  showAvailability?: boolean;
+  onCatalogLoaded?: (catalog: {
+    chatDefaultModel?: string;
+    resolvedAliases?: Record<string, string>;
+  }) => void;
   // Chosen models report the provider they were picked from so callers can
   // pin routing to that provider. Aliases and free-typed models report
   // undefined (routing picks the best provider automatically).
@@ -131,6 +137,8 @@ export function ModelSelector({
   placeholder = "Select model...",
   className,
   prefetch = false,
+  showAvailability = false,
+  onCatalogLoaded,
   providerValue,
   onSelectWithProvider,
   staticModels,
@@ -157,9 +165,14 @@ export function ModelSelector({
     setLoading(true);
     setLoadError(null);
     try {
-      const response = await callResource("llm", { action: "list" }) as {
+      const response = await callResource("llm", {
+        action: "list",
+        ...(showAvailability ? { includeUnavailable: true } : {}),
+      }) as {
         models?: unknown;
         providers?: ProviderListing[];
+        chatDefaultModel?: string;
+        resolvedAliases?: Record<string, string>;
       };
       setModels(extractModelIds(response.models));
       setProviderListings(
@@ -167,6 +180,7 @@ export function ModelSelector({
           ? sortProviders(response.providers)
           : [],
       );
+      onCatalogLoaded?.(response);
       setLoadedOnce(true);
     } catch (e) {
       console.error("Failed to fetch models:", e);
@@ -174,7 +188,7 @@ export function ModelSelector({
     } finally {
       setLoading(false);
     }
-  }, [isStatic]);
+  }, [isStatic, onCatalogLoaded, showAvailability]);
 
   // Summarization dialogs prefetch whenever they open so provider changes are
   // reflected before the user opens the model picker.
@@ -193,7 +207,9 @@ export function ModelSelector({
     }
     // Other screens keep lazy loading. A new open also provides an explicit
     // retry after an earlier provider error.
-    if (nextOpen && !loading && (!loadedOnce || loadError)) {
+    if (
+      nextOpen && !loading && (showAvailability || !loadedOnce || loadError)
+    ) {
       void fetchModels();
     }
   };
@@ -220,7 +236,9 @@ export function ModelSelector({
     if (isStatic) return [];
     return recentModels.filter((entry) =>
       entry.providerProfileId
-        ? providersById.get(entry.providerProfileId)?.enabled !== false
+        ? (providersById.get(entry.providerProfileId)?.models ?? []).includes(
+          entry.model,
+        )
         : models.includes(entry.model)
     );
   }, [isStatic, recentModels, providersById, models]);
@@ -232,6 +250,9 @@ export function ModelSelector({
       ),
     [providerListings],
   );
+  const selectedProvider = providerValue
+    ? providersById.get(providerValue)
+    : undefined;
 
   const commitSelection = (
     selected: string,
@@ -280,7 +301,30 @@ export function ModelSelector({
           className={cn("w-full justify-between font-normal", className)}
           disabled={disabled}
         >
-          <span className="truncate">{displayLabel}</span>
+          <span className="min-w-0 flex-1 truncate text-left">
+            {displayLabel}
+          </span>
+          {showAvailability && (
+            <span
+              className="ml-2 shrink-0 text-xs text-muted-foreground"
+              title={selectedProvider?.error || undefined}
+            >
+              {loading
+                ? "Checking models…"
+                : loadError
+                ? "Catalogue error"
+                : loadedOnce && providerValue &&
+                    (!selectedProvider || selectedProvider.error)
+                ? "Provider unavailable"
+                : loadedOnce && providerListings.length === 0
+                ? "No providers"
+                : loadedOnce
+                ? `${models.length} model${models.length === 1 ? "" : "s"}${
+                  failedProviders.length ? " ⚠" : ""
+                }`
+                : null}
+            </span>
+          )}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -316,7 +360,9 @@ export function ModelSelector({
                   >
                     <Check className="mr-2 h-4 w-4 opacity-0" />
                     <span className="text-sm">
-                      Use "<span className="font-mono">{customCandidate}</span>"
+                      Use "<span className="font-mono">
+                        {customCandidate}
+                      </span>"
                     </span>
                   </CommandItem>
                 )}
@@ -407,7 +453,7 @@ export function ModelSelector({
 
             {
               /* Provider groups in failover-priority order. Picking a model
-                pins the request to that provider. */
+              pins the request to that provider. */
             }
             {!isStatic &&
               providerListings.filter((provider) => provider.enabled !== false)
@@ -475,11 +521,19 @@ export function ModelSelector({
             )}
           </CommandList>
 
+          {showAvailability && !loading && !loadError && loadedOnce &&
+            providerValue && !selectedProvider && (
+            <div className="border-t px-3 py-2 text-xs text-destructive">
+              The selected provider is disabled or missing. Choose another
+              model.
+            </div>
+          )}
+
           {
             /* Unreachable providers stay visible instead of silently dropping
-              their models from the list. */
+            their models from the list. */
           }
-          {failedProviders.map((provider) => (
+          {!loading && !loadError && failedProviders.map((provider) => (
             <div
               key={provider.id}
               className="flex items-start gap-2 border-t px-3 py-2 text-xs text-destructive"
@@ -517,8 +571,16 @@ export function ModelSelector({
           {!loading && !loadError && loadedOnce && !isStatic &&
             models.length === 0 && (
             <div className="border-t px-3 py-3 text-xs text-muted-foreground">
-              The provider returned no named models. You can still use a
-              configured alias.
+              {showAvailability && providerListings.length === 0
+                ? "No inference providers are enabled."
+                : failedProviders.length === 0
+                ? "The providers returned no named models."
+                : "No configured provider advertised a model."}
+              {showAvailability && (
+                <Link to="/settings/inference" className="ml-1 underline">
+                  Inference settings
+                </Link>
+              )}
             </div>
           )}
         </Command>

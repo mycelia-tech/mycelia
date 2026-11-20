@@ -326,6 +326,7 @@ export interface LocationMetadataConflict {
   status: "pending" | "resolved";
   resolution?: "keep_existing" | "use_incoming" | "defer";
   createdAt: Date | string;
+  decidedAt?: Date | string;
 }
 
 export interface LocationPointConflict {
@@ -333,6 +334,8 @@ export interface LocationPointConflict {
   ts: Date | string;
   status: "pending" | "resolved";
   resolution?: "keep_existing" | "use_incoming" | "defer";
+  decidedAt?: Date | string;
+  selectedImportId?: ObjectId | string;
   existingPoints?: Array<{
     hash: string;
     loc: { type: "Point"; coordinates: [number, number] };
@@ -450,12 +453,25 @@ export interface LocationRouteConflict {
   pairKey: string;
   trackIds: Array<ObjectId | string>;
   trackNames: Array<string | null>;
+  sources?: Array<{
+    name?: string | null;
+    filename?: string;
+    format?: string;
+    importedAt?: Date | string;
+  }>;
   overlapStart: Date | string;
   overlapEnd: Date | string;
   medianSeparationM: number;
   status: "pending" | "resolved" | "superseded";
-  resolution?: "use_first" | "use_second" | "keep_both";
+  resolution?: "use_first" | "use_second" | "keep_both" | "defer";
+  resolvedAt?: Date | string;
 }
+
+export type MapRouteSourceTrack = Pick<
+  RecordedLocationTrack,
+  "_id" | "displayName" | "pointCount" | "geometryPointCount" |
+    "routeBoundaryCompleteness" | "style"
+>;
 
 export interface MapRouteDetailResponse {
   projection: {
@@ -467,6 +483,7 @@ export interface MapRouteDetailResponse {
   fragments: MapRouteFragment[];
   connectors: MapRouteConnector[];
   conflicts: LocationRouteConflict[];
+  sourceTracks?: MapRouteSourceTrack[];
   lod: "overview" | "detail";
   detailLimited: boolean;
 }

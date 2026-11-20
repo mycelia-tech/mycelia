@@ -9,6 +9,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from tqdm import tqdm
 import tempfile
+import io
+import wave
 from pathlib import Path
 import ffmpeg
 import requests
@@ -19,7 +21,7 @@ load_environment()
 from lib.resources import call_resource
 from lib.api import job_token_var, exchange_api_key_for_jwt
 
-from lib.transcription import known_errors, remove_if_lonely
+from lib.transcription import clip_timestamps, known_errors, remove_if_lonely, subtitle_credit_pattern
 
 from lib.worker import mongo_cursor, claim_chunks, release_chunks
 
@@ -585,6 +587,8 @@ def combine_chunks_with_ffmpeg(chunks: list[dict]) -> bytes:
 
 def transcribe_sequence(sequence: SpeechSequence):
     combined_audio = combine_chunks_with_ffmpeg(sequence.chunks)
+    with wave.open(io.BytesIO(combined_audio), 'rb') as wav:
+        duration_seconds = wav.getnframes() / wav.getframerate()
 
     if TRANSCRIPTION_SERVER_URL:
         transcript = transcribe_with_remote_server(
@@ -612,11 +616,18 @@ def transcribe_sequence(sequence: SpeechSequence):
         if (
             not text or
             text in known_errors or
+            subtitle_credit_pattern.fullmatch(text) or
             text.startswith('*') and text.endswith('*')
         ):
             continue
 
-        filtered_segments.append(segment)
+        clipped = clip_timestamps(segment, duration_seconds)
+        if clipped is None:
+            continue
+        if isinstance(clipped.get('words'), list):
+            words = (clip_timestamps(word, duration_seconds) for word in clipped['words'])
+            clipped = {**clipped, 'words': [word for word in words if word is not None]}
+        filtered_segments.append(clipped)
 
     if not filtered_segments or all(
         segment['text'].strip() in remove_if_lonely for segment in filtered_segments
@@ -624,6 +635,9 @@ def transcribe_sequence(sequence: SpeechSequence):
         return NO_SPEECH_DETECTED
 
 
+    transcribed_text = ''.join(segment['text'] for segment in filtered_segments)
+    if len(filtered_segments) != len(segments):
+        transcript['text'] = transcribed_text
     transcript['segments'] = segments = filtered_segments
 
     # Calculate duration from filtered segments if available, otherwise use 0
@@ -635,15 +649,14 @@ def transcribe_sequence(sequence: SpeechSequence):
             "action": "insertOne",
             "collection": "transcriptions",
             "doc": {
+                **transcript,
                 'original': sequence.original_id,
                 'start': sequence.start,
                 'duration': duration,
                 'end': sequence.start + timedelta(seconds=duration),
-                **transcript
             }
         })
 
-    transcribed_text = ''.join(segment['text'] for segment in segments)
     return transcribed_text
 
 

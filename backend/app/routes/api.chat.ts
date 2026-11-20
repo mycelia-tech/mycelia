@@ -34,10 +34,30 @@ import {
 import { startChatRun, updateChatRunState } from "@/lib/chat/runs.server.ts";
 import { publishChatUpdated } from "@/lib/chat/events.server.ts";
 import type { ChatRunState, ChatToolPolicy } from "@myceliasdk/messengers.ts";
+import { splitUnparsedToolText } from "@myceliasdk/chat-tool-text.ts";
 
 export { chatToolFilter } from "@/lib/chat/tools.server.ts";
 
 const MAX_CHAT_MODEL_LENGTH = 200;
+const MAX_CHAT_TOOL_STEPS = 5;
+const CHAT_TOOL_LIMIT_ERROR =
+  "The model finished with tool calls and did not provide a final answer.";
+const UNPARSED_TOOL_CALL_ERROR =
+  "The provider returned tool syntax as text. The response is incomplete.";
+
+export function chatToolSteps(systemPrompt: string) {
+  return {
+    stopWhen: stepCountIs(MAX_CHAT_TOOL_STEPS + 1),
+    prepareStep: ({ stepNumber }: { stepNumber: number }) =>
+      stepNumber === MAX_CHAT_TOOL_STEPS
+        ? {
+          activeTools: [],
+          system:
+            `${systemPrompt}\n\nThe tool budget for this response is exhausted. Answer the user's question directly using the tool results already available. Identify any gaps in the evidence.`,
+        }
+        : undefined,
+  };
+}
 
 export const RAG_CHAT_TOOL_GUIDANCE =
   "When rag_search is available, use it for semantic or approximate discovery across personal memory. " +
@@ -52,12 +72,15 @@ export function appendActiveToolGuidance(
   activeTools: string[] | undefined,
   availableToolNames: Iterable<string>,
 ): string {
-  const ragSearchActive = activeTools === undefined
-    ? new Set(availableToolNames).has("rag_search")
-    : activeTools.includes("rag_search");
-  return ragSearchActive
-    ? `${systemPrompt}\n\n${RAG_CHAT_TOOL_GUIDANCE}`
-    : systemPrompt;
+  const tools = new Set(activeTools ?? availableToolNames);
+  const guidance = [systemPrompt];
+  if (tools.has("rag_search")) guidance.push(RAG_CHAT_TOOL_GUIDANCE);
+  if (tools.has("search_searchTranscriptions")) {
+    guidance.push(
+      'For recordings around a known date, start with search_searchTranscriptions with query "" and explicit startDate and endDate. Use the timestamps in the results to choose which recordings to inspect.',
+    );
+  }
+  return guidance.join("\n\n");
 }
 
 function normalizeChatModel(value: unknown): string | undefined {
@@ -162,19 +185,35 @@ export function sanitizeUIMessages(messages: unknown[]): unknown[] {
     // parts. Keep it visible in storage/UI, but omit it from model context:
     // validateUIMessages rejects zero-part messages and would otherwise make
     // every future retry of the chat fail before inference starts.
-    if (msg.role === "assistant" && msg.parts.length === 0) return [];
-    return [{
-      ...msg,
-      parts: msg.parts.map((part) => {
-        if (!part || typeof part !== "object") return part;
-        const cleaned: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(part)) {
-          if (value !== null) cleaned[key] = value;
-        }
-        return cleaned;
-      }),
-    }];
+    const parts = msg.parts.flatMap((part) => {
+      if (!part || typeof part !== "object") return [part];
+      const cleaned: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(part)) {
+        if (value !== null) cleaned[key] = value;
+      }
+      if (
+        msg.role === "assistant" && cleaned.type === "text" &&
+        typeof cleaned.text === "string"
+      ) {
+        const { content, hasUnparsedCalls } = splitUnparsedToolText(
+          cleaned.text,
+        );
+        if (hasUnparsedCalls && !content) return [];
+        cleaned.text = content;
+      }
+      return [cleaned];
+    });
+    return msg.role === "assistant" && parts.length === 0
+      ? []
+      : [{ ...msg, parts }];
   });
+}
+
+export function hasUnparsedFinalToolCalls(parts: UIMessage["parts"]): boolean {
+  const lastStep = parts.findLastIndex((part) => part.type === "step-start");
+  return parts.slice(lastStep + 1).some((part) =>
+    part.type === "text" && splitUnparsedToolText(part.text).hasUnparsedCalls
+  );
 }
 
 export async function apiChatHandler(req: Request, res: Response) {
@@ -838,8 +877,11 @@ export async function apiChatHandler(req: Request, res: Response) {
 
   const abortController = new AbortController();
   let streamAborted = false;
-  let streamFailed = false;
+  let streamError: string | undefined;
   const requestStartedAt = Date.now();
+  const chatSystemPrompt = `${systemPrompt}\n\nCurrent date and time: ${
+    new Date().toISOString()
+  }`;
   res.once("close", () => {
     if (!res.writableEnded) abortController.abort();
   });
@@ -861,33 +903,25 @@ export async function apiChatHandler(req: Request, res: Response) {
       tools,
       activeTools: activeTools as any,
       abortSignal: abortController.signal,
-      stopWhen: stepCountIs(5),
-      messages: [
-        {
-          role: "system",
-          // Current time lets the model resolve "tomorrow"/"last week"
-          content: `${systemPrompt}\n\nCurrent date and time: ${
-            new Date().toISOString()
-          }`,
-        },
-        ...modelMessages,
-      ],
+      ...chatToolSteps(chatSystemPrompt),
+      system: chatSystemPrompt,
+      messages: modelMessages,
       onError: (errorEvent: any) => {
-        streamFailed = true;
         const error = errorEvent?.error;
+        streamError = getClientChatError(error, actualModel, requestId);
         console.error("[apiChatHandler] Chat stream failed", {
           requestId,
           chatId: activeChatId,
           requestedModel,
           actualModel,
-          error: getErrorMessage(error),
+          error: streamError,
         });
         void updateChatRunState(mongo, {
           principal: auth.principal,
           chatId: activeChatId!,
           runId,
           state: "failed",
-          error: getErrorMessage(error),
+          error: streamError,
           requestedModel,
           actualModel,
           providerProfileId: chatProvider.id,
@@ -937,6 +971,22 @@ export async function apiChatHandler(req: Request, res: Response) {
         const needsApproval = responseMessage.parts.some((part: any) =>
           part?.state === "approval-requested"
         );
+        const incomplete = !needsApproval && finishReason === "tool-calls";
+        const unparsedToolCalls = !needsApproval &&
+          hasUnparsedFinalToolCalls(responseMessage.parts);
+        const responseError = streamError
+          ? { type: "provider_error", message: streamError }
+          : unparsedToolCalls
+          ? { type: "unparsed_tool_calls", message: UNPARSED_TOOL_CALL_ERROR }
+          : incomplete
+          ? { type: "incomplete_tool_response", message: CHAT_TOOL_LIMIT_ERROR }
+          : isEmpty
+          ? {
+            type: "empty_response",
+            message:
+              `Model "${actualModel}" completed without text or a tool result`,
+          }
+          : undefined;
         if (isEmpty) {
           console.error("[apiChatHandler] Empty model response", {
             requestId,
@@ -952,35 +1002,22 @@ export async function apiChatHandler(req: Request, res: Response) {
           isContinuation,
           startedAt: new Date(requestStartedAt).toISOString(),
           durationMs: Date.now() - requestStartedAt,
-          ...(isEmpty
-            ? {
-              error: {
-                type: "empty_response",
-                message:
-                  `Model "${actualModel}" completed without text or a tool result`,
-              },
-            }
-            : {}),
+          ...(responseError ? { error: responseError } : {}),
         });
 
         const terminalState: ChatRunState = streamAborted
           ? "cancelled"
-          : streamFailed || isEmpty
+          : responseError
           ? "failed"
           : needsApproval
           ? "needs_approval"
           : "completed";
-        const terminalError = isEmpty
-          ? `Model "${actualModel}" completed without text or a tool result`
-          : streamFailed
-          ? `Model "${actualModel}" failed while streaming`
-          : undefined;
         await updateChatRunState(mongo, {
           principal: auth.principal,
           chatId: activeChatId!,
           runId,
           state: terminalState,
-          error: terminalError,
+          error: responseError?.message,
           requestedModel,
           actualModel,
           providerProfileId: chatProvider.id,
@@ -992,7 +1029,7 @@ export async function apiChatHandler(req: Request, res: Response) {
         // Generate title for new chats after the first assistant response
         if (
           (isNewChat || chatDocument?.titleSource === "provisional") &&
-          !isEmpty && !needsApproval
+          !responseError && !needsApproval && !streamAborted
         ) {
           isNewChat = false; // Only generate once
           const firstUserMessage = uiMessages.find((m) => m.role === "user");

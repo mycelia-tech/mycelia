@@ -27,6 +27,7 @@ export interface ToolAdapterOptions {
   toolFilter?: (toolName: string) => boolean;
   /** Execute through policy extraction, matching, modifiers, and auditing. */
   resourceManager: ResourceManager;
+  decodeInput?: (toolName: string, input: unknown) => unknown;
   /** Additional restrictions imposed by the tool's execution context. */
   validateInput?: (toolName: string, input: unknown) => void;
 }
@@ -120,6 +121,13 @@ export function resourceToTools<Input, Output>(
   }
   const toolsRequiringApproval = new Set(options?.toolsRequiringApproval ?? []);
   const toolFilter = options?.toolFilter;
+  const parseInput = (toolName: string, args: unknown): Input => {
+    const input = resource.schemas.request.parse(
+      options.decodeInput ? options.decodeInput(toolName, args) : args,
+    );
+    options.validateInput?.(toolName, input);
+    return input;
+  };
   const schema = resource.schemas.request;
   const def = schema.def as any;
   const tools: Record<
@@ -170,16 +178,12 @@ export function resourceToTools<Input, Output>(
             actionValue,
           );
 
-          let inputSchema = optionSchema;
-          if (inputSchema instanceof z.ZodObject) {
-            inputSchema = inputSchema.omit({ [discriminator]: true });
-          } else {
-            if ((inputSchema as any).omit) {
-              inputSchema = (inputSchema as any).omit({
-                [discriminator]: true,
-              });
-            }
-          }
+          // The advertised arguments omit the action. Cross-field checks may
+          // depend on it, so run them on the original schema in execute.
+          const inputSchema = optionSchema.clone({
+            ...optionSchema.def,
+            checks: [],
+          }).omit({ [discriminator]: true });
 
           tools[toolName] = {
             description: actionDescription || resource.description ||
@@ -192,11 +196,10 @@ export function resourceToTools<Input, Output>(
                 [discriminator]: actionValue,
               };
               // Parse through schema to apply Zod transforms (e.g., string → Date)
-              const input = resource.schemas.request.parse(rawInput);
-              options.validateInput?.(toolName, input);
+              const input = parseInput(toolName, rawInput);
               const result = await executeResource(
                 resource,
-                input as Input,
+                input,
                 auth,
                 options?.resourceManager,
               );
@@ -223,8 +226,7 @@ export function resourceToTools<Input, Output>(
     needsApproval: toolsRequiringApproval.has(resource.code),
     execute: async (args: any) => {
       // Parse through schema to apply Zod transforms (e.g., string → Date)
-      const input = resource.schemas.request.parse(args);
-      options.validateInput?.(resource.code, input);
+      const input = parseInput(resource.code, args);
       const result = await executeResource(
         resource,
         input,

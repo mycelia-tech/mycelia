@@ -78,11 +78,10 @@ describe("ApiClient", () => {
     });
 
     it("throws error on failed request", async () => {
-      const mockResponse = {
-        ok: false,
+      const mockResponse = new Response(null, {
         status: 404,
         statusText: "Not Found",
-      };
+      });
       ((globalThis as any).fetch as any).mockResolvedValue(mockResponse);
       (auth.getCurrentJWT as any).mockResolvedValue("jwt-token");
 
@@ -112,21 +111,26 @@ describe("ApiClient", () => {
     });
 
     it("surfaces a safe JSON error returned by the backend", async () => {
-      const mockResponse = {
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        json: vi.fn().mockResolvedValue({
+      const mockResponse = Response.json(
+        {
           success: false,
           error: "Use a path relative to the mounted media folder",
-        }),
-      };
+        },
+        {
+          status: 400,
+          statusText: "Bad Request",
+          headers: { "X-Mycelia-Request-Id": "request-123" },
+        },
+      );
       ((globalThis as any).fetch as any).mockResolvedValue(mockResponse);
       (auth.getCurrentJWT as any).mockResolvedValue("jwt-token");
 
-      await expect(client.fetch("/api/resource/media")).rejects.toThrow(
-        "Use a path relative to the mounted media folder",
-      );
+      await expect(client.fetch("/api/resource/media")).rejects.toMatchObject({
+        message: expect.stringContaining(
+          "Use a path relative to the mounted media folder",
+        ),
+        requestId: "request-123",
+      });
     });
 
     it("makes request without JWT when not available", async () => {

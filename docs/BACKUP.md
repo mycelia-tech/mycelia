@@ -1,330 +1,161 @@
-# Mycelia encrypted file backups
+# Бэкап Mycelia
+
+Назначение уже настроено: `pk-backup:mycelia/restic-v1` (SSH
+`pk@77.51.198.164:22126`). Файлы шифрует restic.
 
 For the separate configurable encrypted MongoDB archive/restore CLI, see
-[MongoDB backups](BACKUP_MONGO.md). It preserves the existing restic workflow;
-neither a file snapshot nor a verified transfer alone proves database recovery.
+[MongoDB backups](BACKUP_MONGO.md). Neither a file snapshot nor a verified
+transfer alone proves database recovery.
 
-This runbook prepares the Keychain credential, reserves the remote
-`pk-backup:mycelia` namespace, and creates incremental file/config snapshots
-with restic. Mongo bootstrap/PITR and unattended schedules remain pending; a
-files snapshot alone is not a complete database backup. Run every confirmation
-step below in a normal, independently visible Terminal window. A Codex PTY,
-redirected input, or an environment flag is not an operator confirmation.
+Реализован **ручной инкрементальный бэкап файлов и конфигурации** через restic
+и отдельная команда полного снимка MongoDB на bastion. MongoDB/PITR в
+`backupctl` и автоматическое расписание ещё не реализованы.
 
-The commands deliberately never print the restic password. Do not paste that
-password, an SSH passphrase, or any authentication callback into this file,
-shell history, logs, or chat.
-
-Use Deno 2.9 or later (verified with 2.9.5). The host wrapper resolves Deno
-through the same reviewed tool path used for backup subprocesses, not the
-ambient shell PATH, and checks synchronous file-lock support before loading
-the controller. A separate older installation in `~/.deno/bin` is not used.
-
-## 1. Fix local SSH permissions and key access
-
-Set the checkout once in the visible Terminal:
+## Возобновляемый бэкап остановленной MongoDB → bastion
 
 ```sh
-ROOT="$HOME/repo/mycelia"
-cd "$ROOT"
+cd "$HOME/repo/mycelia"
+/opt/homebrew/bin/deno run -A scripts/backup-cold-resumable.ts start
 ```
 
-The bootstrap accepts one concrete legacy private key, `~/.ssh/id_rsa`, and
-owned regular mode-`0600` config, key, and known-hosts files. Repair only these
-known paths:
+Команда требует уже остановленную MongoDB. Создаёт отдельную APFS-копию
+данных через copy-on-write (без полной записи объёма второй раз), добавляет
+конфигурацию, включая `.env`, и передаёт её на bastion через Homebrew rsync 3.
+Обрывы SSH повторяются автоматически; недокачанные файлы сохраняются.
+После остановки самой команды продолжайте **тот же снимок**, а не `start`:
 
 ```sh
-/usr/bin/install -d -m 700 "$HOME/.ssh"
-/bin/chmod 600 "$HOME/.ssh/id_rsa"
-/bin/chmod 600 "$HOME/.ssh/config"
-/bin/chmod 600 "$HOME/.ssh/known_hosts"
+/opt/homebrew/bin/deno run -A scripts/backup-cold-resumable.ts resume <run-id>
 ```
 
-If `id_rsa` does not exist, create or obtain the intended key in the visible
-Terminal. Do not copy a private key through chat. For a newly generated RSA key:
+ID выводится при запуске. Локальное состояние —
+`.local/backup/cold-resumable/<run-id>/status.json`; копия на сервере —
+`/mnt/datadrive/db-backups/<run-id>/snapshot/`. Нельзя удалять или менять
+локальный снимок до завершения. Новые записи в исходную БД после создания
+APFS-копии потребуют дополнительного локального места.
+
+На bastion автоматически сверяются SHA-256 всех файлов, затем создаётся
+**отдельная** копия для восстановления в контейнере без сети и опубликованных
+портов. Успех — `restore-status.json` с `state: complete`,
+`transferVerified: true`, `restoreVerified: true`. Проверка охватывает
+целостность коллекций и наличие аудио; не проверяет интерфейс приложения.
+Исходный снимок, старые архивы и результат восстановления сохраняются.
+
+Это копия БД и конфигурации, не внешних оригиналов и не PITR. При аварийной
+остановке источника пригодность копии подтверждается только восстановлением.
+Передача зашифрована SSH; **файлы на сервере не зашифрованы**, доступ закрыт
+правами `700/600`. Требуются тот же проверенный диск bastion, Python 3 и Docker
+на сервере. [Ограничения холодного копирования MongoDB](https://www.mongodb.com/docs/manual/core/backups/).
+
+## Старый потоковый дамп MongoDB → bastion
+
+У этого способа нет возобновления: при обрыве нужен новый дамп.
 
 ```sh
-/usr/bin/ssh-keygen -t rsa -b 4096 -f "$HOME/.ssh/id_rsa"
-/usr/bin/ssh-add --apple-use-keychain "$HOME/.ssh/id_rsa"
+cd "$HOME/repo/mycelia"
+/opt/homebrew/bin/deno run -A scripts/backup-mongo-bastion.ts
 ```
 
-The second command may request the key passphrase in Terminal. If the server
-still reports `Permission denied (publickey)`, the server administrator must add
-the matching **public** key to user `pk`'s `~/.ssh/authorized_keys`; server-side
-`~/.ssh` should be mode `0700` and `authorized_keys` mode `0600`. Never send the
-private `id_rsa` file.
+Команда передаёт `mongodump --archive --gzip --oplog` напрямую на
+`faeon:/mnt/datadrive/db-backups/mycelia-<дата>-<uuid>/`, без локального архива.
+SSH-алиас должен вести на `Skywinder@100.119.163.116`. Нужны запущенная MongoDB,
+Deno 2.9+, Docker CLI, проверенный SSH host key и Python 3 на bastion.
+Этот отдельный запуск пока поддерживает только текущую MongoDB без авторизации;
+при включении авторизации он остановится, не выводя пароли.
 
-The exact local SSH stanza must set every reviewed value before any later
-`Host *` stanza:
+Передача зашифрована SSH, **сам архив не зашифрован**: каталог закрыт (`700`),
+файлы `600`. Старые копии не удаляются. До успешного завершения выгрузки и
+сверки SHA-256 файл остаётся `.partial`. Готовность подтверждает
+`manifest.json` с `state: transfer_verified`; это проверка передачи, **не
+проверка восстановления**. Локальный статус каждого запуска находится в
+`.local/backup/bastion-mongo/*.json`, отдельно от `backupctl status`.
 
-```sshconfig
-Host pk_backup
-    HostName 77.51.198.164
-    Port 22126
-    User pk
-    IdentityFile ~/.ssh/id_rsa
-    IdentitiesOnly yes
-    IdentityAgent none
-    UseKeychain yes
-    StrictHostKeyChecking yes
-```
+Это полный снимок БД, включая сохранённое в БД аудио, но не внешние оригиналы,
+`.env` или `SECRET_KEY`. Отключённые внешние диски этому запуску не мешают.
+Для восстановления на отдельной тестовой MongoDB нужны
+`mongorestore --archive=<файл> --gzip --oplogReplay`; не запускайте его против
+рабочей базы. [Правила mongodump](https://www.mongodb.com/docs/database-tools/mongodump/).
 
-`Include`, `Match`, proxy/local/remote commands, a second identity, and an
-earlier matching wildcard are rejected. A global `AddKeysToAgent yes` is
-allowed. The rclone `[pk-backup]` section must use the reviewed external
-`/usr/bin/ssh -F <absolute-config>` command, the same absolute known-hosts file,
-`shell_type = unix`, `md5sum_command = md5sum`, and `sha1sum_command = sha1sum`.
-Its config file must also be owned, regular, and mode `0600`. Run
-`rclone config file` to confirm that the path is exactly
-`$HOME/.config/rclone/rclone.conf`; an ancestor such as `~/.config` may be a
-dotfiles symlink. Both the selected path and resolved target are pinned, and a
-retargeted ancestor is rejected during the run. The config file itself cannot be
-a symlink. Custom config locations and inherited `RCLONE_CONFIG` overrides are
-rejected. Use literal absolute paths in the config, not `$HOME` placeholders.
-Bootstrap pins that canonical file's inode, size, and SHA-256 before the first
-rclone or restic child and rechecks them before every later child. Replacing or
-editing the file during bootstrap stops the operation.
+## Настройка один раз
 
-The section has this exact shape. Replace both `/ABSOLUTE/HOME` placeholders
-with the literal value printed by `printf '%s\n' "$HOME"` before saving:
-
-```ini
-[pk-backup]
-type = sftp
-ssh = /usr/bin/ssh -F /ABSOLUTE/HOME/.ssh/config -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/ABSOLUTE/HOME/.ssh/known_hosts -o ConnectTimeout=12 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 pk_backup
-known_hosts_file = /ABSOLUTE/HOME/.ssh/known_hosts
-shell_type = unix
-md5sum_command = md5sum
-sha1sum_command = sha1sum
-```
-
-Check the pinned host entry without changing it:
+В обычном Terminal выполните:
 
 ```sh
-/usr/bin/ssh-keygen -F '[77.51.198.164]:22126' -f "$HOME/.ssh/known_hosts"
+cd "$HOME/repo/mycelia"
+bk() { env -u RESTIC_PASSWORD -u RESTIC_REPOSITORY ./scripts/backupctl "$@"; }
+bk bootstrap --compose-root "$PWD" --initialize-keychain
 ```
 
-If the entry is absent or SSH reports a changed host key, stop and obtain the
-expected fingerprint through an independent trusted channel. Only after it is
-confirmed should the stale entry be removed and the confirmed replacement be
-installed. Do not bypass this with `StrictHostKeyChecking=no` or an empty
-known-hosts file.
+Введите показанное подтверждение. Функция `bk` действует только в этом терминале
+и не меняет настройки оболочки. Она убирает два конфликтующих параметра restic;
+пароль берётся из Keychain.
 
-Prove the exact noninteractive transport and rclone alias:
+В приложении **Связка ключей / Keychain Access** найдите
+`tech.mycelia.backup.restic`, аккаунт `mycelia`. Сохраните пароль в своей
+офлайн-копии для восстановления — не в чате и не в репозитории. Только после
+сохранения подтвердите это; `offline-kit-1` — название записи, не пароль:
 
 ```sh
-/usr/bin/ssh -F "$HOME/.ssh/config" \
-  -o BatchMode=yes \
-  -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-  -o ConnectTimeout=12 \
-  -o ServerAliveInterval=20 \
-  -o ServerAliveCountMax=3 \
-  pk_backup true
-rclone lsf pk-backup:
+bk bootstrap --compose-root "$PWD" --attest-recovery --receipt-id offline-kit-1
 ```
 
-An exit status of zero from the first command and a successful listing from the
-second prove current transport access. They do not prove that a backup was
-uploaded or is restorable.
-
-## 2. Run full preflight
-
-Keep Docker services in their normal healthy state and run:
+Затем создайте зашифрованное хранилище:
 
 ```sh
-./scripts/backupctl preflight --compose-root "$ROOT" --remote-mode full --json
+bk bootstrap --compose-root "$PWD" --initialize-repository
 ```
 
-Continue only when the report has `"ok":true`. Preflight is read-only. Do not
-manually create `pk-backup:mycelia`, `owner-v1.json`, or `restic-v1`.
+Запускайте шаги по очереди, продолжая только после успеха предыдущего. Скрипт
+сам проверяет доступ, источники и хранилище. При ошибке смотрите раздел ниже;
+вручную создавать репозиторий или удалять его содержимое не нужно.
 
-The bootstrap rejects inherited `RESTIC_*` and `RCLONE_*` variables, then starts
-its helper, SSH, rclone, and restic subprocesses with a cleared environment.
-Only the validated home, the fixed path
-`$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, and the exact
-per-command backup variables are supplied. Proxy, dynamic-loader, SSH-agent, and
-unrelated shell variables are not forwarded.
+## Сделать бэкап
 
-## 3. Create the Keychain credential
-
-In the same visible Terminal:
+В том же терминале:
 
 ```sh
-./scripts/backupctl bootstrap --compose-root "$ROOT" --initialize-keychain
+bk files --compose-root "$PWD"
+bk status --compose-root "$PWD"
 ```
 
-Read the fresh challenge and type the exact requested confirmation. The helper
-creates one non-synchronizing generic-password item in the selected concrete
-file Keychain. It never updates, deletes, or replaces an existing item.
+Первый запуск сохраняет файлы, следующие передают изменившиеся данные. Успех:
+`files.state = "complete"` и новый `files.accepted.snapshotId` в статусе. Старый
+`accepted` после неудачного запуска не означает свежий бэкап. В новом терминале
+сначала повторите `cd` и определение `bk` выше.
 
-The item grants access only to `/usr/bin/security`, but any process running as
-this macOS user can invoke that trusted program. The underlying Keychain ACL
-APIs are deprecated. Successful helper compilation and unit tests are not proof
-that the live ACL works.
+Диски **TM_data и Sky4Tb опциональны**: когда они отключены, их оригиналы не
+сохраняются; когда подключены — включаются автоматически. Пропуски видны в
+`sourceCounts.skipped` и `sourceCounts.omittedRoots`. Настройка —
+`BACKUP_OPTIONAL_SOURCE_ROOTS_JSON` в локальном `.env.backup`. Это не разрешение
+пропускать любые другие отсутствующие файлы.
 
-## 4. Make and attest the offline recovery copy
+## Если не запускается
 
-Use the visible Keychain Access application to locate the item with account
-`mycelia` and service/label `tech.mycelia.backup.restic`. Reveal it locally and
-store the 64-character password in the approved offline recovery kit. Do not put
-it in an environment variable, text file, command argument, or this runbook.
+- **`CONFIG_INVALID`**: используйте `bk` вместо прямого запуска, чтобы убрать
+  унаследованные `RESTIC_PASSWORD` и `RESTIC_REPOSITORY`. Если ошибка
+  сохраняется, нужно проверить конфигурацию и права; не выводите пароли.
+- **`unexpected EOF` / SSH error**: не работает транспорт до сервера. Сначала
+  восстановите SSH/SFTP; эта ошибка не означает потерю бэкапа.
+- **`KEYCHAIN_PROVENANCE_MISMATCH`**: не удалось подтвердить helper или запись
+  Keychain. Не удаляйте ключи и состояние; требуется разбор незавершённой
+  подготовки. Исправленный bootstrap допускает повтор после обычной ошибки
+  подготовки, не заменяя существующий ключ.
+- **`SOURCE_COVERAGE_INCOMPLETE`**: недоступны обязательные файлы или пути из
+  базы. Восстановите доступ либо явно согласуйте исключения. Два опциональных
+  диска сами по себе не должны блокировать запуск.
+- **`OPLOG_WINDOW_SHORT`**: текущий общий preflight требует минимум час истории
+  MongoDB, даже для файлового запуска. Это ограничение реализации, а не ошибка
+  удалённого диска.
+- **`LOCK_HELD` / `REPOSITORY_QUARANTINED`**: сохраните состояние и разберите
+  незавершённый запуск. Не удаляйте lock/quarantine вручную.
 
-Choose a bounded, non-secret receipt identifier that refers to the offline
-record, then run a separate confirmation transition:
+Одна диагностическая команда, если нужна:
 
 ```sh
-./scripts/backupctl bootstrap --compose-root "$ROOT" \
-  --attest-recovery --receipt-id offline-kit-20261001
+bk preflight --compose-root "$PWD" --remote-mode full --json
 ```
 
-The receipt records the operator attestation; it cannot prove that the offline
-copy is correct or readable. Verify the offline copy according to the recovery
-kit procedure before continuing.
-
-## 5. Prove the live password lookup and initialize the repository
-
-Before the first remote write, run the restrictive password command directly and
-report only its status:
-
-```sh
-MYCELIA_BACKUP_COMPOSE_ROOT="$ROOT" \
-  "$ROOT/scripts/restic-password-command" >/dev/null
-status=$?
-printf 'password lookup exit=%s\n' "$status"
-```
-
-Continue only when the status is `0`. This proves the current unlocked login
-session can use the item's ACL through `/usr/bin/security`. It does not prove a
-LaunchAgent can read it after logout or restart; that remains a later operations
-acceptance check.
-
-Reserve the namespace and initialize/verify only `restic-v1`:
-
-```sh
-./scripts/backupctl bootstrap --compose-root "$ROOT" --initialize-repository
-./scripts/backupctl bootstrap --compose-root "$ROOT" --check
-```
-
-The first command atomically reserves `pk-backup:mycelia/owner-v1.json`, opens
-or initializes the repository, records its repository ID, and verifies
-`restic snapshots --json`. On an interrupted marker or partial repository it
-stops for manual inspection. It never deletes, adopts, overwrites, or retries a
-foreign/ambiguous namespace.
-
-The owner-marker intent is durable before the first remote write. If a later
-attempt starts with that intent but `restic-v1` is absent, it performs no marker
-write and no `restic init`; inspect the preserved state and remote namespace
-manually. For an interrupted marker writer or `restic init`, bootstrap observes
-the raw status of the direct child and then performs only read-only remote
-attestation before returning failure. That does not prove that every descendant
-or remote side effect has stopped. Such an unproved write now activates the
-repository-global quarantine before the bootstrap lock may unwind. An
-unconfirmed child status, any forced kill, or an incomplete producer/side-effect
-audit also activates that quarantine. The durable marker intent remains a
-separate no-retry boundary for the Task 5 marker and repository initialization.
-
-## Repository quarantine and the current recovery boundary
-
-The global interlock is stored under `.local/backup` as a protected pending
-intent and `repository-quarantine-v1.json`. While either exists, all Task 5
-mutating bootstrap entrypoints and the read-only bootstrap check fail closed
-with the quarantine ID and a closed reason code. Generic `--clear-stale-lock`
-recovery rechecks this interlock while holding the lock guard and cannot remove
-a quarantined lock.
-
-The code now has the fail-closed recovery primitives: an exact lock-owner
-identity is pinned, two separated dead-owner/descendant observations must match
-it, and every mutating lock fsyncs a pre-reserved quarantine UUID/time before
-the mutating callback starts. That WAL alone blocks every other writer and
-generic stale clear; only its exact live branded lease may continue its own
-callback. A crashed mutating owner therefore requires dedicated recovery even if
-no pending rewrite exists. Preflight and status locks remain eligible for
-explicit generic stale clearing. The lock is durably rebound to that exact
-quarantine before intent I/O. If the single `.recovery-pending` rewrite crashes
-while empty or partial, recovery derives the closed
-`retention_publication_interrupted` fallback only from that on-disk reservation;
-it does not accept caller-injected or in-memory provenance. Hard-link retries
-compare inode identity and bytes before any truncate, so a new controller stages
-on a fresh inode while the old published lock remains the interlock. The same
-advisory guard remains held across recovery, immutable audit fsync, quarantine
-removal, and exact recovery-lock cleanup. Deterministic `.pending` publication
-prefixes stay fail-closed and are reconciled only by that dedicated recovery
-path. The quarantine is removed only after its receipt and state reconciliation.
-The concrete Task 7 audit commands and an operator-facing `recover-repository`
-CLI are not yet implemented. Therefore there is currently no supported manual
-command to clear a quarantine. Do not delete or edit the quarantine, intent,
-audit, lock, or guard files; preserve them for the dedicated recovery workflow.
-
-## 6. Create and verify a files snapshot
-
-After full preflight and repository initialization, use the checkout containing
-these scripts and its actual Compose root:
-
-```sh
-./scripts/backupctl files --compose-root "$ROOT"
-./scripts/backupctl status --compose-root "$ROOT"
-./scripts/backupctl verify --compose-root "$ROOT"
-```
-
-`files` makes the first snapshot with `--force`, then selects the last accepted
-full snapshot ID as the explicit parent of subsequent snapshots. Restic
-deduplicates unchanged content. A failed candidate never becomes the next
-parent. The output contains the current attempt and its candidate ID separately
-from `accepted`, which remains the previous verified receipt until the entire
-new attempt succeeds.
-
-The command reconciles source coverage, records metadata fingerprints, and
-writes a protected temporary JSON inventory plus a separate NUL-delimited input
-list. The encrypted snapshot includes the inventory; the input list and other
-local backup state are excluded. Source fingerprints are checked before and
-after backup. This detects concurrent changes but does not provide an atomic
-filesystem snapshot across all sources.
-
-Acceptance requires the exact snapshot ID/host/tags/path set, expected file and
-byte counts (including the inventory), a rotating `n/100` repository data check,
-and matching SHA-256/length for readback of the inventory and
-`docker-compose.yml`. The sampled check does not read all repository data on
-each run. `verify` repeats the recorded subset and those two reads against
-stored digests; it does not compare against changed current source files or
-create a new acceptance receipt. Its output reports `scope: files`.
-
-`status` is read-only and works before initialization. It reports bootstrap
-phase, files/Mongo stage records, and any repository quarantine. A null stage
-means no recorded attempt, not success. After a crash, a retained mutation WAL
-requires the dedicated recovery workflow described above; generic
-`--clear-stale-lock` cannot erase it. If writing terminal status fails, the WAL
-also remains, even when restic already created a candidate.
-
-Source enumeration is limited to 250,000 files and 16 MiB of encoded source
-paths; the generated inventory is limited to 256 MiB. Diagnostics and metadata
-have independent bounds. Files are not silently omitted to satisfy a limit.
-
-Local verification can be reproduced without Keychain or remote storage:
-
-```sh
-deno test --allow-read --allow-write --allow-run --allow-env scripts/backupctl.test.ts scripts/backup/*.test.ts
-BACKUP_INTEGRATION=1 deno test --allow-read --allow-write --allow-run --allow-env scripts/backup/files.integration.test.ts
-```
-
-The opt-in integration test creates a disposable encrypted local repository,
-backs up A and B, verifies the explicit parent and readback, restores B into a
-separate temporary directory with restic verification, and simulates a failed C.
-It proves local file workflow behavior; it is not evidence of a production
-upload, full Mycelia restoration, Mongo replay, or a measured production RTO.
-
-## What each status proves
-
-- **Configured**: local files, SSH/rclone transport, Keychain metadata, and
-  bootstrap state pass their checks.
-- **Uploaded**: a later backup stage completed a restic snapshot and recorded
-  its snapshot ID. Bootstrap alone is not uploaded data.
-- **Readable**: an independent verification can open the repository and read the
-  expected objects. A successful `rclone lsf` is not this proof.
-- **Restored**: a representative restore was completed into a separate target
-  and validated. Neither configuration nor repository readability proves this.
-
-Cleanup is disabled. Do not run `restic forget`, `prune`, repository deletion,
-`rclone sync`, or manual remote cleanup as part of bootstrap or a failed retry.
-Preserve the marker, partial repository, local bootstrap state, and diagnostics
-for review.
+Для разработки:
+[архитектура и ограничения](superpowers/specs/2026-09-30-mycelia-incremental-backup-design.md)
+и
+[план реализации и тесты](superpowers/plans/2026-09-30-mycelia-backup-foundation.md).

@@ -28,6 +28,9 @@ import type { TrackId } from "@/types/tracks";
 import type { useTimeline } from "@/hooks/useTimeline";
 import { TimeZoneContextTrack } from "./TimeZoneContextTrack";
 import { DiarizationLegend } from "./DiarizationLegend";
+import { Button } from "@/components/ui/button";
+import { Minus, Plus } from "lucide-react";
+import { TimelineDateJump } from "./TimelineDateJump";
 
 // Pre-create layer instances (these are stable references)
 const TIME_LAYER = TimeLayer();
@@ -102,16 +105,51 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
   );
 
   const showObjects = visibleTracks.includes("objects");
-  const showDiarizationCoverage = visibleTracks.includes(
-    "diarization-coverage",
-  );
-  const showSpeakerIdentity = visibleTracks.includes("diarizations");
   // Opt-in and fully lazy: when hidden, LocationTrack is not mounted and
   // performs no location API requests at all.
   const showLocations = visibleTracks.includes("locations");
 
   return (
     <div ref={containerRef} className={`relative ${className || ""}`}>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-7 w-7"
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() =>
+              timeline.zoomTo(
+                new Date(+start + (+end - +start) / 4),
+                new Date(+end - (+end - +start) / 4),
+              )}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-7 w-7"
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() =>
+              timeline.zoomTo(
+                new Date(+start - (+end - +start) / 2),
+                new Date(+end + (+end - +start) / 2),
+              )}
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <TimelineDateJump
+          center={new Date((+start + +end) / 2)}
+          onJump={timeline.zoomTo}
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Scroll inside to zoom · Drag a track to move through time
+        </p>
+      </div>
       <div className="flex flex-col gap-0.5">
         {/* Processing overlay layer */}
         <ProcessingLayerComponent
@@ -131,11 +169,6 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
           scale={timeScale}
           transform={transform}
           width={width}
-        />
-
-        <DiarizationLegend
-          showCoverage={showDiarizationCoverage}
-          showIdentity={showSpeakerIdentity}
         />
 
         {/* Locations track (opt-in, self-fetching) */}
@@ -164,14 +197,24 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
               key={trackId}
               className="relative border-b border-border/30 last:border-b-0"
             >
-              <TrackHeader
-                config={{
-                  ...config,
-                  id: trackId,
-                  defaultVisible: true,
-                  defaultHeight: height,
-                }}
-              />
+              {(trackId === "diarization-coverage" ||
+                trackId === "diarizations") && (
+                <DiarizationLegend
+                  showCoverage={trackId === "diarization-coverage"}
+                  showIdentity={trackId === "diarizations"}
+                />
+              )}
+              {trackId !== "diarization-coverage" &&
+                trackId !== "diarizations" && (
+                <TrackHeader
+                  config={{
+                    ...config,
+                    id: trackId,
+                    defaultVisible: true,
+                    defaultHeight: height,
+                  }}
+                />
+              )}
               <TrackComponent
                 scale={timeScale}
                 transform={transform}

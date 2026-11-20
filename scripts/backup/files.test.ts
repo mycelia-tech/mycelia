@@ -208,6 +208,40 @@ async function fixture() {
   return { root, stateDir, control, deps, snapshots };
 }
 
+Deno.test("files receipts persist explicit partial coverage without exposing omitted paths", async () => {
+  const f = await fixture();
+  const original = f.deps.collectSourceManifest!;
+  f.deps.collectSourceManifest = async (...args) => {
+    const manifest = await original(...args);
+    return {
+      ...manifest,
+      coverage: { ...manifest.coverage, total: 2, covered: 0, skipped: 2 },
+      omittedRoots: [{
+        path: join(f.root, "offline"),
+        claimRoots: [join(f.root, "offline")],
+        reason: "optional_source_absent" as const,
+      }],
+    };
+  };
+  try {
+    const state = await runFilesBackup({ composeRoot: f.root }, f.deps);
+    assert(state.state === "complete", "partial file backup failed");
+    assert(
+      state.accepted?.sourceCounts.skipped === 2 &&
+        state.accepted.sourceCounts.omittedRoots === 1,
+      "partial scope lost",
+    );
+    assert(!JSON.stringify(state).includes(f.root), "omitted path leaked");
+    const saved = await readState(backupStatusPath(f.stateDir, "files"));
+    assert(
+      saved?.accepted?.sourceCounts.skipped === 2,
+      "saved partial receipt lost",
+    );
+  } finally {
+    await Deno.remove(f.root, { recursive: true });
+  }
+});
+
 Deno.test("files acceptance preserves accepted snapshot across failed candidate and rejects replacement receipts", async () => {
   const f = await fixture();
   try {

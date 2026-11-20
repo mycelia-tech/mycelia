@@ -62,6 +62,16 @@ export function errorHandler(
   }
 
   // Default error handling
+  const requestId = res.getHeader("X-Mycelia-Request-Id");
+  if (typeof requestId === "string" && !res.headersSent) {
+    console.error("Chat request failed", { requestId, path: req.path, error });
+    res.status(500).json({
+      success: false,
+      error: "Mycelia failed while preparing or saving the chat request.",
+      requestId,
+    });
+    return;
+  }
   console.error("Unhandled error:", error);
   console.error("Error type:", error?.constructor?.name);
   console.error(

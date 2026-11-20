@@ -159,6 +159,38 @@ const commands = [
   "status",
   "verify",
 ] as const;
+
+Deno.test("CONFIG_INVALID explains ambient backup overrides without exposing values", async () => {
+  const previous = Deno.env.get("RESTIC_PASSWORD");
+  Deno.env.set("RESTIC_PASSWORD", "do-not-print-this-secret");
+  const output: string[] = [];
+  const handlers = Object.fromEntries(
+    commands.map((command) => [command, (_options: ParsedCli) =>
+      Promise.reject(
+        Object.assign(new Error("private failure"), { code: "CONFIG_INVALID" }),
+      )]
+    ),
+  ) as Parameters<typeof main>[1];
+  try {
+    const code = await main(
+      ["status", "--compose-root", "/tmp/unused"],
+      handlers,
+      (line) => output.push(line),
+    );
+    assert(
+      code === 70 && output.join("").includes("Inherited RESTIC_* or RCLONE_*"),
+      "override guidance missing",
+    );
+    assert(
+      !output.join("").includes("do-not-print") &&
+        !output.join("").includes("private failure"),
+      "secret leaked",
+    );
+  } finally {
+    if (previous === undefined) Deno.env.delete("RESTIC_PASSWORD");
+    else Deno.env.set("RESTIC_PASSWORD", previous);
+  }
+});
 const simpleCommands = commands.filter((command) => command !== "bootstrap");
 
 Deno.test("parseCli accepts the non-bootstrap commands with an absolute compose root", () => {

@@ -1,7 +1,9 @@
 import { expect } from "@std/expect";
+import { ObjectId } from "bson";
 import {
   activeToolsForPolicy,
   chatToolFilter,
+  decodeChatToolInput,
   isRagChatEnabled,
   normalizeChatToolPolicy,
   validateChatToolInput,
@@ -62,6 +64,7 @@ Deno.test("chat aggregate cannot write even with root authorization", async () =
   });
   const tools = resourceToTools(mongo, auth, {
     resourceManager: manager,
+    decodeInput: decodeChatToolInput,
     validateInput: validateChatToolInput,
   });
   for (
@@ -82,6 +85,45 @@ Deno.test("chat aggregate cannot write even with root authorization", async () =
       pipeline: [{ $match: { ok: true } }],
     });
     expect(calls).toBe(1);
+  } finally {
+    accessLogger.log = original;
+  }
+});
+
+Deno.test("chat Mongo tool decodes Extended JSON dates and IDs before execution", async () => {
+  const manager = new ResourceManager();
+  const mongo = new MongoResource();
+  let query: unknown;
+  mongo.use = async (input) => {
+    if (input.action === "findOne") query = input.query;
+    return null;
+  };
+  manager.registerResource(mongo);
+  const id = new ObjectId();
+  const start = new Date("2025-06-22T00:00:00.000Z");
+  const tools = resourceToTools(
+    mongo,
+    new Auth({
+      principal: "root",
+      policies: [{ resource: "**", action: "*", effect: "allow" }],
+    }),
+    {
+      resourceManager: manager,
+      decodeInput: decodeChatToolInput,
+      validateInput: validateChatToolInput,
+    },
+  );
+  const original = accessLogger.log;
+  accessLogger.log = async () => {};
+  try {
+    await tools.mongo_findOne.execute({
+      collection: "transcriptions",
+      query: {
+        _id: { $oid: id.toHexString() },
+        start: { $gte: { $date: start.toISOString() } },
+      },
+    });
+    expect(query).toEqual({ _id: id, start: { $gte: start } });
   } finally {
     accessLogger.log = original;
   }

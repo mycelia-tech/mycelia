@@ -20,7 +20,7 @@ Deno.test("sequence creator preflight skips an empty backlog", async () => {
     query: transcriptionSequencePendingQuery,
     options: {
       projection: { _id: 1 },
-      hint: "audio_chunks_pending_work",
+      hint: "audio_chunks_sequence_pending_stats",
       limit: 1,
     },
   }]);

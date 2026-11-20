@@ -10,12 +10,16 @@ type SliderProps =
   & {
     thumbLabels?: string[];
     thumbValueTexts?: string[];
+    rangeClassName?: string;
   };
 
 const Slider = React.forwardRef<
   React.ElementRef<typeof SliderPrimitive.Root>,
   SliderProps
->(({ className, thumbLabels, thumbValueTexts, ...props }, ref) => {
+>((
+  { className, rangeClassName, thumbLabels, thumbValueTexts, ...props },
+  ref,
+) => {
   const thumbCount = props.value?.length ?? props.defaultValue?.length ?? 1;
   return (
     <SliderPrimitive.Root
@@ -27,7 +31,9 @@ const Slider = React.forwardRef<
       {...props}
     >
       <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-primary/20">
-        <SliderPrimitive.Range className="absolute h-full bg-primary" />
+        <SliderPrimitive.Range
+          className={cn("absolute h-full bg-primary", rangeClassName)}
+        />
       </SliderPrimitive.Track>
       {Array.from({ length: thumbCount }, (_, index) => (
         <SliderPrimitive.Thumb

@@ -1,10 +1,11 @@
 import L from "leaflet";
+import { memo } from "react";
 import { CircleMarker, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
 import type {
   ConversationMapCluster,
   MapRouteDetailResponse,
+  MapRouteSourceTrack,
   PresenceMapCluster,
-  RecordedLocationTrack,
 } from "@/types/location";
 import { sourceColor } from "./LocationSourceLayers.tsx";
 import { formatDurationShort } from "./LocationMap.tsx";
@@ -108,7 +109,7 @@ export function ConversationDensityLayer({
   );
 }
 
-export function RouteProjectionLayer({
+export const RouteProjectionLayer = memo(function RouteProjectionLayer({
   data,
   showConnectors,
   sourceTracks,
@@ -119,8 +120,8 @@ export function RouteProjectionLayer({
 }: {
   data: MapRouteDetailResponse | undefined;
   showConnectors: boolean;
-  sourceTracks?: RecordedLocationTrack[];
-  onSelectTrack?: (track: RecordedLocationTrack) => void;
+  sourceTracks?: MapRouteSourceTrack[];
+  onSelectTrack?: (track: MapRouteSourceTrack) => void;
   routeOpacity?: number;
   gapOpacity?: number;
   stale?: boolean;
@@ -200,4 +201,4 @@ export function RouteProjectionLayer({
       ))}
     </>
   );
-}
+});

@@ -1,4 +1,5 @@
 import { expect } from "@std/expect";
+import { partitionTranscriptionsForPrompt } from "@/lib/extraction/shared.ts";
 import capability, {
   buildConversationChunkClaimQuery,
   buildConversationChunkClaimRequest,
@@ -18,6 +19,37 @@ const PROMPT_LINES = [
   "Second topic starts here",
   "[time: 2026-08-01T10:55:00.000Z]",
 ];
+
+Deno.test("merged extraction ends a conversation at the selected ASR utterance before a short pause", () => {
+  const [window] = partitionTranscriptionsForPrompt([{
+    start: CHUNK_START,
+    end: CHUNK_END,
+    segments: [
+      { start: 0, end: 12.3, text: "First line\nlast words" },
+      { start: 40, end: 69.98, text: "Next topic" },
+    ],
+  }]);
+  const promptLines = window.prompt.split("\n");
+  const lastWords = promptLines.indexOf("last words");
+  const segments = parseMergedResponse(
+    JSON.stringify({
+      segments: [
+        { title: "First", start: "First line", end: "last words" },
+        { title: "By line", start: lastWords, end: lastWords },
+        { title: "Next", start: "Next topic", end: "Next topic" },
+      ],
+    }),
+    promptLines,
+    window.start,
+    window.end,
+    new Set(),
+    window.utterancesByLine,
+  );
+  expect(segments.map(({ start, end }) => [
+    start.getTime() - CHUNK_START.getTime(),
+    end.getTime() - CHUNK_START.getTime(),
+  ])).toEqual([[0, 12_300], [0, 12_300], [40_000, 69_980]]);
+});
 
 Deno.test("merged extractor defaults and schema", () => {
   const input = schema.parse({ type: "conversation_extractor_merged" });

@@ -152,6 +152,32 @@ checkout. Use the shared-audio deployment and drain procedure; restarting the
 Mycelia frontend/backend does not update these services. Verify real batch and
 streaming inference in addition to health, scheduler status, and readiness.
 
+### Host-side backups
+
+The host CLI `scripts/backupctl` provides read-only preflight/status, Keychain
+bootstrap, incremental file/config snapshots, and accepted-file verification.
+`scripts/backup-cold-resumable.ts start` requires a stopped source, takes a
+strict APFS clone, transfers with rsync partial-file retries, and verifies every
+file and an isolated restore on bastion. `resume <run-id>` reuses that immutable
+snapshot. It includes app configuration but not external media; data at rest is
+not encrypted. State is under `.local/backup/cold-resumable/`. Never restart the
+source on a nearly full disk without accounting for APFS copy-on-write growth.
+See [the short backup guide](docs/BACKUP.md) for setup, manual runs, and errors;
+the guide links to the technical design and test plan. The standalone host command
+`deno run -A scripts/backup-mongo-bastion.ts` streams a full Mongo archive with
+oplog to bastion, verifies SHA-256, and records separate per-run status under
+`.local/backup/bastion-mongo/`. It does not encrypt at rest or test restoration.
+Mongo bootstrap/PITR in `backupctl` and automatic scheduling are not yet
+implemented. Explicit optional external sources use
+`BACKUP_OPTIONAL_SOURCE_ROOTS_JSON` and report omitted-root/source counts;
+they do not claim complete original-media coverage. These host-script changes
+need no application restart; later Mongo auth/PBM Compose changes must follow the
+readiness and targeted-recreation procedure below.
+
+Keychain preparation retries clean up only their own fresh helper when no
+bootstrap record was published; recorded state, credentials, and unknown helpers
+are preserved. Regression tests cover native UUID generation and failed retries.
+
 ### Option A: Docker with Hot Reload
 
 The fastest way to get a development environment with hot reload:
@@ -792,6 +818,26 @@ OpenRouter profile may use a higher worker value (currently up to 8). The
 provider-specific tuning contract and the deferred RTX 4090 two-slot experiment
 are documented in `docs/CONVERSATION_EXTRACTION_TROUBLESHOOTING.md`.
 
+#### Timeline layout and time ruler
+
+Timeline keeps each track title above its data. Diarization coverage colors sit
+beside the coverage track; voice selection, speaker colors, and separate voice
+and result-status filters sit beside the speaker identity track. Controls wrap
+on narrow screens. The time ruler has labeled major ticks and smaller calendar
+ticks that adapt from seconds/minutes through hours, days, months, and years as
+the view zooms. Labels stay within the ruler and avoid collisions. Selection
+dates and duration occupy a separate wrapping row below the ruler.
+
+Wheel scrolling inside the timeline zooms around the pointer; outside it,
+scrolling moves the page. Dragging a track pans through time. Go to date offers
+a full calendar day or the Monday–Sunday week containing the selected date,
+using the Timeline time zone (including daylight-saving boundaries).
+Available object, photo, and audio/transcript histogram ranges bound navigation,
+with one to seven days of padding. The viewport is also limited to one second
+through 30 years (within the object-density bucket limit).
+Invalid/out-of-calendar URL ranges recover to the last 30 days. Resize and
+track visibility changes preserve the visible interval and zoom bindings.
+
 #### Timeline density maintenance and rebuild recovery
 
 Timeline density repairs affect only derived audio/transcription density buckets
@@ -1010,6 +1056,31 @@ Track/geometry changes mark the route state dirty. The `locationMapProjection`
 watchdog drains both paths and has concurrency one. A failed rebuild leaves the
 prior published generation intact where one exists and records the error in the
 corresponding state document.
+
+Route detail filters fragment envelopes in MongoDB and reads only the selected
+geometry chunks by their indexed IDs, with a shared read deadline. The backend
+keeps a bounded in-memory cache of prepared fragments for panning, zooming and
+time ranges that include the same complete fragments. The cache keys include
+the published projection generation and gap settings. Each request still
+clips and simplifies the cached runs for its current viewport and zoom. The map
+keeps the previous routes visible during viewport refreshes for the same time
+range and only shows its loading indicator when the requested layer has yet to
+load. Repeated dirty markers for an already stale route projection do not
+invalidate route queries.
+Source colours receives only the source summaries for rendered fragments in
+the route-detail response, and route geometry reads project only the point
+index, position and timestamp. The legacy recorded-track list remains available
+to consumers that need the track paths.
+The map skips segment-list requests while Presence is off. Fit selected data
+can request segments for the current range on demand and waits for that range
+before fitting the map.
+
+Incremental conversation projection queries only the nearest accepted GPS
+points before and after the conversation anchor inside a move segment, using
+`location_point_canonical_cursor_v1`. Full rebuilds read the point history once
+for the entire rebuild. Location status reads the GeoNames count from MongoDB
+metadata and caches the exact accepted, visible GPS count for up to a minute.
+Mongo change events invalidate that cache when point membership changes.
 
 Mongo's Compose health check is an exec-form, one-row native `mongostat` probe
 every 30 seconds, with 1.5-second connection/server/socket deadlines and a
@@ -1348,6 +1419,15 @@ docker compose exec backend deno run -A server.ts migrate-down
 
 See [docs/MIGRATIONS.md](docs/MIGRATIONS.md) for details.
 
+Migration `0088` adds a partial index for tag lists (including sorting by name)
+and a non-unique index for exact object-name lookups during entity extraction.
+Migration `0089` adds a partial index for streaming unassigned speech chunks
+newest first. The sequence creator's queue check uses the existing statistics
+index, and both queries exclude chunks whose sequence field is explicitly null.
+On large databases, build the index before restarting the backend to avoid
+holding up startup. Use `listIndexes` with `includeBuildUUIDs: true` to
+distinguish a finished index from one still being built.
+
 ### AI chat state and resource boundary
 
 The `/chat` UI uses the authenticated `ChatResource` for chat history,
@@ -1360,6 +1440,21 @@ Each generation has a durable `chat_runs` record. `activeRunId` protects the
 chat summary from stale completions, and an approval continuation keeps the same
 run and assistant message. The `chat:self` WebSocket subscription is mapped to a
 hashed user-scoped backend channel and carries only summary/run events.
+
+The composer stays usable during generation. The Chat page keeps a per-chat
+queue in memory, sends the next message after the current run ends, and pauses
+after a local send error until the user retries or dismisses it. A chat opened
+during a run in another tab refreshes its history before sending queued input.
+The composer shows elapsed time while sending or streaming, based on the local
+submission time or the server's run start for a response in another tab.
+
+After up to five tool-enabled model steps, a final request includes the prior
+tool results and omits tool definitions. Approval requests still pause the
+run. A final step that returns tool calls or DeepSeek DSML in the text is
+recorded as incomplete. The chat hides the raw markup and reports skipped calls
+when viewing or streaming the response. Assistant tool markup is removed from
+subsequent model context. Mongo read tools decode Extended JSON dates and IDs
+before schema and authorization checks.
 
 Migration `0057_chat_experience.ts` adds the chat list, pin, and run indexes and
 backfills counts, title sources, tool defaults, and last actual model/provider.
@@ -1381,16 +1476,22 @@ cd ../frontend
 deno run -A npm:vitest run src/lib/chat.test.ts \
   src/hooks/useStableChatSessionId.test.tsx src/lib/chatMessages.test.ts \
   src/stores/notificationStore.test.ts \
-  src/components/chat/ChatPinnedNavigation.test.tsx
+  src/components/chat/ChatPinnedNavigation.test.tsx src/pages/ChatPage.test.tsx
 ```
 
 ## Troubleshooting
 
 ### Empty or loading-model chat responses
 
-Memory Chat records `X-Mycelia-Request-Id` with every assistant response. When
-the provider returns `Loading model`, the backend waits with bounded backoff for
-the same provider/model instead of silently routing an exact model ID elsewhere.
+Memory Chat records `X-Mycelia-Request-Id` with assistant responses and failed
+chat setup requests. The model picker refreshes provider catalogues when
+opened and reports catalogue failures separately for each provider. If chat
+creation fails, the unsent message stays visible with Copy message and Retry.
+Retry reuses the same chat and message IDs.
+
+When the provider returns `Loading model`, the backend waits with bounded
+backoff for the same provider/model instead of silently routing an exact model
+ID elsewhere.
 It also retries a nominally successful SSE response that closes without text or
 tool calls, including a reasoning-only response truncated before visible text,
 and a network reset while that pre-output prefix is being read. If the retry
@@ -1501,6 +1602,40 @@ silent lead-in in the conversation's playback range. Check the effective
 `whisperVadFilter` on the provider and compare the segment offset with the
 actual audio or diarization before changing the ingest VAD threshold. See
 [shared audio VAD checks](gpu/SHARED_AUDIO.md#file-and-live-voice-activity-detection).
+
+#### Repair a sparse conversation
+
+Silero stores the highest speech probability in each audio chunk. One positive
+32 ms window can qualify a 10 s chunk for STT. The transcription also records
+the provider's independent VAD setting when reported. Inspect
+`audio_chunks.vad`, `transcriptions.metadata.whisperVadFilter`, and the
+extraction job's raw and resolved boundaries when investigating a sparse card.
+
+New ASR timestamps are bounded by the decoded WAV duration. Known standalone
+subtitle credits are excluded during transcription and on extraction or
+summarization of older transcripts. The summary uses overlapping segments in
+the half-open card interval. A single utterance of up to three words uses the
+transcript directly by default. Set `minDurationForLlm=0` to request inference.
+
+Preview a single card using its object ID. The preview checks the original
+summary sources, extraction receipt, and the current transcript. It proposes a
+change when the receipt selected one brief utterance, the stored end advanced
+to a subtitle credit, and the title and interval still match the extraction.
+
+```sh
+docker compose exec -T backend deno run --allow-env --allow-read --allow-net --allow-sys utils/repair-sparse-conversations.ts --object OBJECT_ID
+```
+
+Append `--apply` to that command to update the title and time range and append
+the supported transcript as the latest summary. The change and field history
+are written in one MongoDB transaction. The original audio, transcript, and
+previous summary remain available. A link with an old `summaryJobId` opens
+that historical version. Open the plain object link to see the correction.
+
+For a read-only archive review, replace `--object OBJECT_ID` with `--scan`.
+The command prints candidate IDs and counts by result. A brief utterance or
+missing source receipt alone cannot establish a false conversation. The scan
+does not enqueue jobs. Applying a correction takes an explicit object ID.
 
 ### Automatic pending-work contract
 
@@ -1761,9 +1896,11 @@ the [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/).
 ### Map history and continuity display
 
 `MapTimeNavigator` displays separate dwell-time and conversation histogram rows,
-with independent scales and one two-handle date range control. Range changes
-commit on release; dates update while dragging. Accessible thumbs announce the
-selected date/time. Chart tooltips show the actual values for each bucket.
+with independent scales, date ticks, and one two-handle date range control.
+The selected range is highlighted across the chart and slider. Changes commit
+on release, with live start/end times and duration while dragging. **Edit dates**
+accepts local dates and times and commits once on Apply. Accessible thumbs
+announce the selected date/time. Chart tooltips show the values for each bucket.
 
 `MapExperiencePage` uses `RouteProjectionLayer` for both Routes and Source colours.
 Do not overlay raw `RecordedTracksLayer` previews here: they can join recording
@@ -1777,9 +1914,21 @@ route and gap opacities in the browser's settings store. Explicit `gapM` and
 `gapMin` in a link override the thresholds for that view. Opening a link
 leaves the saved preferences intact. Opacity changes only affect rendering.
 The Map settings popover groups gap visibility, thresholds, and line opacity.
-The map reports loading, indexing, and empty results for enabled layers.
+The map reports loading, indexing, and empty results for enabled layers in the
+upper-right corner of the map without resizing the map or shifting the timeline.
 Budget limits omit sections and mark the response as limited; the map no longer
 falls back to a point-stride overview that can draw shortcuts across a route.
 Display thresholds do not alter the source or require rebuilding the route index.
 When a map link already has a viewport, Photos starts with a bounded query
 and does not auto-fit the map to the entire collection.
+
+The map review lists deferred conflicts separately from the pending count.
+Deferring leaves the conflict pending with `resolution: "defer"`, so both
+overlapping route sources remain eligible for display. Route comparisons read
+only the pair over its common time range and bypass saved display decisions.
+Review lists attach each route's earliest retained committed import. The UI
+orders the comparison by import date when available and keeps decision IDs
+bound to the original track order.
+Undo checks the observed decision timestamp, returns the pair to review, and
+bumps the route projection revision. Bulk metadata review applies the confirmed
+page's IDs sequentially and reports partial failures.

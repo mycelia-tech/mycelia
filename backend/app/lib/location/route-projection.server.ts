@@ -1,4 +1,4 @@
-import type { Db } from "mongodb";
+import type { Db, MongoClient, ObjectId } from "mongodb";
 import simplify from "simplify-js";
 import type { MapBounds } from "./map-spatial.ts";
 import {
@@ -16,14 +16,18 @@ export const LOCATION_ROUTE_CONFLICTS = "location_route_conflicts";
 export const LOCATION_ROUTE_STATE = "location_route_projection_state";
 
 const TRACKS = "location_tracks";
+const IMPORTS = "location_imports";
 const SOURCE_GEOMETRY = "location_track_geometry";
 const GEOMETRY_CHUNK_SIZE = 2_000;
 const OVERVIEW_POINTS = 500;
 const ROUTE_INPUT_POINT_LIMIT = 350_000;
 const ROUTE_INPUT_FRAGMENT_LIMIT = 1_500;
+const PREPARED_ROUTE_POINT_LIMIT = 220_000;
+const PREPARED_ROUTE_FRAGMENT_LIMIT = 1_500;
 export const DEFAULT_GAP_DISTANCE_M = 300;
 export const DEFAULT_GAP_MINUTES = 2;
 const MAP_GEOMETRY_PAYLOAD_BUDGET = 200 * 1024;
+const ROUTE_READ_TIMEOUT_MS = 10_000;
 
 type RouteState = {
   _id: "current";
@@ -556,6 +560,33 @@ export function splitDisplayRuns(
   return { runs, connectors };
 }
 
+type PreparedFragment = ReturnType<typeof splitDisplayRuns>;
+type PreparedRouteCache = {
+  entries: Map<string, { fragment: PreparedFragment; weight: number }>;
+  weight: number;
+};
+const preparedRoutes = new WeakMap<MongoClient, PreparedRouteCache>();
+
+function rememberPreparedFragment(
+  cache: PreparedRouteCache,
+  key: string,
+  fragment: PreparedFragment,
+  pointCount: number,
+) {
+  const weight = pointCount + 2 * fragment.connectors.length;
+  if (weight > PREPARED_ROUTE_POINT_LIMIT || cache.entries.has(key)) return;
+  cache.entries.set(key, { fragment, weight });
+  cache.weight += weight;
+  while (
+    cache.weight > PREPARED_ROUTE_POINT_LIMIT ||
+    cache.entries.size > PREPARED_ROUTE_FRAGMENT_LIMIT
+  ) {
+    const [oldestKey, oldest] = cache.entries.entries().next().value!;
+    cache.entries.delete(oldestKey);
+    cache.weight -= oldest.weight;
+  }
+}
+
 export async function getMapRouteDetail(
   db: Db,
   input: {
@@ -564,13 +595,19 @@ export async function getMapRouteDetail(
     bounds: MapBounds;
     zoom: number;
     includeConnectors: boolean;
+    includeSourceTracks?: boolean;
     gapDistanceM?: number;
     gapMinutes?: number;
+    reviewTrackIds?: unknown[];
   },
 ) {
+  const deadline = performance.now() + ROUTE_READ_TIMEOUT_MS;
+  const readOptions = () => ({
+    timeoutMS: Math.max(1, Math.ceil(deadline - performance.now())),
+  });
   const state = await db.collection<RouteState>(LOCATION_ROUTE_STATE).findOne({
     _id: "current",
-  });
+  }, readOptions());
   if (!state?.ready || !state.activeGeneration) {
     return {
       projection: {
@@ -581,26 +618,47 @@ export async function getMapRouteDetail(
       fragments: [],
       connectors: [],
       conflicts: [],
+      ...(input.includeSourceTracks ? { sourceTracks: [] } : {}),
       lod: "overview",
       detailLimited: false,
     };
   }
   const rows = await db.collection<FragmentRow>(LOCATION_ROUTE_FRAGMENTS).find({
     generation: state.activeGeneration,
+    ...(input.reviewTrackIds ? { trackId: { $in: input.reviewTrackIds } } : {}),
     $or: [
       { timeStart: { $exists: false } },
       { timeStart: { $lte: input.end }, timeEnd: { $gte: input.start } },
     ],
+    "bbox.south": { $lte: input.bounds.north },
+    "bbox.north": { $gte: input.bounds.south },
+    ...(input.bounds.west <= input.bounds.east
+      ? {
+        "bbox.west": { $lte: input.bounds.east },
+        "bbox.east": { $gte: input.bounds.west },
+      }
+      : {}),
   } as never, {
-    projection: { overview: 0, bounds: 0, sourceRefs: 0 },
+    projection: {
+      trackId: 1,
+      fragmentIndex: 1,
+      pointCount: 1,
+      timeStart: 1,
+      timeEnd: 1,
+      bbox: 1,
+      displayName: 1,
+    },
     sort: { timeEnd: -1, _id: 1 },
+    ...readOptions(),
   }).toArray();
-  const overlappingConflicts = await db.collection(LOCATION_ROUTE_CONFLICTS)
-    .find({
-      status: { $in: ["pending", "resolved"] },
-      overlapStart: { $lte: input.end },
-      overlapEnd: { $gte: input.start },
-    }).toArray();
+  const overlappingConflicts = input.reviewTrackIds
+    ? []
+    : await db.collection(LOCATION_ROUTE_CONFLICTS)
+      .find({
+        status: { $in: ["pending", "resolved"] },
+        overlapStart: { $lte: input.end },
+        overlapEnd: { $gte: input.start },
+      }, readOptions()).toArray();
   const hiddenTrackIds = new Set<string>();
   for (const conflict of overlappingConflicts as any[]) {
     if (conflict.status !== "resolved") continue;
@@ -633,32 +691,79 @@ export async function getMapRouteDetail(
     inputPoints += row.pointCount;
   }
   if (inputPoints > ROUTE_INPUT_POINT_LIMIT) detailLimited = true;
-  const byFragment = new Map<string, RoutePoint[]>();
-  if (candidates.length > 0) {
-    const cursor = db.collection<
-      { points: RoutePoint[]; trackId: unknown; fragmentIndex: number }
-    >(
-      LOCATION_ROUTE_GEOMETRY,
-    ).find({
-      generation: state.activeGeneration,
-      $or: candidates.map((row) => ({
-        trackId: row.trackId,
-        fragmentIndex: row.fragmentIndex,
-      })),
-    }, {
-      projection: { points: 1, trackId: 1, fragmentIndex: 1 },
-      sort: { trackId: 1, fragmentIndex: 1, chunkIndex: 1 },
-    });
-    let remaining = ROUTE_INPUT_POINT_LIMIT;
-    for await (const row of cursor) {
-      const key = `${String(row.trackId)}:${row.fragmentIndex}`;
-      const points = byFragment.get(key) ?? [];
-      const batch = row.points.slice(0, remaining);
-      points.push(...batch);
-      byFragment.set(key, points);
-      remaining -= batch.length;
-      if (remaining === 0) break;
+  let cache = preparedRoutes.get(db.client);
+  if (!cache) {
+    cache = { entries: new Map(), weight: 0 };
+    preparedRoutes.set(db.client, cache);
+  }
+  const distanceM = input.gapDistanceM ?? DEFAULT_GAP_DISTANCE_M;
+  const durationMs = (input.gapMinutes ?? DEFAULT_GAP_MINUTES) * 60_000;
+  const prepared = candidates.map((row) => {
+    // The fragment ID includes its immutable projection generation. A wider
+    // interval yields the same runs once it contains every timed point.
+    const fullyIncluded = (!row.timeStart && !row.timeEnd) ||
+      (row.timeStart && row.timeEnd && row.timeStart >= input.start &&
+        row.timeEnd <= input.end);
+    const key = JSON.stringify([
+      db.databaseName,
+      row._id,
+      distanceM,
+      durationMs,
+      input.includeConnectors,
+      fullyIncluded ? null : input.start.getTime(),
+      fullyIncluded ? null : input.end.getTime(),
+    ]);
+    const cached = cache.entries.get(key);
+    if (cached) {
+      cache.entries.delete(key);
+      cache.entries.set(key, cached);
     }
+    return { row, key, fragment: cached?.fragment };
+  });
+  const byFragment = new Map<string, RoutePoint[]>();
+  const chunkIds = prepared.filter(({ fragment }) => !fragment).flatMap((
+    { row },
+  ) =>
+    Array.from(
+      {
+        length: Math.ceil(
+          Math.min(row.pointCount, ROUTE_INPUT_POINT_LIMIT) /
+            GEOMETRY_CHUNK_SIZE,
+        ),
+      },
+      (_, chunkIndex) => `${row._id}:${chunkIndex}`,
+    )
+  );
+  const geometry = db.collection<{ _id: string; points: RoutePoint[] }>(
+    LOCATION_ROUTE_GEOMETRY,
+  );
+  let remaining = ROUTE_INPUT_POINT_LIMIT;
+  // Geometry IDs encode the fragment and chunk ordinal. A batched lookup on
+  // _id avoids planning one OR branch per fragment and keeps the read bounded.
+  for (const ids of chunks(chunkIds, 128)) {
+    const batch = await geometry.find(
+      { _id: { $in: ids } },
+      {
+        projection: {
+          "points.index": 1,
+          "points.ts": 1,
+          "points.coordinates": 1,
+        },
+        ...readOptions(),
+      },
+    ).toArray();
+    const byId = new Map(batch.map((row) => [row._id, row.points]));
+    for (const id of ids) {
+      const points = byId.get(id);
+      if (!points) continue;
+      const fragmentId = id.slice(0, id.lastIndexOf(":"));
+      const collected = byFragment.get(fragmentId) ?? [];
+      const bounded = points.slice(0, remaining);
+      collected.push(...bounded);
+      byFragment.set(fragmentId, collected);
+      remaining -= bounded.length;
+    }
+    if (remaining === 0) break;
   }
   const buffered = bufferedBounds(input.bounds, input.zoom);
   const displayRuns: Array<{ row: FragmentRow; run: RoutePoint[] }> = [];
@@ -699,6 +804,7 @@ export async function getMapRouteDetail(
           from: 1,
           to: 1,
         },
+        ...readOptions(),
       });
     for await (const connector of storedGaps) {
       if (hiddenTrackIds.has(String(connector.trackId))) continue;
@@ -709,17 +815,22 @@ export async function getMapRouteDetail(
       }
     }
   }
-  for (const row of candidates) {
-    const points =
-      byFragment.get(`${String(row.trackId)}:${row.fragmentIndex}`) ?? [];
-    const split = splitDisplayRuns(points, {
-      id: row._id,
-      start: input.start,
-      end: input.end,
-      distanceM: input.gapDistanceM ?? DEFAULT_GAP_DISTANCE_M,
-      durationMs: (input.gapMinutes ?? DEFAULT_GAP_MINUTES) * 60_000,
-      collectConnectors: input.includeConnectors,
-    });
+  for (const { row, key, fragment } of prepared) {
+    let split = fragment;
+    if (!split) {
+      const points = byFragment.get(row._id) ?? [];
+      split = splitDisplayRuns(points, {
+        id: row._id,
+        start: input.start,
+        end: input.end,
+        distanceM,
+        durationMs,
+        collectConnectors: input.includeConnectors,
+      });
+      if (points.length === row.pointCount) {
+        rememberPreparedFragment(cache, key, split, row.pointCount);
+      }
+    }
     for (const run of split.runs) {
       for (const clipped of clipRuns(run, buffered)) {
         displayRuns.push({ row, run: clipped });
@@ -768,6 +879,25 @@ export async function getMapRouteDetail(
   const conflicts = overlappingConflicts.filter((conflict: any) =>
     conflict.status === "pending"
   );
+  const sourceTracks = input.includeSourceTracks && fragments.length
+    ? await db.collection(TRACKS).find({
+      _id: {
+        $in: [...new Map(
+          fragments.map(({ trackId }) => [String(trackId), trackId]),
+        ).values()],
+      },
+      visible: { $ne: false },
+    } as never, {
+      projection: {
+        displayName: 1,
+        pointCount: 1,
+        geometryPointCount: 1,
+        routeBoundaryCompleteness: 1,
+        "style.color": 1,
+      },
+      ...readOptions(),
+    }).toArray()
+    : [];
   return {
     projection: {
       status: state.status ?? "ready",
@@ -778,6 +908,7 @@ export async function getMapRouteDetail(
     fragments,
     connectors,
     conflicts,
+    ...(input.includeSourceTracks ? { sourceTracks } : {}),
     lod: "detail",
     detailLimited,
   };
@@ -787,46 +918,163 @@ export async function listRouteConflicts(
   db: Db,
   input: { status?: string; limit: number; skip: number },
 ) {
-  const query = input.status ? { status: input.status } : {};
+  type RefId = ObjectId | string;
+  type SourceRef = { importId: RefId; format?: string };
+  const collection = db.collection<{
+    _id: string;
+    trackIds?: RefId[];
+    resolution?: string;
+    resolvedAt?: Date;
+  }>(LOCATION_ROUTE_CONFLICTS);
+  const query = reviewStatusQuery(input.status);
   const [conflicts, total] = await Promise.all([
-    db.collection(LOCATION_ROUTE_CONFLICTS).find(query, {
-      sort: { overlapStart: 1 },
+    collection.find(query, {
+      sort: input.status === "resolved"
+        ? { resolvedAt: -1, _id: 1 }
+        : { overlapStart: 1, _id: 1 },
       skip: input.skip,
       limit: input.limit,
     }).toArray(),
-    db.collection(LOCATION_ROUTE_CONFLICTS).countDocuments(query),
+    collection.countDocuments(query),
   ]);
-  return { conflicts, total };
+  const trackIds = [
+    ...new Map(
+      conflicts.flatMap((conflict) =>
+        (conflict.trackIds ?? []).map((id: RefId) => [String(id), id] as const)
+      ),
+    ).values(),
+  ];
+  if (trackIds.length === 0) return { conflicts, total };
+  const tracks = await db.collection<
+    { _id: RefId; displayName?: string | null; sourceRefs?: SourceRef[] }
+  >(TRACKS)
+    .find({ _id: { $in: trackIds } }, {
+      projection: {
+        displayName: 1,
+        "sourceRefs.importId": 1,
+        "sourceRefs.format": 1,
+      },
+    }).toArray();
+  const trackById = new Map(tracks.map((track) => [String(track._id), track]));
+  const importIds = [
+    ...new Map(
+      tracks.flatMap((track) =>
+        (track.sourceRefs ?? []).map(({ importId }) =>
+          [String(importId), importId] as const
+        )
+      ),
+    ).values(),
+  ];
+  const imports = await db.collection<
+    { _id: RefId; filename?: string; committedAt: Date }
+  >(IMPORTS)
+    .find({ _id: { $in: importIds }, committedAt: { $type: "date" } }, {
+      projection: { filename: 1, committedAt: 1 },
+      sort: { committedAt: 1, _id: 1 },
+    }).toArray();
+  const byImportId = new Map(
+    imports.map((entry) => [String(entry._id), entry]),
+  );
+  return {
+    conflicts: conflicts.map((conflict) => ({
+      ...conflict,
+      sources: (conflict.trackIds ?? []).map((id: RefId) => {
+        const track = trackById.get(String(id));
+        const source =
+          (track?.sourceRefs ?? []).flatMap(({ importId, format }) => {
+            const entry = byImportId.get(String(importId));
+            return entry
+              ? [{
+                filename: entry.filename,
+                importedAt: entry.committedAt,
+                format,
+              }]
+              : [];
+          }).sort((a, b) => a.importedAt.getTime() - b.importedAt.getTime())[0];
+        return { name: track?.displayName, ...source };
+      }),
+    })),
+    total,
+  };
+}
+
+export function reviewStatusQuery(status?: string) {
+  if (status === "deferred") return { status: "pending", resolution: "defer" };
+  if (status === "pending") {
+    return { status, resolution: { $ne: "defer" } };
+  }
+  return status ? { status } : {};
+}
+
+export async function getRouteConflictPreview(
+  db: Db,
+  input: { id: string; gapDistanceM?: number; gapMinutes?: number },
+) {
+  const conflict = await db.collection<any>(LOCATION_ROUTE_CONFLICTS).findOne({
+    _id: input.id,
+  });
+  if (!conflict) throw new Error("Route conflict not found");
+  return await getMapRouteDetail(db, {
+    start: conflict.overlapStart,
+    end: conflict.overlapEnd,
+    bounds: { west: -180, east: 180, south: -90, north: 90 },
+    zoom: 10,
+    includeConnectors: false,
+    gapDistanceM: input.gapDistanceM,
+    gapMinutes: input.gapMinutes,
+    reviewTrackIds: conflict.trackIds,
+  });
 }
 
 export async function resolveRouteConflict(
   db: Db,
   input: {
     id: string;
-    resolution: "use_first" | "use_second" | "keep_both";
+    resolution:
+      | "use_first"
+      | "use_second"
+      | "keep_both"
+      | "defer"
+      | "resume"
+      | "undo";
+    expectedResolvedAt?: Date;
     principal: string;
   },
 ) {
-  const conflict = await db.collection<any>(LOCATION_ROUTE_CONFLICTS).findOne({
-    _id: input.id,
-  });
-  if (!conflict) throw new Error("Route conflict not found");
+  const undo = input.resolution === "undo";
+  const defer = input.resolution === "defer";
+  const resume = input.resolution === "resume";
+  const pending = undo || defer || resume;
   const decision = {
     resolution: input.resolution,
     principal: input.principal,
     decidedAt: new Date(),
   };
-  await db.collection<any>(LOCATION_ROUTE_CONFLICTS).updateOne(
-    { _id: input.id },
+  const result = await db.collection<any>(LOCATION_ROUTE_CONFLICTS).updateOne(
+    {
+      _id: input.id,
+      ...(undo
+        ? { status: "resolved", resolvedAt: input.expectedResolvedAt }
+        : reviewStatusQuery(resume ? "deferred" : "pending")),
+    },
     {
       $set: {
-        status: "resolved",
-        resolution: input.resolution,
-        resolvedAt: decision.decidedAt,
+        status: pending ? "pending" : "resolved",
+        ...(!pending || defer ? { resolution: input.resolution } : {}),
+        ...(pending ? {} : { resolvedAt: decision.decidedAt }),
       },
+      ...((undo || resume)
+        ? { $unset: { resolution: "", resolvedAt: "" } }
+        : {}),
       $push: { audit: decision } as never,
     },
   );
+  if (!result.matchedCount) {
+    return {
+      success: false,
+      error: "This route decision changed. Refresh and review it again.",
+    };
+  }
   await db.collection<RouteState>(LOCATION_ROUTE_STATE).updateOne(
     { _id: "current" },
     {

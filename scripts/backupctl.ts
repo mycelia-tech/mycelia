@@ -246,6 +246,9 @@ const unavailableHandlers: CommandHandlers = {
           scope: "files",
           verified: true,
           snapshotId: state.accepted.snapshotId,
+          allSourcesIncluded: !state.accepted.sourceCounts.omittedRoots,
+          skipped: state.accepted.sourceCounts.skipped ?? 0,
+          omittedRoots: state.accepted.sourceCounts.omittedRoots ?? 0,
         }),
       );
     });
@@ -276,10 +279,16 @@ export async function main(
     return await handlers[parsed.command](parsed);
   } catch (error) {
     const code = ownData(error, "code");
+    const overrideHint = code === "CONFIG_INVALID" &&
+        Object.keys(Deno.env.toObject()).some((key) =>
+          key.startsWith("RESTIC_") || key.startsWith("RCLONE_")
+        )
+      ? " Inherited RESTIC_* or RCLONE_* variables are prohibited; unset them for this command."
+      : "";
     writeError(
       `Backup command failed: ${
         FAILURE_CODES.includes(code as FailureCode) ? code : "COMMAND_FAILED"
-      }`,
+      }${overrideHint}`,
     );
     return 70;
   }

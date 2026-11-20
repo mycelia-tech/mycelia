@@ -3,6 +3,8 @@ import { ObjectId } from "mongodb";
 import { withFixtures } from "@/tests/fixtures.server.ts";
 import { up as createConversationProjection } from "../../../migrations/0068_location_conversation_projection.ts";
 import {
+  drainConversationProjectionPending,
+  enqueueConversationProjectionChange,
   getConversationMapClusterGroups,
   getConversationMapGroupItems,
   getMapDensity,
@@ -148,5 +150,61 @@ Deno.test(
         _id: "current",
       }),
     ).toMatchObject({ ready: true, stale: true, status: "stale" });
+  }),
+);
+
+Deno.test(
+  "incremental conversation projection keeps nearest-point ordering and segment boundaries",
+  withFixtures(["Mongo"], async ({ db }) => {
+    await createConversationProjection(db);
+    const start = new Date("2026-01-01T00:00:00Z");
+    const at = (seconds: number) => new Date(start.getTime() + seconds * 1000);
+    const point = (seconds: number, longitude: number, visible = true) => ({
+      ts: at(seconds),
+      visible,
+      selection: "accepted",
+      loc: { type: "Point", coordinates: [longitude, 1] },
+    });
+    await db.collection("location_segments").insertMany([
+      { type: "move", start, end: at(10) },
+      { type: "move", start: at(20), end: at(30) },
+    ]);
+    await db.collection("location_points").insertMany([
+      point(3, 1),
+      point(3, 2),
+      point(5, 3, false),
+      point(7, 4),
+      point(31, 5),
+    ]);
+    const conversations = db.collection("objects");
+    const first = await conversations.insertOne({
+      isConversation: true,
+      timeRanges: [{ start: at(5), end: at(5) }],
+    });
+    const second = await conversations.insertOne({
+      isConversation: true,
+      timeRanges: [{ start: at(29), end: at(29) }],
+    });
+    const { generation } = await rebuildLocationConversationProjection(db);
+
+    const rows = db.collection(LOCATION_CONVERSATION_PROJECTION);
+    const firstKey = { _id: `${generation}:${first.insertedId}` } as never;
+    const secondKey = { _id: `${generation}:${second.insertedId}` } as never;
+    expect((await rows.findOne(firstKey))?.loc.coordinates).toEqual([2, 1]);
+    expect((await rows.findOne(secondKey))?.matched).toBe(false);
+    for (const { insertedId } of [first, second]) {
+      await enqueueConversationProjectionChange(db, {
+        kind: "object",
+        documentId: insertedId,
+      });
+    }
+    await rows.deleteMany({ generation });
+
+    expect(await drainConversationProjectionPending(db)).toMatchObject({
+      processed: 2,
+      rebuilt: false,
+    });
+    expect((await rows.findOne(firstKey))?.loc.coordinates).toEqual([2, 1]);
+    expect((await rows.findOne(secondKey))?.matched).toBe(false);
   }),
 );

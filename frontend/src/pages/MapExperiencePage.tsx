@@ -37,7 +37,6 @@ import {
   useMapDensity,
   useMapRouteDetail,
   useMapTimelineSummary,
-  useRecordedLocationTracks,
   useSavedPlaces,
 } from "@/hooks/useLocationQueries";
 import {
@@ -66,7 +65,7 @@ import type {
   ConversationMapCluster,
   LocationSegment,
   MapBounds,
-  RecordedLocationTrack,
+  MapRouteSourceTrack,
   SavedPlace,
 } from "@/types/location";
 import { formatPlace, segmentDurationMs } from "@/types/location";
@@ -84,6 +83,7 @@ function readGapThresholds(params: URLSearchParams) {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const NO_ROUTE_SOURCES: MapRouteSourceTrack[] = [];
 export const MAP_LAYERS = [
   "presence",
   "conversations",
@@ -264,9 +264,14 @@ const MapExperiencePage = () => {
     zoom: number;
     key: number;
   }>();
-  const [fitToSegments, setFitToSegments] = useState(
-    !initialUrl.viewport && !focusedPhotoAssetId,
+  const [autoFitSegments, setAutoFitSegments] = useState(
+    !initialUrl.viewport && !focusedPhotoAssetId &&
+      initialUrl.layers.has("presence"),
   );
+  const [fitRequest, setFitRequest] = useState<{
+    range: string;
+    status: "loading" | "ready";
+  }>();
   const [fitRequestKey, setFitRequestKey] = useState(0);
   const [cursorTime, setCursorTime] = useState<Date | undefined>(initialUrl.at);
   const [selectedCluster, setSelectedCluster] = useState<
@@ -279,7 +284,7 @@ const MapExperiencePage = () => {
     SavedPlace | null
   >(null);
   const [selectedRecordedTrack, setSelectedRecordedTrack] = useState<
-    RecordedLocationTrack | null
+    MapRouteSourceTrack | null
   >(null);
   const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -300,21 +305,50 @@ const MapExperiencePage = () => {
 
   const { data: status } = useLocationStatus();
   const rangeMs = end.getTime() - start.getTime();
-  const { data: segmentsData, isLoading: segmentsLoading } =
-    useLocationSegments(
-      start,
-      end,
-      { maxPoints: maxPointsForRange(rangeMs) },
-    );
+  const rangeKey = `${start.getTime()}:${end.getTime()}`;
+  const showPresence = layers.has("presence");
+  const fitPending = fitRequest?.range === rangeKey &&
+    fitRequest.status === "loading";
+  const fitReady = fitRequest?.range === rangeKey &&
+    fitRequest.status === "ready";
+  const segmentsQuery = useLocationSegments(start, end, {
+    maxPoints: maxPointsForRange(rangeMs),
+    enabled: showPresence || fitPending,
+  });
   useLocationLiveUpdates();
-  const segments = segmentsData?.segments ?? [];
+  const segments = segmentsQuery.data?.segments;
   const mapPresenceSegments = useMemo(
     () =>
-      segments.filter((segment) =>
+      (segments ?? []).filter((segment) =>
         segment.type === "stay" || segment.type === "manual"
       ),
     [segments],
   );
+  useEffect(() => {
+    if (!fitRequest) return;
+    if (fitRequest.range !== rangeKey) {
+      setFitRequest(undefined);
+      return;
+    }
+    if (!fitPending || focusedPhotoAssetId) return;
+    if (segmentsQuery.isError) {
+      setFitRequest(undefined);
+      toast.error("Could not load locations to fit the map.");
+      return;
+    }
+    if (segmentsQuery.data && !segmentsQuery.isPlaceholderData) {
+      setFitRequest({ range: rangeKey, status: "ready" });
+      setFitRequestKey((key) => key + 1);
+    }
+  }, [
+    fitRequest,
+    fitPending,
+    focusedPhotoAssetId,
+    rangeKey,
+    segmentsQuery.data,
+    segmentsQuery.isError,
+    segmentsQuery.isPlaceholderData,
+  ]);
   useEffect(() => {
     const timeout = setTimeout(() => setQueryViewport(viewport), 250);
     return () => clearTimeout(timeout);
@@ -323,7 +357,7 @@ const MapExperiencePage = () => {
   const showRoutes = layers.has("routes") || layers.has("sourceTracks");
   const showConversations = layers.has("conversations");
   const showGaps = layers.has("connectors");
-  const showPresenceClusters = layers.has("presence") &&
+  const showPresenceClusters = showPresence &&
     (queryViewport?.zoom ?? 2) < 14;
   const densityLayers = [
     ...(showPresenceClusters ? ["presence" as const] : []),
@@ -345,11 +379,11 @@ const MapExperiencePage = () => {
     showGaps,
     gapDistanceM,
     gapMinutes,
+    layers.has("sourceTracks"),
   );
   const timeline = useMapTimelineSummary();
   const locationAt = useLocationAt(cursorTime, !!cursorTime);
   const savedPlaces = useSavedPlaces(true);
-  const sourceTracks = useRecordedLocationTracks(layers.has("sourceTracks"));
   const pointConflicts = useLocationConflicts("pending", true);
   const metadataConflicts = useLocationMetadataConflicts("pending", true);
   const routeConflicts = useLocationRouteConflicts("pending", true);
@@ -368,7 +402,8 @@ const MapExperiencePage = () => {
 
   useEffect(() => {
     if (!focusedPhotoAssetId) return;
-    setFitToSegments(false);
+    setAutoFitSegments(false);
+    setFitRequest(undefined);
     setLayers((current) => {
       if (current.has("photos")) return current;
       const next = new Set(current);
@@ -403,7 +438,8 @@ const MapExperiencePage = () => {
       setGapDistanceM(next.gapDistanceM);
       setGapMinutes(next.gapMinutes);
       if (next.viewport) {
-        setFitToSegments(false);
+        setAutoFitSegments(false);
+        setFitRequest(undefined);
         setViewport(next.viewport);
         setViewportRequest({ ...next.viewport, key: Date.now() });
       }
@@ -472,12 +508,17 @@ const MapExperiencePage = () => {
     }
   };
 
-  const closeSelection = () => {
+  const closeSelection = useCallback(() => {
     setSelectedCluster(null);
     setSelectedSegment(null);
     setSelectedSavedPlace(null);
     setSelectedRecordedTrack(null);
-  };
+  }, []);
+
+  const selectRecordedTrack = useCallback((track: MapRouteSourceTrack) => {
+    closeSelection();
+    setSelectedRecordedTrack(track);
+  }, [closeSelection]);
 
   const selectSegment = (segment: LocationSegment) => {
     if (segment.type === "gap") {
@@ -493,6 +534,9 @@ const MapExperiencePage = () => {
 
   const isRefreshing = density.data?.projection.stale === true ||
     (density.isFetching && !density.isLoading);
+  const isLoadingLayers = fitPending || segmentsQuery.isLoading ||
+    density.isLoading ||
+    (showRoutes && routes.isLoading);
   const layerMessages: string[] = [];
   if (showConversations) {
     const projection = density.data?.projection.status;
@@ -517,7 +561,7 @@ const MapExperiencePage = () => {
   }
   if (showRoutes) {
     if (routes.isError) layerMessages.push("Could not load routes.");
-    else if (routes.isFetching && !routes.data) {
+    else if (routes.isLoading) {
       layerMessages.push("Loading routes…");
     } else if (routes.data && !routes.data.projection.ready) {
       layerMessages.push(
@@ -525,7 +569,7 @@ const MapExperiencePage = () => {
           ? "Preparing the route index…"
           : "Build the Location map index in Jobs to show routes.",
       );
-    } else if (routes.data) {
+    } else if (routes.data && !routes.isPlaceholderData) {
       if (routes.data.fragments.length === 0) {
         layerMessages.push(
           `No continuous routes here in this period at ${gapDistanceM} m / ${gapMinutes} min.`,
@@ -564,10 +608,10 @@ const MapExperiencePage = () => {
         <Button
           variant="outline"
           size="sm"
+          disabled={fitPending}
           onClick={() => {
             if (focusedPhotoAssetId) closeFocusedPhoto();
-            setFitToSegments(true);
-            setFitRequestKey((key) => key + 1);
+            setFitRequest({ range: rangeKey, status: "loading" });
           }}
         >
           <Crosshair className="mr-1.5 h-4 w-4" /> Fit selected data
@@ -583,9 +627,6 @@ const MapExperiencePage = () => {
           <LinkIcon className="mr-1.5 h-4 w-4" /> Copy link
         </Button>
         <div className="ml-auto flex items-center gap-2">
-          {(segmentsLoading || density.isFetching || routes.isFetching) && (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          )}
           {status && !status.geonamesReady && (
             <Button
               variant="outline"
@@ -603,16 +644,18 @@ const MapExperiencePage = () => {
           >
             <MapPin className="mr-2 h-4 w-4" /> Geotags
           </Button>
-          {pendingConflicts > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConflictsOpen(true)}
-            >
-              <AlertTriangle className="mr-2 h-4 w-4 text-amber-600" />
-              Review ({pendingConflicts})
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConflictsOpen(true)}
+          >
+            <AlertTriangle
+              className={pendingConflicts > 0
+                ? "mr-2 h-4 w-4 text-amber-600"
+                : "mr-2 h-4 w-4 text-muted-foreground"}
+            />
+            {pendingConflicts > 0 ? `Review (${pendingConflicts})` : "Review"}
+          </Button>
           <Button size="sm" onClick={() => setImportOpen(true)}>
             <Upload className="mr-2 h-4 w-4" /> Import tracks
           </Button>
@@ -624,7 +667,8 @@ const MapExperiencePage = () => {
           <div className="relative isolate min-h-0 flex-1 overflow-hidden rounded-lg border">
             <LocationMap
               segments={mapPresenceSegments}
-              fitToSegments={fitToSegments && !focusedPhotoAssetId}
+              fitToSegments={((autoFitSegments && showPresence) || fitReady) &&
+                !focusedPhotoAssetId && !segmentsQuery.isPlaceholderData}
               fitRequestKey={fitRequestKey}
               initialCenter={initialUrl.viewport?.center ?? [20, 0]}
               initialZoom={initialUrl.viewport?.zoom ?? 2}
@@ -635,7 +679,7 @@ const MapExperiencePage = () => {
               onSegmentClick={selectSegment}
               onViewportChange={(next) =>
                 setViewport({ ...next, bounds: normalizeBounds(next.bounds) })}
-              showStays={layers.has("presence") &&
+              showStays={showPresence &&
                 (viewport?.zoom ?? 2) >= 14}
               showMoves={false}
               showGaps={false}
@@ -670,14 +714,10 @@ const MapExperiencePage = () => {
                   routeOpacity={routeOpacity / 100}
                   gapOpacity={gapOpacity / 100}
                   sourceTracks={layers.has("sourceTracks")
-                    ? sourceTracks.data?.tracks ?? []
+                    ? routes.data?.sourceTracks ?? NO_ROUTE_SOURCES
                     : undefined}
-                  onSelectTrack={(track) => {
-                    closeSelection();
-                    setSelectedRecordedTrack(track);
-                  }}
-                  stale={routes.data?.projection.status === "stale" ||
-                    (routes.isFetching && !routes.isLoading)}
+                  onSelectTrack={selectRecordedTrack}
+                  stale={routes.isPlaceholderData}
                 />
               )}
               <SavedPlacesLayer
@@ -723,18 +763,39 @@ const MapExperiencePage = () => {
               </LayerButton>
             </div>
 
-            {showRoutes && routes.data?.detailLimited && (
-              <div className="absolute right-3 top-3 z-[1000] rounded bg-background/95 px-3 py-2 text-sm shadow">
-                Some sections omitted · zoom in or shorten the period
+            <div className="pointer-events-none absolute top-3 right-3 left-14 z-[1000] flex flex-col items-end gap-1.5 text-xs">
+              <div role="status" className="max-w-sm empty:sr-only">
+                {(isLoadingLayers || layerMessages.length > 0) && (
+                  <div className="flex items-start gap-2 rounded-md border bg-background/95 px-3 py-2 shadow">
+                    {isLoadingLayers && (
+                      <Loader2
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin"
+                      />
+                    )}
+                    <div className="space-y-1">
+                      {layerMessages.length > 0
+                        ? layerMessages.map((message) => (
+                          <p key={message}>{message}</p>
+                        ))
+                        : <p>Loading map data…</p>}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-            {showRoutes && (routes.data?.conflicts.length ?? 0) > 0 && (
-              <div className="absolute right-3 top-14 z-[1000] rounded bg-amber-500/95 px-3 py-2 text-sm text-black shadow">
-                {routes.data!.conflicts.length} overlapping route source
-                {routes.data!.conflicts.length === 1 ? "" : "s"}{" "}
-                shown separately
-              </div>
-            )}
+              {showRoutes && routes.data?.detailLimited && (
+                <div className="max-w-sm rounded-md border bg-background/95 px-3 py-2 shadow">
+                  Some sections omitted · zoom in or shorten the period
+                </div>
+              )}
+              {showRoutes && (routes.data?.conflicts.length ?? 0) > 0 && (
+                <div className="max-w-sm rounded-md bg-amber-500/95 px-3 py-2 text-black shadow">
+                  {routes.data!.conflicts.length} overlapping route source
+                  {routes.data!.conflicts.length === 1 ? "" : "s"}{" "}
+                  shown separately
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1">
@@ -786,16 +847,6 @@ const MapExperiencePage = () => {
               }}
             />
           </div>
-          {layerMessages.length > 0 && (
-            <div
-              role="status"
-              className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-md border bg-muted/35 px-3 py-1.5 text-xs text-foreground"
-            >
-              {layerMessages.map((message) => (
-                <span key={message}>{message}</span>
-              ))}
-            </div>
-          )}
           <MapTimeNavigator
             summary={timeline.data}
             start={start}
@@ -937,6 +988,8 @@ const MapExperiencePage = () => {
       <LocationConflictReviewDialog
         open={conflictsOpen}
         onOpenChange={setConflictsOpen}
+        gapDistanceM={gapDistanceM}
+        gapMinutes={gapMinutes}
       />
       <AssignLocationDialog
         open={assignRange !== null}

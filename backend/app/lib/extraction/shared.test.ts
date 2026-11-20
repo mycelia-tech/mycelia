@@ -70,6 +70,26 @@ Deno.test("prompt partitioner enforces source-file boundaries", () => {
   expect(windows[1].boundaryReason).toBe("source_change");
 });
 
+Deno.test("replayed subtitle credits never enter extraction through segments or fallback text", () => {
+  const credit = "Субтитры делал DimaTorzok";
+  const legacy = {
+    start: "2026-07-10T10:00:00.000Z",
+    end: "2026-07-10T10:00:40.000Z",
+    text: credit,
+    segments: [{ start: 20, end: 40, text: credit }],
+  };
+  expect(
+    partitionTranscriptionsForPrompt([legacy, { ...legacy, segments: [] }]),
+  ).toEqual([]);
+  const [mixed] = partitionTranscriptionsForPrompt([{
+    ...legacy,
+    segments: [{ start: 0, end: 2, text: "It worked." }, ...legacy.segments],
+  }]);
+  expect(mixed.prompt).toContain("It worked.");
+  expect(mixed.prompt).not.toContain(credit);
+  expect(mixed.end.toISOString()).toBe("2026-07-10T10:00:02.000Z");
+});
+
 Deno.test("prompt partitioner keeps every transcription once under the cap", () => {
   const transcriptions = ["a", "b", "c"].map((id, index) => ({
     _id: id,
@@ -172,6 +192,39 @@ Deno.test("segment parser resolves phrase boundaries through prompt time markers
     start: new Date("2026-07-28T08:00:00.000Z"),
     end: new Date("2026-07-28T08:10:00.000Z"),
   }]);
+});
+
+Deno.test("duplicate and date-shaped phrases resolve to their spoken occurrences", () => {
+  const [window] = partitionTranscriptionsForPrompt([{
+    start: "2026-08-01T10:00:00.000Z",
+    end: "2026-08-01T10:01:00.000Z",
+    segments: [
+      { start: 0, end: 1, text: "Hello again." },
+      { start: 10, end: 11, text: "Hello again." },
+      { start: 20, end: 22, text: "2026-08-01" },
+    ],
+  }]);
+  const parse = createSegmentParser(
+    window.prompt.split("\n"),
+    window.start,
+    window.end,
+    window.utterancesByLine,
+  );
+  const segments = parse(JSON.stringify({
+    segments: [
+      { start: "Hello again.", end: "Hello again." },
+      { start: "Hello again.", end: "Hello again." },
+      { start: "2026-08-01", end: "2026-08-01" },
+      { start: "2026-08-01T10:00:30Z", end: "2026-08-01T10:00:40Z" },
+    ],
+  }));
+  expect(segments.map(({ start, end }) => [
+    start.getTime() - window.start.getTime(),
+    end.getTime() - window.start.getTime(),
+  ])).toEqual([[0, 1_000], [10_000, 11_000], [20_000, 22_000], [
+    30_000,
+    40_000,
+  ]]);
 });
 
 Deno.test("emoji normalization keeps one emoji grapheme", () => {

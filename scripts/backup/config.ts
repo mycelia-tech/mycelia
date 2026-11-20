@@ -12,6 +12,7 @@ export type BackupConfig = {
   resticKeychainAccount: string;
   remoteMinFreeBytes: number;
   operationalUntracked: string[];
+  optionalSourceRoots?: string[];
   mediaSourceHostPath?: string;
   mediaSourceExtraHostPath?: string;
   voiceMemosRoot?: string;
@@ -27,6 +28,7 @@ const defaults = {
   BACKUP_RESTIC_KEYCHAIN_ACCOUNT: "mycelia",
   BACKUP_REMOTE_MIN_FREE_BYTES: "10737418240",
   BACKUP_OPERATIONAL_UNTRACKED_JSON: "[]",
+  BACKUP_OPTIONAL_SOURCE_ROOTS_JSON: "[]",
 };
 function invalid(): never {
   throw failureError("CONFIG_INVALID");
@@ -117,6 +119,17 @@ export async function loadBackupConfig(
         path.split(/[\\/]/).includes("..") || unsafePath(path)
       )
     ) invalid();
+    const optional: unknown = JSON.parse(
+      config.BACKUP_OPTIONAL_SOURCE_ROOTS_JSON,
+    );
+    if (
+      !Array.isArray(optional) || optional.length > 8 ||
+      optional.some((path) =>
+        typeof path !== "string" || !isAbsolute(path) ||
+        resolve(path) !== path || path === "/" || unsafePath(path)
+      ) ||
+      new Set(optional).size !== optional.length
+    ) invalid();
     const pathValue = (key: string): string | undefined => {
       const value = app.get(key);
       if (!value) return undefined;
@@ -139,6 +152,7 @@ export async function loadBackupConfig(
       resticKeychainAccount: config.BACKUP_RESTIC_KEYCHAIN_ACCOUNT,
       remoteMinFreeBytes: floor,
       operationalUntracked: operational as string[],
+      optionalSourceRoots: optional as string[],
       mediaSourceHostPath: pathValue("MEDIA_SOURCE_HOST_PATH"),
       mediaSourceExtraHostPath: pathValue("MEDIA_SOURCE_EXTRA_HOST_PATH"),
       voiceMemosRoot: pathValue("MYCELIA_APPLE_VOICEMEMOS_ROOT"),

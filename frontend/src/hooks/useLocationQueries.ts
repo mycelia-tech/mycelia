@@ -22,6 +22,9 @@ import type {
   SavedPlace,
 } from "@/types/location";
 
+export type LocationReviewStatus = "pending" | "deferred" | "resolved";
+export const LOCATION_REVIEW_PAGE_SIZE = 100;
+
 export const locationKeys = {
   all: ["location"] as const,
   status: () => [...locationKeys.all, "status"] as const,
@@ -36,12 +39,12 @@ export const locationKeys = {
   recordedTracks: () => [...locationKeys.all, "recordedTracks"] as const,
   trackGeometry: (id: string) =>
     [...locationKeys.all, "trackGeometry", id] as const,
-  conflicts: (status?: string) =>
-    [...locationKeys.all, "conflicts", status ?? "all"] as const,
-  metadataConflicts: (status?: string) =>
-    [...locationKeys.all, "metadataConflicts", status ?? "all"] as const,
-  routeConflicts: (status?: string) =>
-    [...locationKeys.all, "routeConflicts", status ?? "all"] as const,
+  conflicts: (status?: string, skip = 0) =>
+    [...locationKeys.all, "conflicts", status ?? "all", skip] as const,
+  metadataConflicts: (status?: string, skip = 0) =>
+    [...locationKeys.all, "metadataConflicts", status ?? "all", skip] as const,
+  routeConflicts: (status?: string, skip = 0) =>
+    [...locationKeys.all, "routeConflicts", status ?? "all", skip] as const,
   geotags: (filters: Record<string, unknown>) =>
     [...locationKeys.all, "geotags", filters] as const,
   conversationsOnMap: (start?: number, end?: number) =>
@@ -75,6 +78,7 @@ export const locationKeys = {
     connectors: boolean,
     gapDistanceM: number,
     gapMinutes: number,
+    includeSourceTracks: boolean,
   ) =>
     [
       ...locationKeys.all,
@@ -86,6 +90,7 @@ export const locationKeys = {
       connectors,
       gapDistanceM,
       gapMinutes,
+      includeSourceTracks,
     ] as const,
   mapTimeline: () => [...locationKeys.all, "mapTimeline"] as const,
   mapClusterGroups: (
@@ -123,37 +128,21 @@ export const locationKeys = {
 };
 
 export function useLocationRouteConflicts(
-  status: "pending" | "resolved" | "superseded" | undefined = "pending",
+  status: LocationReviewStatus | "superseded" = "pending",
   enabled = true,
+  skip = 0,
 ) {
   return useQuery<{ conflicts: LocationRouteConflict[]; total: number }>({
-    queryKey: locationKeys.routeConflicts(status),
+    queryKey: locationKeys.routeConflicts(status, skip),
     queryFn: () =>
       callResource("location", {
         action: "list-route-conflicts",
         status,
-        limit: 100,
-        skip: 0,
+        limit: LOCATION_REVIEW_PAGE_SIZE,
+        skip,
       }),
     enabled,
-    staleTime: 15 * 1000,
-  });
-}
-
-export function useResolveLocationRouteConflict() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: {
-      id: string;
-      resolution: "use_first" | "use_second" | "keep_both";
-    }) =>
-      callResource("location", {
-        action: "resolve-route-conflict",
-        ...input,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: locationKeys.all });
-    },
+    staleTime: 15_000,
   });
 }
 
@@ -197,6 +186,7 @@ export function useMapRouteDetail(
   includeConnectors: boolean,
   gapDistanceM: number,
   gapMinutes: number,
+  includeSourceTracks: boolean,
 ) {
   return useQuery<MapRouteDetailResponse>({
     queryKey: locationKeys.mapRoutes(
@@ -207,6 +197,7 @@ export function useMapRouteDetail(
       includeConnectors,
       gapDistanceM,
       gapMinutes,
+      includeSourceTracks,
     ),
     queryFn: ({ signal }) =>
       callResource("location", {
@@ -218,9 +209,17 @@ export function useMapRouteDetail(
         includeConnectors,
         gapDistanceM,
         gapMinutes,
+        includeSourceTracks,
       }, { signal }),
     enabled: enabled && !!bounds,
     staleTime: 30 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    placeholderData: (previous, query) =>
+      query?.queryKey[2] === start.getTime() &&
+        query.queryKey[3] === end.getTime()
+        ? previous
+        : undefined,
   });
 }
 
@@ -333,14 +332,14 @@ export function useLocationSegments(
       end?.getTime() ?? 0,
       maxPoints,
     ),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       callResource("location", {
         action: "list-segments",
         start,
         end,
         ...(maxPoints ? { maxPoints } : {}),
         ...(coalesceMs ? { coalesceMs } : {}),
-      }),
+      }, { signal }),
     enabled: enabled && !!start && !!end,
     staleTime: 30 * 1000,
     placeholderData: (prev) => prev,
@@ -464,68 +463,128 @@ export function useRecordedTrackGeometry(
 }
 
 export function useLocationConflicts(
-  status: "pending" | "resolved" | undefined = "pending",
+  status: LocationReviewStatus = "pending",
   enabled = true,
+  skip = 0,
 ) {
   return useQuery<{ conflicts: LocationPointConflict[]; total: number }>({
-    queryKey: locationKeys.conflicts(status),
+    queryKey: locationKeys.conflicts(status, skip),
     queryFn: () =>
       callResource("location", {
         action: "list-conflicts",
-        ...(status ? { status } : {}),
-        limit: 100,
-        skip: 0,
+        status,
+        limit: LOCATION_REVIEW_PAGE_SIZE,
+        skip,
       }),
     enabled,
-    staleTime: 15 * 1000,
-  });
-}
-
-export function useResolveLocationConflict() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: {
-      id: string;
-      resolution: "keep_existing" | "use_incoming" | "defer";
-      candidateImportId?: string;
-    }) => callResource("location", { action: "resolve-conflict", ...input }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: locationKeys.all });
-    },
+    staleTime: 15_000,
   });
 }
 
 export function useLocationMetadataConflicts(
-  status: "pending" | "resolved" | undefined = "pending",
+  status: LocationReviewStatus = "pending",
   enabled = true,
+  skip = 0,
 ) {
   return useQuery<{ conflicts: LocationMetadataConflict[]; total: number }>({
-    queryKey: locationKeys.metadataConflicts(status),
+    queryKey: locationKeys.metadataConflicts(status, skip),
     queryFn: () =>
       callResource("location", {
         action: "list-metadata-conflicts",
-        ...(status ? { status } : {}),
-        limit: 100,
-        skip: 0,
+        status,
+        limit: LOCATION_REVIEW_PAGE_SIZE,
+        skip,
       }),
     enabled,
-    staleTime: 15 * 1000,
+    staleTime: 15_000,
   });
 }
 
-export function useResolveLocationMetadataConflict() {
+export function useLocationRouteConflictPreview(
+  id: string,
+  gapDistanceM: number,
+  gapMinutes: number,
+) {
+  return useQuery<MapRouteDetailResponse>({
+    queryKey: [
+      ...locationKeys.all,
+      "routeConflictPreview",
+      id,
+      gapDistanceM,
+      gapMinutes,
+    ],
+    queryFn: ({ signal }) =>
+      callResource("location", {
+        action: "route-conflict-preview",
+        id,
+        gapDistanceM,
+        gapMinutes,
+      }, { signal }),
+    staleTime: 15_000,
+  });
+}
+
+export type LocationReviewDecision =
+  & { id: string }
+  & (
+    | {
+      action: "resolve-conflict" | "resolve-metadata-conflict";
+      resolution: "keep_existing" | "use_incoming" | "defer" | "resume";
+      candidateImportId?: string;
+    }
+    | {
+      action: "resolve-route-conflict";
+      resolution:
+        | "use_first"
+        | "use_second"
+        | "keep_both"
+        | "defer"
+        | "resume"
+        | "undo";
+      expectedResolvedAt?: Date | string;
+    }
+  );
+
+const reviewQueryKeys = ["conflicts", "metadataConflicts", "routeConflicts"];
+
+export function useLocationReviewDecisions() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
-      id: string;
-      resolution: "keep_existing" | "use_incoming" | "defer";
-    }) =>
-      callResource("location", {
-        action: "resolve-metadata-conflict",
-        ...input,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: locationKeys.all });
+    mutationFn: async (decisions: LocationReviewDecision[]) => {
+      const failures: string[] = [];
+      for (const decision of decisions) {
+        try {
+          const result = await callResource("location", decision);
+          if (!result.success) {
+            failures.push(result.error ?? "The decision could not be saved.");
+          }
+        } catch (error) {
+          failures.push(
+            error instanceof Error
+              ? error.message
+              : "The decision could not be saved.",
+          );
+        }
+      }
+      return { saved: decisions.length - failures.length, failures };
+    },
+    onSuccess: async (_result, decisions) => {
+      await queryClient.invalidateQueries({
+        queryKey: locationKeys.all,
+        predicate: ({ queryKey }) =>
+          reviewQueryKeys.includes(String(queryKey[1])),
+      });
+      if (
+        decisions.some(({ resolution }) =>
+          resolution !== "defer" && resolution !== "resume"
+        )
+      ) {
+        void queryClient.invalidateQueries({
+          queryKey: locationKeys.all,
+          predicate: ({ queryKey }) =>
+            !reviewQueryKeys.includes(String(queryKey[1])),
+        });
+      }
     },
   });
 }

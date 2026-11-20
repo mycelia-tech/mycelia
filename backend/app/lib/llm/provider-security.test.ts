@@ -94,3 +94,31 @@ Deno.test("catalogue reader cannot probe arbitrary endpoints", async () => {
       .rejects.toBeInstanceOf(Response);
   }
 });
+
+Deno.test({
+  name: "chat catalogue keeps provider status when every model listing fails",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = () =>
+      Promise.resolve(new Response("Private diagnostic body", { status: 502 }));
+    try {
+      const llm = resource();
+      const result = await llm.use(
+        { action: "list", includeUnavailable: true },
+        {} as Auth,
+      );
+      expect(result.models).toEqual([]);
+      expect(result.providers).toMatchObject([{
+        id: "saved",
+        models: [],
+        error: "Model catalogue returned HTTP 502",
+      }]);
+      await expect(llm.use({ action: "list" }, {} as Auth))
+        .rejects.toThrow("Saved: Model catalogue returned HTTP 502");
+    } finally {
+      globalThis.fetch = previous;
+    }
+  },
+});

@@ -1,10 +1,11 @@
+import math
 import re
 
+subtitle_credit_pattern = re.compile(r'^субтитры\s+с?делал\s+dimatorzok[.!?…]*$', re.IGNORECASE)
 known_errors = {
     'Продолжение следует...',
     '.',
     '...',
-    'Субтитры сделал DimaTorzok',
     '*',
     'おやすみなさい。',
     '*sad breathing*',
@@ -34,3 +35,14 @@ remove_if_lonely = {
     'Obrigado.',
     'Dziękuję.',
 }
+
+
+def clip_timestamps(item: dict, duration_seconds: float) -> dict | None:
+    start, end = item.get("start"), item.get("end")
+    if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in (start, end)):
+        return None
+    if end < start or end <= 0 or start >= duration_seconds:
+        return None
+    if start >= 0 and end <= duration_seconds:
+        return item
+    return {**item, "start": max(0, start), "end": min(duration_seconds, end)}

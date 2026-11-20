@@ -57,24 +57,13 @@ export function ChatActivity({
   const failed = sdkStatus === "error" || runState === "failed" ||
     Boolean(error);
   const [open, setOpen] = useState(active || needsApproval || failed);
-  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     if (active || needsApproval || failed) setOpen(true);
   }, [active, failed, needsApproval]);
 
-  useEffect(() => {
-    if (!active) return;
-    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
-    return () => globalThis.clearInterval(timer);
-  }, [active]);
-
   const metadata = latestAssistant?.metadata;
-  const startedAt = metadata?.startedAt
-    ? new Date(metadata.startedAt).getTime()
-    : undefined;
-  const elapsedMs = metadata?.durationMs ??
-    (startedAt ? Math.max(0, now - startedAt) : undefined);
+  const elapsedMs = active ? undefined : metadata?.durationMs;
   const completed =
     tools.filter((tool) => tool.state === "output-available").length;
   const toolErrors =

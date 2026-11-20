@@ -3,7 +3,10 @@ import { Binary, ObjectId } from "bson";
 import type { JobCapability } from "@/lib/jobs/job-registry.ts";
 import { env } from "#/env.ts";
 import { callResource } from "@myceliasdk/resources.ts";
-import { combineChunks } from "@/lib/audio-combiner.ts";
+import {
+  combineChunks,
+  combinedWavDurationSeconds,
+} from "@/lib/audio-combiner.ts";
 import { filterSegments } from "@/lib/transcription-filters.ts";
 import { getTriggerTiming } from "@/lib/jobs/trigger-config.ts";
 import { hasIndexedPendingWork } from "@/lib/jobs/pending-work.ts";
@@ -344,7 +347,10 @@ const capability: JobCapability = {
           sequenceId: seqId,
           rawSegmentCount: segments.length,
         });
-        const filteredSegments = filterSegments(segments);
+        const filteredSegments = filterSegments(
+          segments,
+          combinedWavDurationSeconds(combinedAudio),
+        );
         log("INFO", `Segments filtered`, {
           sequenceId: seqId,
           rawCount: segments.length,

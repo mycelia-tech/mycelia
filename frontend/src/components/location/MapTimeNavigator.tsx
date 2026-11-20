@@ -1,6 +1,31 @@
 import { useEffect, useId, useState } from "react";
+import { CalendarDays } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import type { MapTimelineSummary } from "@/types/location";
+
+const dayMs = 86_400_000;
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+const dateTimeWithSecondsFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+});
+const scaleMarks = [
+  { fraction: 0, className: "" },
+  { fraction: 0.25, className: "hidden sm:block -translate-x-1/2" },
+  { fraction: 0.5, className: "hidden min-[440px]:block -translate-x-1/2" },
+  { fraction: 0.75, className: "hidden sm:block -translate-x-1/2" },
+  { fraction: 1, className: "-translate-x-full" },
+];
 
 function dateLabel(value: number) {
   return new Date(value).toLocaleDateString(undefined, {
@@ -9,9 +34,54 @@ function dateLabel(value: number) {
     year: "numeric",
   });
 }
+
+function dateTimeLabel(value: number) {
+  return (value % 60_000 === 0 ? dateTimeFormat : dateTimeWithSecondsFormat)
+    .format(value);
+}
+
+function scaleLabel(value: number, span: number) {
+  const date = new Date(value);
+  if (span < dayMs) {
+    return date.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      ...(span < 4 * 60_000 ? { second: "2-digit" } : {}),
+    });
+  }
+  if (span >= 365 * dayMs) {
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(span < 4 * dayMs ? { hour: "numeric", minute: "2-digit" } : {}),
+  });
+}
+
 function durationLabel(ms: number) {
   const minutes = Math.round(ms / 60_000);
   return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} h`;
+}
+
+function rangeDuration(ms: number) {
+  const days = Math.floor(ms / dayMs);
+  const hours = Math.floor(ms % dayMs / 3_600_000);
+  const minutes = Math.floor(ms % 3_600_000 / 60_000);
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  if (minutes) return `${minutes}m`;
+  const seconds = Math.floor(ms / 1000);
+  return seconds ? `${seconds}s` : "<1s";
+}
+
+function localDateTimeInput(value: number) {
+  const date = new Date(value);
+  return new Date(value - date.getTimezoneOffset() * 60_000)
+    .toISOString().slice(0, 16);
 }
 
 export function MapTimeNavigator({
@@ -30,6 +100,8 @@ export function MapTimeNavigator({
   onSelectTime: (time: Date) => void;
 }) {
   const helpId = useId();
+  const editorTitleId = useId();
+  const editorErrorId = useId();
   const dataStart = summary
     ? new Date(summary.dataRange.start).getTime()
     : start.getTime();
@@ -39,6 +111,10 @@ export function MapTimeNavigator({
   const min = Math.min(dataStart, start.getTime());
   const max = Math.max(min + 1, dataEnd, end.getTime());
   const [draft, setDraft] = useState([start.getTime(), end.getTime()]);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [fromInput, setFromInput] = useState("");
+  const [toInput, setToInput] = useState("");
+  const [editorError, setEditorError] = useState("");
   useEffect(() => setDraft([start.getTime(), end.getTime()]), [
     start.getTime(),
     end.getTime(),
@@ -52,6 +128,10 @@ export function MapTimeNavigator({
   const percent = (value: number) =>
     Math.max(0, Math.min(100, (value - min) / (max - min) * 100));
   const cursorTime = cursor?.getTime();
+  const commitRange = (from: number, to: number) => {
+    setDraft([from, to]);
+    onCommitRange(new Date(from), new Date(to));
+  };
 
   return (
     <section
@@ -81,16 +161,24 @@ export function MapTimeNavigator({
         </div>
       </div>
       <div
-        className="relative h-14 rounded bg-muted/30"
+        className="relative mx-2 h-14 rounded bg-muted/30"
         aria-label="Activity across all dates"
       >
         <div
-          className="pointer-events-none absolute inset-y-0 border-x border-primary/40 bg-primary/5"
+          className="pointer-events-none absolute inset-y-0 bg-blue-500/10"
           style={{
             left: `${percent(draft[0])}%`,
             width: `${percent(draft[1]) - percent(draft[0])}%`,
           }}
         />
+        {scaleMarks.slice(1, -1).map(({ fraction, className }) => (
+          <span
+            key={fraction}
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 border-l border-border ${className}`}
+            style={{ left: `${fraction * 100}%` }}
+          />
+        ))}
         {buckets.map((bucket) => {
           const from = new Date(bucket.start).getTime();
           const to = new Date(bucket.end).getTime();
@@ -136,6 +224,14 @@ export function MapTimeNavigator({
             No activity summary yet
           </span>
         )}
+        {draft.map((value, index) => (
+          <span
+            key={index}
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 w-px bg-blue-600/85 dark:bg-blue-400/85"
+            style={{ left: `${percent(value)}%` }}
+          />
+        ))}
         {cursorTime !== undefined && cursorTime >= min && cursorTime <= max && (
           <span
             className="pointer-events-none absolute inset-y-0 w-0.5 bg-amber-500"
@@ -143,19 +239,24 @@ export function MapTimeNavigator({
           />
         )}
       </div>
-      <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-        <span>{dateLabel(min)}</span>
-        <span>{dateLabel(max)}</span>
-      </div>
-      <div className="mb-1 mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs">
-        <span>
-          <span className="mr-1 text-muted-foreground">From</span>
-          <strong className="font-medium">{dateLabel(draft[0])}</strong>
-        </span>
-        <span>
-          <span className="mr-1 text-muted-foreground">To</span>
-          <strong className="font-medium">{dateLabel(draft[1])}</strong>
-        </span>
+      <div className="relative mx-2 h-5 text-[11px] tabular-nums text-muted-foreground">
+        {scaleMarks.map(({ fraction, className }) => {
+          const value = Math.round(min + (max - min) * fraction);
+          return (
+            <div
+              key={fraction}
+              className={`absolute top-0 whitespace-nowrap pt-1 ${className}`}
+              style={{ left: `${fraction * 100}%` }}
+            >
+              <time
+                dateTime={new Date(value).toISOString()}
+                title={dateTimeLabel(value)}
+              >
+                {scaleLabel(value, max - min)}
+              </time>
+            </div>
+          );
+        })}
       </div>
       <Slider
         min={min}
@@ -164,16 +265,142 @@ export function MapTimeNavigator({
         minStepsBetweenThumbs={1}
         value={draft}
         thumbLabels={["Selected period start", "Selected period end"]}
-        thumbValueTexts={draft.map((value) => new Date(value).toLocaleString())}
+        thumbValueTexts={draft.map(dateTimeLabel)}
         aria-describedby={helpId}
-        className="h-6"
+        className="h-7 [&_[role=slider]]:border-2 [&_[role=slider]]:border-blue-600 [&_[role=slider]]:focus-visible:ring-blue-500 dark:[&_[role=slider]]:border-blue-400"
+        rangeClassName="bg-blue-600 dark:bg-blue-400"
         onValueChange={setDraft}
-        onValueCommit={(values) =>
-          onCommitRange(new Date(values[0]), new Date(values[1]))}
+        onValueCommit={([from, to]) => commitRange(from, to)}
       />
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-blue-500/25 bg-blue-500/5 px-2.5 py-1.5">
+        <div className="grid flex-1 grid-cols-2 gap-x-4">
+          {["From", "To"].map((label, index) => (
+            <div key={label} className="text-xs">
+              <div className="font-medium text-blue-700 dark:text-blue-300">
+                {label}
+              </div>
+              <time
+                className="font-semibold tabular-nums"
+                dateTime={new Date(draft[index]).toISOString()}
+              >
+                {dateTimeLabel(draft[index])}
+              </time>
+            </div>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+            {rangeDuration(draft[1] - draft[0])} selected
+          </span>
+          <Popover
+            open={editorOpen}
+            onOpenChange={(open) => {
+              setEditorOpen(open);
+              if (open) {
+                setFromInput(localDateTimeInput(draft[0]));
+                setToInput(localDateTimeInput(draft[1]));
+                setEditorError("");
+              }
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+              >
+                <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+                Edit dates
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              side="top"
+              aria-labelledby={editorTitleId}
+            >
+              <form
+                className="space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const from = fromInput === localDateTimeInput(draft[0])
+                    ? draft[0]
+                    : new Date(fromInput).getTime();
+                  const to = toInput === localDateTimeInput(draft[1])
+                    ? draft[1]
+                    : new Date(toInput).getTime();
+                  if (
+                    !Number.isFinite(from) || !Number.isFinite(to) || from >= to
+                  ) {
+                    setEditorError(
+                      "Choose an end date and time after the start.",
+                    );
+                    return;
+                  }
+                  if (from !== draft[0] || to !== draft[1]) {
+                    commitRange(from, to);
+                  }
+                  setEditorOpen(false);
+                }}
+              >
+                <h3 id={editorTitleId} className="text-sm font-medium">
+                  Map date range
+                </h3>
+                <label className="block space-y-1 text-xs">
+                  <span>From</span>
+                  <Input
+                    className="h-8 text-sm"
+                    type="datetime-local"
+                    required
+                    value={fromInput}
+                    onChange={(event) => {
+                      setFromInput(event.target.value);
+                      setEditorError("");
+                    }}
+                  />
+                </label>
+                <label className="block space-y-1 text-xs">
+                  <span>To</span>
+                  <Input
+                    className="h-8 text-sm"
+                    type="datetime-local"
+                    required
+                    aria-invalid={!!editorError}
+                    aria-describedby={editorError ? editorErrorId : undefined}
+                    value={toInput}
+                    onChange={(event) => {
+                      setToInput(event.target.value);
+                      setEditorError("");
+                    }}
+                  />
+                </label>
+                {editorError && (
+                  <p
+                    id={editorErrorId}
+                    role="alert"
+                    className="text-xs text-destructive"
+                  >
+                    {editorError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setEditorOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm">Apply</Button>
+                </div>
+              </form>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
       <p id={helpId} className="mt-1 text-[11px] text-muted-foreground">
-        Drag the two handles to choose the map’s date range. Click a bar to
-        inspect a moment.
+        Drag either handle or edit the dates. Click an activity bar to inspect a
+        moment.
       </p>
     </section>
   );

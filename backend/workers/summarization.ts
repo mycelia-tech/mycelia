@@ -22,6 +22,7 @@ import {
   resolveWorkerFallbackModel,
 } from "@/lib/llm/worker-response.ts";
 import { createPromptCacheSessionId } from "@/lib/llm/prompt-cache-session.ts";
+import { isSubtitleCreditArtifact } from "@/lib/transcription-filters.ts";
 
 /** Job type name */
 export const name = "summarization";
@@ -73,7 +74,7 @@ export const schema = z.object({
   minDurationForLlm: z.number()
     .default(10)
     .describe(
-      "Minimum duration in seconds to use LLM. Shorter periods use transcript directly.",
+      "Minimum duration in seconds to use LLM. Shorter periods and single utterances of up to three words use the transcript directly. Set to zero to always use LLM.",
     ),
   batchSize: z.number().int().min(1).max(100).default(25)
     .describe(
@@ -250,36 +251,109 @@ async function loadTranscripts(
     action: "find",
     collection: "transcriptions",
     query: {
-      // Include every transcription that overlaps the conversation range, not
-      // only records whose start timestamp falls inside it.
-      start: { $lte: end },
-      end: { $gte: start },
+      start: { $lt: end },
+      end: { $gt: start },
     },
     options: { sort: { start: 1 } },
   }, { jwt, myceliaUrl });
 }
 
-function buildPromptFromTranscripts(transcripts: any[]): string {
-  let promptText = "";
-  let lastEnd = new Date(transcripts[0].start).getTime();
-  promptText += getTimestampMessage(new Date(transcripts[0].start)) + "\n";
+type SummaryTranscript = {
+  _id?: unknown;
+  start: Date | string;
+  end: Date | string;
+  text?: string;
+  segments?: { start?: number; end?: number; text?: string }[];
+};
 
-  for (const t of transcripts) {
-    const tStart = new Date(t.start).getTime();
-    const tEnd = new Date(t.end).getTime();
-    const gap = tStart - lastEnd;
+type SummaryUtterance = {
+  _id?: unknown;
+  start: number;
+  end: number;
+  text: string;
+};
+
+export function selectSummaryUtterances(
+  transcripts: SummaryTranscript[],
+  start: Date,
+  end: Date,
+): SummaryUtterance[] {
+  const rangeStart = start.getTime();
+  const rangeEnd = end.getTime();
+  const selected: SummaryUtterance[] = [];
+  for (const doc of transcripts) {
+    const docStart = new Date(doc.start).getTime();
+    const docEnd = new Date(doc.end).getTime();
+    if (!(docStart < rangeEnd && docEnd > rangeStart && docStart < docEnd)) {
+      continue;
+    }
+    const segments = doc.segments?.length ? doc.segments : [{ text: doc.text }];
+    for (const segment of segments) {
+      const text = segment.text?.trim();
+      if (!text || isSubtitleCreditArtifact(text)) continue;
+
+      let from = docStart;
+      let to = docEnd;
+      if (segment.start != null || segment.end != null) {
+        if (
+          typeof segment.start !== "number" || typeof segment.end !== "number"
+        ) continue;
+        from = Math.max(docStart, docStart + segment.start * 1000);
+        to = Math.min(docEnd, docStart + segment.end * 1000);
+      } else if (from < rangeStart || to > rangeEnd) {
+        // Untimed text can only be attributed when its whole record fits.
+        continue;
+      }
+      from = Math.max(from, rangeStart);
+      to = Math.min(to, rangeEnd);
+      if (from < to) {
+        selected.push({ _id: doc._id, start: from, end: to, text });
+      }
+    }
+  }
+  return selected.sort((a, b) => a.start - b.start);
+}
+
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+
+export function isSingleBriefUtterance(
+  utterances: SummaryUtterance[],
+): boolean {
+  if (utterances.length !== 1) return false;
+  let words = 0;
+  for (const part of wordSegmenter.segment(utterances[0].text)) {
+    if (part.isWordLike && ++words > 3) return false;
+  }
+  return words > 0;
+}
+
+export function transcriptOnlyReason(
+  utterances: SummaryUtterance[],
+  durationSeconds: number,
+  minDurationForLlm: number,
+): string | null {
+  if (durationSeconds < minDurationForLlm) {
+    return "Short duration - transcript used directly";
+  }
+  return minDurationForLlm > 0 && isSingleBriefUtterance(utterances)
+    ? "Single brief utterance - transcript used directly"
+    : null;
+}
+
+function buildPromptFromTranscripts(utterances: SummaryUtterance[]): string {
+  let lastEnd = utterances[0].start;
+  let promptText = getTimestampMessage(new Date(lastEnd)) + "\n";
+  for (const utterance of utterances) {
+    const gap = utterance.start - lastEnd;
 
     if (gap > 30 * 1000) {
       promptText += getTimestampMessage(new Date(lastEnd)) + "\n";
       promptText += getSilenceMessage(gap) + "\n";
-      promptText += getTimestampMessage(new Date(tStart)) + "\n";
+      promptText += getTimestampMessage(new Date(utterance.start)) + "\n";
     }
 
-    const text = t.segments.map((s: any) => s.text).join("").trim();
-    if (text) {
-      promptText += text + "\n";
-    }
-    lastEnd = tEnd;
+    promptText += utterance.text + "\n";
+    lastEnd = Math.max(lastEnd, utterance.end);
   }
   promptText += getTimestampMessage(new Date(lastEnd));
   return promptText;
@@ -287,6 +361,7 @@ function buildPromptFromTranscripts(transcripts: any[]): string {
 
 function createTranscriptSummaryEntry(
   promptText: string,
+  reason: string,
   jobData: SummarizationJobData,
   jobId: string,
   sourceRefs: SummarySourceRefs,
@@ -296,7 +371,7 @@ function createTranscriptSummaryEntry(
     model: "passthrough",
     modelName: "transcript-only",
     date: new Date(),
-    prompt: "Short duration - transcript used directly",
+    prompt: reason,
     promptName: jobData.promptName,
     jobId,
     sourceRefs,
@@ -580,15 +655,29 @@ async function summarizeConversationRange(
   const jobId = job.id ?? "unknown";
 
   const transcripts = await loadTranscripts(jwt, myceliaUrl, start, end);
-  if (!transcripts || transcripts.length === 0) {
-    console.log(`[summarization] Job ${job.id}: NO transcripts found in range`);
-    return { success: false, message: "No transcripts found in range" };
+  const utterances = selectSummaryUtterances(transcripts ?? [], start, end);
+  if (utterances.length === 0) {
+    const message = "No usable transcript text in range";
+    if (existingObjectId) {
+      await setSummarizationFailure(
+        existingObjectId,
+        {
+          status: "failed",
+          code: "NO_TRANSCRIPT_TEXT",
+          message,
+          jobId,
+        },
+        jwt,
+        myceliaUrl,
+      );
+    }
+    return { success: false, message };
   }
   console.log(
     `[summarization] Job ${job.id}: found ${transcripts.length} transcripts`,
   );
   const sourceRefs = buildSummarySourceRefs(
-    transcripts,
+    utterances,
     start,
     end,
     {
@@ -597,19 +686,22 @@ async function summarizeConversationRange(
         sourceContext.conversationId,
     },
   );
-  const promptText = buildPromptFromTranscripts(transcripts);
+  const promptText = buildPromptFromTranscripts(utterances);
 
   const modelAlias = jobData.model || "small";
   const minDurationForLlm = jobData.minDurationForLlm ?? 10;
   const durationSeconds = (end.getTime() - start.getTime()) / 1000;
 
-  // Short duration optimization: skip LLM for very short periods
-  if (durationSeconds < minDurationForLlm) {
-    console.log(
-      `[summarization] Job ${job.id}: duration ${durationSeconds}s < ${minDurationForLlm}s threshold, using transcript directly`,
-    );
+  const reason = transcriptOnlyReason(
+    utterances,
+    durationSeconds,
+    minDurationForLlm,
+  );
+  if (reason) {
+    console.log(`[summarization] Job ${job.id}: ${reason}`);
     const summaryEntry = createTranscriptSummaryEntry(
       promptText,
+      reason,
       jobData,
       jobId,
       sourceRefs,
@@ -651,7 +743,7 @@ async function summarizeConversationRange(
       {
         source: "summarization_job",
         jobId,
-        shortDuration: true,
+        ...(durationSeconds < minDurationForLlm ? { shortDuration: true } : {}),
       },
       jwt,
       myceliaUrl,

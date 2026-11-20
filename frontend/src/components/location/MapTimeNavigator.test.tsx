@@ -73,6 +73,27 @@ describe("MapTimeNavigator", () => {
     expect(onSelectTime.mock.calls[0][0].getTime()).toBe(2500);
     expect(onCommitRange).not.toHaveBeenCalled();
   });
+  it("validates dates and commits the edited period once", () => {
+    const { onCommitRange } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Edit dates" }));
+    const from = screen.getByLabelText("From");
+    const to = screen.getByLabelText("To");
+    const apply = screen.getByRole("button", { name: "Apply" });
+
+    fireEvent.change(from, { target: { value: "2026-11-18T09:30" } });
+    fireEvent.change(to, { target: { value: "2026-11-17T12:00" } });
+    fireEvent.click(apply);
+    expect(screen.getByRole("alert").textContent).toMatch(/after the start/);
+    expect(onCommitRange).not.toHaveBeenCalled();
+
+    fireEvent.change(to, { target: { value: "2026-11-18T12:00" } });
+    fireEvent.click(apply);
+    expect(onCommitRange).toHaveBeenCalledExactlyOnceWith(
+      new Date("2026-11-18T09:30"),
+      new Date("2026-11-18T12:00"),
+    );
+    expect(screen.getByText("2h 30m selected")).toBeTruthy();
+  });
   it("keeps the current range selectable when summary data covers less time", () => {
     render(
       <MapTimeNavigator

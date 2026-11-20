@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytz
 
 from lib.resources import call_resource
-from lib.transcription import known_errors, remove_if_lonely
+from lib.transcription import known_errors, remove_if_lonely, subtitle_credit_pattern
 
 
 # %%
@@ -35,6 +35,15 @@ pipeline = [
                                         {"$trim": {"input": "$$seg.text"}},
                                         list(known_errors)
                                     ]
+                                }
+                            },
+                            {
+                                "$not": {
+                                    "$regexMatch": {
+                                        "input": {"$trim": {"input": "$$seg.text"}},
+                                        "regex": subtitle_credit_pattern.pattern,
+                                        "options": "i",
+                                    }
                                 }
                             },
                             {

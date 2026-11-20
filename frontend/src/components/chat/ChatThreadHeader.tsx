@@ -28,11 +28,13 @@ export function ChatThreadHeader({
   resolvedModel,
   toolPolicy,
   toolCatalog,
+  toolCatalogError,
   controlsDisabled,
   onBack,
   onRename,
   onFavorite,
   onArchive,
+  onCatalogLoaded,
   onModelChange,
   onToolPolicyChange,
 }: {
@@ -44,11 +46,15 @@ export function ChatThreadHeader({
   resolvedModel: string;
   toolPolicy: ChatToolPolicy;
   toolCatalog: ChatToolCatalogEntry[];
+  toolCatalogError?: string;
   controlsDisabled?: boolean;
   onBack: () => void;
   onRename: (title: string) => Promise<void>;
   onFavorite: (favorite: boolean) => Promise<void>;
   onArchive: (archived: boolean) => Promise<void>;
+  onCatalogLoaded: NonNullable<
+    React.ComponentProps<typeof ModelSelector>["onCatalogLoaded"]
+  >;
   onModelChange: (model: string, providerProfileId?: string) => Promise<void>;
   onToolPolicyChange: (policy: ChatToolPolicy) => Promise<void>;
 }) {
@@ -196,6 +202,8 @@ export function ChatThreadHeader({
             placeholder="Use configured chat default"
             className="min-w-0 max-w-full"
             prefetch
+            showAvailability
+            onCatalogLoaded={onCatalogLoaded}
           />
         </div>
         <ChatToolSelector
@@ -205,6 +213,11 @@ export function ChatThreadHeader({
           onChange={(policy) => void onToolPolicyChange(policy)}
         />
       </div>
+      {toolCatalogError && (
+        <p className="mt-2 text-xs text-destructive" role="status">
+          Could not load chat tools. {toolCatalogError}
+        </p>
+      )}
     </header>
   );
 }

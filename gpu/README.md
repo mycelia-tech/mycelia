@@ -159,6 +159,53 @@ Then configure your main Mycelia instance to use:
 - `DIARIZATION_SERVER_URL=http://<tailscale-ip>:8085`
 - Proxy: `http://<tailscale-ip>:8000`
 
+For the STT-only Portainer stack, the published proxy port is **8001** by
+default (`PROXY_PORT`), and it speaks **HTTP**. Sending HTTPS directly to that
+port can produce an SSL protocol-version error. Use real line breaks after
+the trailing backslashes below, not literal `\n` text:
+
+```bash
+source .env
+set -o pipefail
+curl -fsS --connect-timeout 5 --max-time 300 \
+  http://gpu-host.example:8001/v1/audio/transcriptions \
+  -H "Authorization: Bearer $PROXY_API_KEY" \
+  -F 'file=@test.wav' | jq .
+```
+
+To add HTTPS, first inspect `tailscale serve status` and confirm that port 8445
+is unused. Then run this on the GPU host:
+
+```bash
+sudo tailscale serve --bg --https=8445 http://127.0.0.1:8001
+tailscale serve status
+```
+
+Use `https://<machine>.<tailnet>.ts.net:8445` as the client base URL after the
+route is enabled. This adds a tailnet-only HTTPS listener and retains existing
+Serve routes. TLS uses the machine's DNS name, not its raw Tailscale IP. See
+[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve).
+To remove just this listener, run `sudo tailscale serve --https=8445 off`.
+
+For machines with the personal `check-models` command installed (it is not
+shipped in this repository), the command checks both LLM endpoints and STT;
+`--stt-only` checks just STT, and `--llm-only` checks just LLMs:
+
+```bash
+source .env
+export PROXY_API_KEY
+STT_SERVER_URL=http://gpu-host.example:8001 STT_FILE=test.wav check-models --stt-only
+# After enabling HTTPS, replace the URL with the machine's HTTPS base URL.
+```
+
+The checker defaults to Bastion's HTTPS port 8445 and `./test.wav` unless
+overridden. It queries authenticated `/v1/models`, then uploads the audio to
+`/v1/audio/transcriptions` with the discovered model. A missing key/file, failed
+request, or empty transcript returns a nonzero exit status; model discovery
+alone does not count as working inference. `STT_EXPECTED_TEXT` optionally checks
+an English reference transcript ignoring case and punctuation. By default,
+every selected endpoint must pass for the command to exit successfully.
+
 ### Option B: SSH Tunnel
 
 ```bash

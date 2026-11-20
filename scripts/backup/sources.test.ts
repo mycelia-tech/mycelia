@@ -1,6 +1,10 @@
 import { dirname, join } from "node:path";
 import { loadBackupConfig } from "./config.ts";
-import { buildSourceManifest, reconcileSourcePaths } from "./sources.ts";
+import {
+  assertOmittedRootsAbsent,
+  buildSourceManifest,
+  reconcileSourcePaths,
+} from "./sources.ts";
 import type {
   ManifestOptions,
   ProtectedConfig,
@@ -50,6 +54,111 @@ async function fixture(
 const claims = (...paths: string[]) => ({
   filteredCount: paths.length,
   records: paths.map((path, index) => ({ _id: String(index), path })),
+});
+
+Deno.test("explicit optional missing roots preserve skipped claims and reject unrelated gaps", async () => {
+  await fixture(async (root, options) => {
+    const absent = join(root, "unplugged");
+    await write(join(root, ".env"), `MEDIA_SOURCE_HOST_PATH=${absent}\n`);
+    await write(
+      join(root, ".env.backup"),
+      `BACKUP_OPTIONAL_SOURCE_ROOTS_JSON=${JSON.stringify([absent])}\n`,
+    );
+    const config = await loadBackupConfig(root, root);
+    const manifest = await buildSourceManifest(config, "backup-test", options);
+    assert(manifest.coverage.complete && manifest.omittedRoots?.length === 1);
+    const checked = await reconcileSourcePaths(
+      manifest,
+      claims(join(absent, "audio.m4a")),
+    );
+    assert(
+      checked.coverage.complete && checked.coverage.total === 1 &&
+        checked.coverage.covered === 0 && checked.coverage.skipped === 1,
+    );
+    const repeated = await reconcileSourcePaths(
+      checked,
+      claims(join(absent, "audio.m4a")),
+    );
+    assert(
+      repeated.coverage.complete && repeated.coverage.skipped === 1,
+      "repeated reconciliation accumulated omissions",
+    );
+    const bad = await reconcileSourcePaths(
+      manifest,
+      claims(join(absent + "-other", "audio.m4a")),
+    );
+    assert(!bad.coverage.complete && bad.coverage.missing === 1);
+    await write(join(absent, "audio.m4a"));
+    let rejected = false;
+    try {
+      await assertOmittedRootsAbsent(checked);
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, "returning source accepted with stale omission");
+    const present = await buildSourceManifest(config, "backup-test", options);
+    assert(
+      present.coverage.complete && !present.omittedRoots?.length &&
+        present.files.includes(join(absent, "audio.m4a")),
+    );
+    await Deno.chmod(absent, 0);
+    try {
+      const unreadable = await buildSourceManifest(
+        config,
+        "backup-test",
+        options,
+      );
+      assert(!unreadable.coverage.complete && !unreadable.omittedRoots?.length);
+    } finally {
+      await Deno.chmod(absent, 0o700);
+    }
+  });
+});
+
+Deno.test("optional archive backs up available local voice files and rejects symlinks and unknown roots", async () => {
+  await fixture(async (root, options) => {
+    const archive = join(root, "missing-archive");
+    const stage = join(root, "published/audio-original");
+    const config = await loadBackupConfig(root, root);
+    config.optionalSourceRoots = [archive];
+    config.voiceMemosRoot = stage;
+    await write(join(stage, "memo.m4a"));
+    const manifest = await buildSourceManifest(config, "backup-test", {
+      ...options,
+      archiveRoot: archive,
+    });
+    const checked = await reconcileSourcePaths(
+      manifest,
+      claims(join(stage, "memo.m4a"), join(archive, "original.m4a")),
+    );
+    assert(
+      checked.coverage.complete && checked.coverage.skipped === 1 &&
+        checked.coverage.covered === 1,
+    );
+    assert(
+      checked.files.includes(join(stage, "memo.m4a")),
+      "local voice data silently omitted",
+    );
+    await Deno.symlink(join(root, "missing-target"), archive);
+    let symlinkRejected = false;
+    try {
+      await buildSourceManifest(config, "backup-test", {
+        ...options,
+        archiveRoot: archive,
+      });
+    } catch {
+      symlinkRejected = true;
+    }
+    assert(symlinkRejected, "dangling archive symlink ignored");
+    config.optionalSourceRoots = [root];
+    let rejected = false;
+    try {
+      await buildSourceManifest(config, "backup-test", options);
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, "broad or unconfigured optional root accepted");
+  });
 });
 
 Deno.test("manifest takes tracked and explicitly reviewed files, media and optional imports; deduplicates canonical aliases", async () => {

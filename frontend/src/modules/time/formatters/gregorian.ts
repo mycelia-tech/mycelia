@@ -12,7 +12,9 @@ const checkAllJanFirst = (
   return ticks.length > 0 &&
     ticks.every(({ value }) => {
       const parts = getZonedDateParts(value, resolveTimeZone(value));
-      return parts.month === 1 && parts.day === 1;
+      return parts.month === 1 && parts.day === 1 && parts.hour === 0 &&
+        parts.minute === 0 && parts.second === 0 &&
+        value.getMilliseconds() === 0;
     });
 };
 
@@ -114,8 +116,8 @@ export const formatLabel = (
   return [
     hasTime ? formatTime(date, hasSeconds, hasMilliseconds, timeZone) : null,
     hasTime ? getShortTimeZoneName(date, timeZone) : null,
-    hasWeekdays ? weekday : null,
     `${month} ${day}`,
+    hasWeekdays ? weekday : null,
     year,
   ].filter(Boolean) as React.ReactNode[];
 };
@@ -130,7 +132,10 @@ const generateGregorianLabels = (
     "UTC";
   const resolveTimeZone = context?.resolveTimeZone ?? (() => browserTimeZone);
   const newScale = transform.rescaleX(scale);
-  const tickValues = newScale.ticks(Math.ceil(width / 227));
+  const tickCount = Math.max(2, Math.ceil(width / 160));
+  let tickValues = newScale.ticks(tickCount);
+  // D3 may pick a month interval just outside a short/narrow visible range.
+  if (tickValues.length < 2) tickValues = newScale.ticks(tickCount * 2);
   const ticks = tickValues.map((tick) => ({
     value: tick,
     xOffset: newScale(tick),
@@ -155,7 +160,7 @@ const generateGregorianLabels = (
       xOffset,
       segments: !prev
         ? fullSegments
-        : fullSegments.filter((segment, i) => segment !== prev![i]),
+        : fullSegments.filter((segment, i) => i === 0 || segment !== prev![i]),
     };
     prev = fullSegments;
     return result;

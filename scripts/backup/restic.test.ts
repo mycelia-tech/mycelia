@@ -2295,6 +2295,143 @@ Deno.test("keychain initialization persists pending before add and advances only
   }
 });
 
+Deno.test("ordinary pre-record helper failure permits retry without orphaning its executable", async () => {
+  for (const failMode of ["resolve-default", "inspect"]) {
+    const root = await freshBootstrapRoot();
+    const paths = bootstrapStatePaths(root);
+    let fail = true;
+    let compilations = 0;
+    let createCalls = 0;
+    const dependencies: BootstrapDependencies = {
+      homeDir: root,
+      inheritedEnvironment: {},
+      compileHelper: async (_source, output) => {
+        compilations++;
+        await Deno.writeTextFile(output, "compiled helper\n", { mode: 0o700 });
+      },
+      ceremony: () =>
+        Promise.reject(
+          Object.assign(new Error("VISIBLE_TTY_REQUIRED"), {
+            code: "VISIBLE_TTY_REQUIRED",
+          }),
+        ),
+      execute: (request) => {
+        const mode = request.argv.at(-1);
+        if (mode === "create") createCalls++;
+        if (fail && mode === failMode) {
+          return Promise.resolve(
+            commandResult(1, { schema: 1, code: "KEYCHAIN_UNAVAILABLE" }),
+          );
+        }
+        if (mode === "resolve-default") {
+          return Promise.resolve(
+            commandResult(0, {
+              schema: 1,
+              keychainPath: "/Users/test/Library/Keychains/login.keychain-db",
+            }),
+          );
+        }
+        if (mode === "inspect") {
+          return Promise.resolve(
+            commandResult(1, {
+              schema: 1,
+              code: "KEYCHAIN_ITEM_MISSING",
+              broadCount: 0,
+              exactCount: 0,
+            }),
+          );
+        }
+        throw new Error("must not create credential");
+      },
+    };
+    const run = async () => {
+      try {
+        await withLock(paths.stateDir + "/backup.lock", {
+          command: "bootstrap",
+          backupId: "20261009T080000Z",
+        }, (lease) => initializeKeychain(root, lease, dependencies));
+        return "unexpected-success";
+      } catch (e) {
+        return (e as { code?: string }).code;
+      }
+    };
+    try {
+      assert(await run() === "KEYCHAIN_UNAVAILABLE", "original failure lost");
+      assert(
+        await readBootstrapState(root) === null,
+        "record unexpectedly published",
+      );
+      let exists = true;
+      try {
+        await Deno.lstat(paths.helperPath);
+      } catch (e) {
+        if (e instanceof Deno.errors.NotFound) exists = false;
+        else throw e;
+      }
+      assert(!exists, "fresh unrecorded helper blocked retry");
+      fail = false;
+      assert(
+        await run() === "VISIBLE_TTY_REQUIRED",
+        "retry did not reach real confirmation boundary",
+      );
+      assert(
+        compilations === 2 && createCalls === 0,
+        "incorrect rebuild or unauthorized credential creation",
+      );
+      assert(
+        (await readBootstrapState(root))?.phase === "creation_pending",
+        "pending provenance lost",
+      );
+      await Deno.lstat(paths.helperPath);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("pre-record cleanup preserves a helper replaced during a failed probe", async () => {
+  const root = await freshBootstrapRoot();
+  const paths = bootstrapStatePaths(root);
+  try {
+    try {
+      await withLock(paths.stateDir + "/backup.lock", {
+        command: "bootstrap",
+        backupId: "20261009T080000Z",
+      }, (lease) =>
+        initializeKeychain(root, lease, {
+          homeDir: root,
+          inheritedEnvironment: {},
+          compileHelper: async (_source, output) => {
+            await Deno.writeTextFile(output, "compiled helper\n", {
+              mode: 0o700,
+            });
+          },
+          execute: async () => {
+            await Deno.rename(paths.helperPath, paths.helperPath + ".original");
+            await Deno.writeTextFile(paths.helperPath, "replacement\n", {
+              mode: 0o700,
+            });
+            return commandResult(1, {
+              schema: 1,
+              code: "KEYCHAIN_UNAVAILABLE",
+            });
+          },
+        }));
+    } catch (e) {
+      assert(
+        (e as { code?: string }).code === "KEYCHAIN_UNAVAILABLE",
+        "wrong failure",
+      );
+    }
+    assert(
+      await Deno.readTextFile(paths.helperPath) === "replacement\n",
+      "replacement helper was removed",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("initial keychain bootstrap never overwrites an unexpected helper", async () => {
   const root = await freshBootstrapRoot();
   const paths = bootstrapStatePaths(root);

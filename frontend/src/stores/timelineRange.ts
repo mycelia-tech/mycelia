@@ -1,28 +1,8 @@
 import { create } from "zustand";
-import { z } from "zod";
-
-const zTimelineRangeParams = z.object({
-  start: z
-    .string()
-    .transform((val: string) => {
-      const startTime = parseInt(val);
-      if (isNaN(startTime)) {
-        throw new Error("Invalid start parameter");
-      }
-      return new Date(startTime);
-    })
-    .optional(),
-  end: z
-    .string()
-    .transform((val: string) => {
-      const endTime = parseInt(val);
-      if (isNaN(endTime)) {
-        throw new Error("Invalid end parameter");
-      }
-      return new Date(endTime);
-    })
-    .optional(),
-});
+import {
+  defaultTimelineRange,
+  normalizeTimelineRange,
+} from "@/lib/timelineViewport";
 
 export interface TimelineRangeStore {
   start: Date;
@@ -35,82 +15,46 @@ export interface TimelineRangeStore {
   center: Date;
 }
 
-const day = 1000 * 60 * 60 * 24;
-
-function getDaysAgo(n: number) {
-  const today = new Date(new Date().toISOString().split("T")[0]);
-  const monthAgo = new Date(today.getTime() - n * day);
-  return monthAgo;
-}
-
 function updateURLParams(start: Date, end: Date) {
   if (typeof window === "undefined") return;
-
-  const url = new URL(globalThis.location.href);
-  url.searchParams.set("start", start.getTime().toString());
-  url.searchParams.set("end", end.getTime().toString());
-  globalThis.history.replaceState({}, "", url.toString());
+  const url = new URL(window.location.href);
+  url.searchParams.set("start", String(+start));
+  url.searchParams.set("end", String(+end));
+  window.history.replaceState(window.history.state, "", url);
 }
 
-function getInitialValuesFromURL() {
-  if (typeof window === "undefined") {
-    return { start: getDaysAgo(30), end: new Date() };
-  }
-
-  const urlParams = new URLSearchParams(globalThis.location.search);
-  const startParam = urlParams.get("start");
-  const endParam = urlParams.get("end");
-
-  try {
-    const params = zTimelineRangeParams.parse({
-      start: startParam,
-      end: endParam,
-    });
-
-    return {
-      start: params.start || getDaysAgo(30),
-      end: params.end || new Date(),
-    };
-  } catch {
-    return { start: getDaysAgo(30), end: new Date() };
-  }
+function initialRange() {
+  if (typeof window === "undefined") return defaultTimelineRange();
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("start") && !params.has("end")) return defaultTimelineRange();
+  const fallback = defaultTimelineRange();
+  const range = normalizeTimelineRange(
+    params.has("start")
+      ? new Date(Number(params.get("start")))
+      : fallback.start,
+    params.has("end") ? new Date(Number(params.get("end"))) : fallback.end,
+  );
+  updateURLParams(range.start, range.end);
+  return range;
 }
 
-export const useTimelineRange = create<TimelineRangeStore>((set, get) => {
-  const { start, end } = getInitialValuesFromURL();
-
-  return {
-    start,
-    end,
-
-    setStart: (start: Date) => {
-      set({ start });
-      updateURLParams(start, get().end);
-    },
-
-    setEnd: (end: Date) => {
-      set({ end });
-      updateURLParams(get().start, end);
-    },
-
-    setRange: (start: Date, end: Date) => {
-      set({ start, end });
-      updateURLParams(start, end);
-    },
-
-    reset: () => {
-      const start = new Date();
-      const end = new Date();
-      set({ start, end });
-      updateURLParams(start, end);
-    },
-
-    get center() {
-      return new Date((this.start.getTime() + this.end.getTime()) / 2);
-    },
-
-    get duration() {
-      return this.end.getTime() - this.start.getTime();
-    },
-  };
-});
+export const useTimelineRange = create<TimelineRangeStore>((set, get) => ({
+  ...initialRange(),
+  setStart: (start) => get().setRange(start, get().end),
+  setEnd: (end) => get().setRange(get().start, end),
+  setRange: (start, end) => {
+    const range = normalizeTimelineRange(start, end);
+    if (+get().start !== +range.start || +get().end !== +range.end) set(range);
+    updateURLParams(range.start, range.end);
+  },
+  reset: () => {
+    const range = defaultTimelineRange();
+    get().setRange(range.start, range.end);
+  },
+  get center() {
+    return new Date((+get().start + +get().end) / 2);
+  },
+  get duration() {
+    return +get().end - +get().start;
+  },
+}));

@@ -26,7 +26,9 @@ export const transcriptionSequencePendingQuery = {
   "vad.has_speech": true,
   transcribed_at: { $eq: null },
   processing_by: { $eq: null },
-  transcription_sequence_id: { $exists: false },
+  // The null bound skips assigned sequences in the index. The existence check
+  // keeps explicitly null values out of the queue.
+  transcription_sequence_id: { $eq: null, $exists: false },
   original_id: { $exists: true, $ne: null },
 } as const;
 
@@ -55,7 +57,6 @@ async function* getSpeechSequences(
     transcriptionSequencePendingQuery,
     {
       sort: { start: -1 }, // DESCENDING - newest first
-      hint: "audio_chunks_pending_work",
       projection: {
         _id: 1,
         original_id: 1,
@@ -270,7 +271,7 @@ const capability: JobCapability = {
       query: transcriptionSequencePendingQuery,
       options: {
         projection: { _id: 1 },
-        hint: "audio_chunks_pending_work",
+        hint: "audio_chunks_sequence_pending_stats",
         limit: 1,
       },
     }) as unknown[];

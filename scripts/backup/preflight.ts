@@ -2,6 +2,7 @@ import { type BackupConfig, loadBackupConfig } from "./config.ts";
 import {
   buildSourceManifest,
   type ManifestOptions,
+  optionalSourceAbsent,
   type ProtectedConfig,
   reconcileSourcePaths,
   type RuntimeLocation,
@@ -70,7 +71,14 @@ export type PreflightReport = {
   fileBytes?: number;
   databaseBytes?: number;
   oplogWindowSeconds?: number;
-  sourceCoverage?: { complete: boolean; total: number; covered: number };
+  sourceCoverage?: {
+    complete: boolean;
+    total: number;
+    covered: number;
+    skipped?: number;
+    omittedRoots?: number;
+    allSourcesIncluded?: boolean;
+  };
   namespace?: "reservable" | "owned";
   requiredBytes?: number;
   freeBytes?: number;
@@ -997,35 +1005,38 @@ export async function discoverDeployment(
         config.homeDir,
         "Library/mycelia/voice-memos-staging/audio-original",
       );
-    try {
-      const receiptPath = join(
-        dirname(publishedAudioRoot),
-        "sync-status.json",
-      );
-      const info = await Deno.lstat(receiptPath);
-      if (
-        !info.isFile || info.mode === null || (info.mode & 0o7777) !== 0o600
-      ) fail("SOURCE_COVERAGE_INCOMPLETE");
-      const receipt = JSON.parse(await readLimitedText(receiptPath));
-      if (
-        receipt.schema !== 1 ||
-        receipt.published_audio_root !==
-          await Deno.realPath(publishedAudioRoot) ||
-        receipt.archive_audio_root !==
-          await Deno.realPath(
-            join(archiveRoot, "data/voice-memos/audio-original"),
-          )
-      ) fail("SOURCE_COVERAGE_INCOMPLETE");
-      voiceMemos = {
-        publishedAudioRoot,
-        archiveAudioRoot: receipt.archive_audio_root,
-        receiptPath,
-      };
-    } catch (error) {
-      // A missing default receipt cannot authorize any staged claim: Task 3
-      // reconciliation will fail those paths outside the archive allowlist.
-      if (config.voiceMemosRoot || !(error instanceof Deno.errors.NotFound)) {
-        throw error;
+    const archiveAbsent = await optionalSourceAbsent(config, archiveRoot);
+    if (!archiveAbsent) {
+      try {
+        const receiptPath = join(
+          dirname(publishedAudioRoot),
+          "sync-status.json",
+        );
+        const info = await Deno.lstat(receiptPath);
+        if (
+          !info.isFile || info.mode === null || (info.mode & 0o7777) !== 0o600
+        ) fail("SOURCE_COVERAGE_INCOMPLETE");
+        const receipt = JSON.parse(await readLimitedText(receiptPath));
+        if (
+          receipt.schema !== 1 ||
+          receipt.published_audio_root !==
+            await Deno.realPath(publishedAudioRoot) ||
+          receipt.archive_audio_root !==
+            await Deno.realPath(
+              join(archiveRoot, "data/voice-memos/audio-original"),
+            )
+        ) fail("SOURCE_COVERAGE_INCOMPLETE");
+        voiceMemos = {
+          publishedAudioRoot,
+          archiveAudioRoot: receipt.archive_audio_root,
+          receiptPath,
+        };
+      } catch (error) {
+        // A missing default receipt cannot authorize any staged claim: Task 3
+        // reconciliation will fail those paths outside the archive allowlist.
+        if (config.voiceMemosRoot || !(error instanceof Deno.errors.NotFound)) {
+          throw error;
+        }
       }
     }
     const env = join(config.repoRoot, ".env");
@@ -1173,12 +1184,12 @@ export async function runPreflight(
       [100, 17, 0],
     );
     const mongo = await probeMongo(options.composeRoot, databaseName, runner);
+    report.databaseBytes = mongo.databaseBytes;
+    report.oplogWindowSeconds = mongo.oplogWindowSeconds;
     if (!mongo.writablePrimary) fail("MONGO_NOT_PRIMARY");
     if (mongo.oplogWindowSeconds < PRELIMINARY_OPLOG_SECONDS) {
       fail("OPLOG_WINDOW_SHORT");
     }
-    report.databaseBytes = mongo.databaseBytes;
-    report.oplogWindowSeconds = mongo.oplogWindowSeconds;
     const context = await (deps.context
       ? deps.context(config)
       : discoverDeployment(config, items, runner, rcloneConfigIdentity));
@@ -1201,6 +1212,9 @@ export async function runPreflight(
       complete: manifest.coverage.complete,
       total: manifest.coverage.total,
       covered: manifest.coverage.covered,
+      skipped: manifest.coverage.skipped ?? 0,
+      omittedRoots: manifest.omittedRoots?.length ?? 0,
+      allSourcesIncluded: !manifest.omittedRoots?.length,
     };
     if (!manifest.coverage.complete) {
       fail("SOURCE_COVERAGE_INCOMPLETE");

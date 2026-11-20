@@ -170,7 +170,11 @@ describe("Timeline photo deep link", () => {
       action: "getAsset",
       assetId: "asset-1",
     });
-    expect(mockCallResource).toHaveBeenCalledTimes(2);
+    expect(
+      mockCallResource.mock.calls.filter(([resource, args]) =>
+        resource === "media" && args.action === "getAsset"
+      ),
+    ).toHaveLength(2);
     expect(mocks.zoomTo).toHaveBeenCalledTimes(1);
     expect(
       useTrackVisibilityStore.getState().visibleTracks.filter((trackId) =>

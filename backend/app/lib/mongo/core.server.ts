@@ -11,6 +11,7 @@ import { Auth } from "../auth/index.ts";
 import { env } from "#/env.ts";
 import { withObjectListCategories } from "@/lib/objects/list-categories.ts";
 import { aggregateResourceActions } from "./pipeline-policy.ts";
+import { cachedLocationPointCount } from "@/lib/location/point-count-cache.ts";
 import {
   TIMELINE_DENSITY_SOURCE_WRITE_TIMEOUT_MS,
   withTimelineDensityWrite,
@@ -207,8 +208,19 @@ const countSchema = z.object({
   options: z.object({
     maxTimeMS: z.number().int().positive().optional(),
     hint: z.union([z.string(), z.record(z.string(), z.any())]).optional(),
+    mode: z.enum(["estimated", "cached-location-points"]).optional(),
   }).optional(),
-});
+}).refine(({ collection, query, options }) => {
+  if (options?.mode === "estimated") {
+    return Object.keys(query).length === 0 && options.hint === undefined;
+  }
+  if (options?.mode === "cached-location-points") {
+    return collection === "location_points" && Object.keys(query).length === 2 &&
+      query.visible === true && query.selection === "accepted" &&
+      options.hint === undefined && options.maxTimeMS === undefined;
+  }
+  return true;
+}, "Count mode does not support this query or options");
 
 const insertOneSchema = z.object({
   action: z.literal("insertOne"),
@@ -674,8 +686,19 @@ export class MongoResource implements Resource<MongoRequest, MongoResponse> {
         return collection.deleteOne(input.query, sourceWriteOptions);
       case "deleteMany":
         return collection.deleteMany(input.query, sourceWriteOptions);
-      case "count":
-        return collection.countDocuments(input.query, input.options);
+      case "count": {
+        const { mode, ...options } = input.options ?? {};
+        if (mode === "estimated") {
+          return collection.estimatedDocumentCount(options);
+        }
+        if (mode === "cached-location-points") {
+          return cachedLocationPointCount(
+            db.databaseName,
+            () => collection.countDocuments(input.query),
+          );
+        }
+        return collection.countDocuments(input.query, options);
+      }
       case "aggregate":
         return collection.aggregate(input.pipeline, input.options).toArray();
       case "bulkWrite": {

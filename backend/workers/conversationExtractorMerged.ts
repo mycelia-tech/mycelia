@@ -40,6 +40,7 @@ import {
   normalizeEmoji,
   partitionTranscriptionsForPrompt,
   transcriptionToUtterances,
+  type Utterance,
 } from "@/lib/extraction/shared.ts";
 
 /**
@@ -238,6 +239,7 @@ export function parseMergedResponse(
   chunkStart: Date,
   chunkEnd: Date,
   validTagNames: Set<string>,
+  utterancesByLine?: ReadonlyMap<number, Utterance>,
 ): MergedSegment[] {
   const parsed = extractJsonFromText(content);
   const rawSegments: any[] = Array.isArray(parsed?.segments)
@@ -246,9 +248,12 @@ export function parseMergedResponse(
 
   // Boundary resolution reuses the regular extractor's parser: it consumes
   // the same {segments: [{title, start, end}]} shape and preserves order.
-  const resolved = createSegmentParser(promptLines, chunkStart, chunkEnd)(
-    content,
-  );
+  const resolved = createSegmentParser(
+    promptLines,
+    chunkStart,
+    chunkEnd,
+    utterancesByLine,
+  )(content);
 
   return rawSegments.map((raw, index) => {
     const boundaries = resolved[index];
@@ -508,17 +513,27 @@ const capability: JobCapability = {
         const utterances = transcriptions.flatMap((t) =>
           transcriptionToUtterances(t)
         );
-        if (utterances.length === 0) {
+        // Missing/blank source data is retryable. A legacy transcript made
+        // entirely of filtered ASR artifacts completes with zero windows.
+        if (
+          utterances.length === 0 &&
+          !transcriptions.some((t) =>
+            t.text?.trim() ||
+            t.segments?.some((s: { text?: string }) => s.text?.trim())
+          )
+        ) {
           throw new Error(
             `Conversation chunk ${chunk._id} has no usable transcription text`,
           );
         }
-        const fullPromptChars = formatChunkAsPrompt(utterances).prompt.length;
+        const fullPromptChars = utterances.length
+          ? formatChunkAsPrompt(utterances).prompt.length
+          : 0;
         const promptWindows = partitionTranscriptionsForPrompt(
           transcriptions,
           maxPromptChars,
         );
-        if (promptWindows.length === 0) {
+        if (utterances.length > 0 && promptWindows.length === 0) {
           throw new Error(
             `Conversation chunk ${chunk._id} produced no extraction windows`,
           );
@@ -653,6 +668,7 @@ const capability: JobCapability = {
             window.start,
             window.end,
             validTagNames,
+            window.utterancesByLine,
           );
           extractedSegments.push(
             ...segments.map((segment) => ({

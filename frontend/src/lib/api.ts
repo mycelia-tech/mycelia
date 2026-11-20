@@ -6,6 +6,12 @@ export interface CallResourceOptions {
   signal?: AbortSignal;
 }
 
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly requestId?: string) {
+    super(message);
+  }
+}
+
 /**
  * EJSON serializes object properties whose value is `undefined` as `null`,
  * unlike JSON.stringify, which omits them. Resource schemas use optional
@@ -163,7 +169,10 @@ export class ApiClient {
     const response = await this.fetchRaw(path, options);
 
     if (!response.ok) {
-      throw new Error(await readApiError(response));
+      throw new ApiRequestError(
+        await readApiError(response),
+        response.headers.get("X-Mycelia-Request-Id") ?? undefined,
+      );
     }
 
     return response;

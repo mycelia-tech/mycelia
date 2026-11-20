@@ -74,8 +74,13 @@ export function validateFilesReceipt(
   validateCounters(r.sourceCounts);
   const c = r.sourceCounts;
   if (
-    Object.keys(c).length !== 8 || !c.files || c.bytes === undefined ||
-    c.total === undefined || c.total !== c.covered ||
+    Object.keys(c).length !==
+      8 + (c.skipped === undefined ? 0 : 1) +
+        (c.omittedRoots === undefined ? 0 : 1) ||
+    !c.files || c.bytes === undefined ||
+    c.total === undefined || c.covered === undefined ||
+    c.total !== c.covered + (c.skipped ?? 0) ||
+    ((c.skipped ?? 0) > 0 && !(c.omittedRoots && c.omittedRoots > 0)) ||
     [c.missing, c.unreadable, c.outsideRoots, c.invalid].some((v) => v !== 0)
   ) invalidState();
 }

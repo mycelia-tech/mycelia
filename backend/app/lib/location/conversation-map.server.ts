@@ -273,24 +273,56 @@ export function projectConversation(
   };
 }
 
-async function loadMatchingContext(db: Db): Promise<{
-  segments: LocationSegmentProjection[];
-  points: LocationPointProjection[];
-}> {
-  const [segments, points] = await Promise.all([
-    db.collection<LocationSegmentProjection>(SEGMENTS).find(
-      { type: { $in: ["manual", "stay", "move", "gap"] } },
-      {
-        projection: { type: 1, start: 1, end: 1, loc: 1, place: 1 },
-        sort: { start: 1, _id: 1 },
-      },
-    ).toArray(),
-    db.collection<LocationPointProjection>(POINTS).find(
-      { selection: "accepted", visible: true } as never,
-      { projection: { ts: 1, loc: 1 }, sort: { ts: 1, _id: 1 } },
-    ).toArray(),
+function loadMatchingSegments(db: Db): Promise<LocationSegmentProjection[]> {
+  return db.collection<LocationSegmentProjection>(SEGMENTS).find(
+    { type: { $in: ["manual", "stay", "move", "gap"] } },
+    {
+      projection: { type: 1, start: 1, end: 1, loc: 1, place: 1 },
+      sort: { start: 1, _id: 1 },
+    },
+  ).toArray();
+}
+
+async function loadNearestPoints(
+  db: Db,
+  anchorAt: Date,
+  segment: LocationSegmentProjection,
+): Promise<LocationPointProjection[]> {
+  const points = db.collection(POINTS);
+  const filter = { selection: "accepted", visible: true };
+  const projection = { ts: 1, loc: 1 };
+  const [before, after] = await Promise.all([
+    points.findOne<LocationPointProjection>(
+      { ...filter, ts: { $gte: segment.start, $lt: anchorAt } },
+      { projection, sort: { ts: -1, _id: -1 } },
+    ),
+    points.findOne<LocationPointProjection>(
+      { ...filter, ts: { $gte: anchorAt, $lte: segment.end } },
+      { projection, sort: { ts: 1, _id: 1 } },
+    ),
   ]);
-  return { segments, points };
+  return [before, after].filter((point) => point !== null);
+}
+
+async function projectPendingConversation(
+  db: Db,
+  conversation: ConversationLike,
+  generation: string,
+  segments: LocationSegmentProjection[],
+): Promise<ConversationProjectionRow | null> {
+  if (conversation.isConversation !== true) return null;
+  const range = canonicalConversationRange(conversation);
+  if (!range) return null;
+  const segment = selectCoveringLocationSegment(segments, range.anchorAt);
+  const points = segment?.type === "move"
+    ? await loadNearestPoints(db, range.anchorAt, segment)
+    : [];
+  return projectConversation(
+    conversation,
+    generation,
+    segment ? [segment] : [],
+    points,
+  );
 }
 
 export async function rebuildLocationConversationProjection(
@@ -324,7 +356,13 @@ export async function rebuildLocationConversationProjection(
   );
   summaryCache.clear();
   try {
-    const context = await loadMatchingContext(db);
+    const [segments, points] = await Promise.all([
+      loadMatchingSegments(db),
+      db.collection<LocationPointProjection>(POINTS).find(
+        { selection: "accepted", visible: true } as never,
+        { projection: { ts: 1, loc: 1 }, sort: { ts: 1, _id: 1 } },
+      ).toArray(),
+    ]);
     const total = await db.collection(OBJECTS).countDocuments({
       isConversation: true,
       "timeRanges.0.start": { $type: "date" },
@@ -349,8 +387,8 @@ export async function rebuildLocationConversationProjection(
       const row = projectConversation(
         conversation,
         generation,
-        context.segments,
-        context.points,
+        segments,
+        points,
       );
       if (row) {
         operations.push({
@@ -506,17 +544,17 @@ export async function drainConversationProjectionPending(
       },
     ).toArray();
   const byId = new Map(conversations.map((row) => [String(row._id), row]));
-  const context = await loadMatchingContext(db);
+  const segments = conversations.length ? await loadMatchingSegments(db) : [];
   const generation = state.activeGeneration!;
   const operations: never[] = [];
   for (const id of ids) {
     const conversation = byId.get(String(id));
     const row = conversation
-      ? projectConversation(
+      ? await projectPendingConversation(
+        db,
         conversation,
         generation,
-        context.segments,
-        context.points,
+        segments,
       )
       : null;
     operations.push(

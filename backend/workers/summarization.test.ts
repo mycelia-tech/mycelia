@@ -1,5 +1,9 @@
 import { expect } from "@std/expect";
+import { stub } from "@std/testing/mock";
+import type { Job } from "bullmq";
+import { EJSON } from "bson";
 import { z } from "zod";
+import type { JobData } from "@/lib/jobs/types.ts";
 import {
   buildSummarizationPendingQuery,
   buildSummarySourceRefs,
@@ -7,7 +11,140 @@ import {
   isTerminalSummarizationResponseError,
   parseSummaryTitleResponse,
   schema,
+  selectSummaryUtterances,
+  transcriptOnlyReason,
+  use,
 } from "./summarization.ts";
+
+Deno.test("summary prompt and receipt use only speech overlapping the requested recording", async () => {
+  const time = (sec: number) => new Date(Date.UTC(2026, 0, 1) + sec * 1000);
+  const start = time(0);
+  const end = time(40);
+  const records = [
+    { _id: "left", start: time(-5), end: start, text: "Left." },
+    {
+      _id: "credit",
+      start,
+      end,
+      segments: [
+        { start: 0, end: 40, text: "Субтитры делал DimaTorzok." },
+      ],
+    },
+    {
+      _id: "overlap",
+      start: time(-5),
+      end: time(43),
+      segments: [
+        { start: 0, end: 5, text: "Before." },
+        { start: 16, end: 17, text: "Что?" },
+        { start: 45, end: 48, text: "After." },
+      ],
+    },
+    { _id: "right", start: end, end: time(60), text: "Right." },
+  ];
+  let writes = 0;
+  using _fetch = stub(globalThis, "fetch", (_request, init) => {
+    const body = EJSON.parse(String(init?.body));
+    if (body.action === "find" && body.collection === "transcriptions") {
+      expect(body.query).toEqual({ start: { $lt: end }, end: { $gt: start } });
+      return Promise.resolve(new Response(EJSON.stringify(records)));
+    }
+    expect(body.action).toBe("create");
+    const entry = body.object.summaries[0];
+    expect(entry.modelName).toBe("transcript-only");
+    expect(entry.text).toBe(
+      `[${time(11).toISOString()}]\nЧто?\n[${time(12).toISOString()}]`,
+    );
+    expect(entry.sourceRefs.transcriptionIds).toEqual(["overlap"]);
+    expect(entry.sourceRefs.coverageStart).toBe(start.toISOString());
+    expect(entry.sourceRefs.coverageEnd).toBe(end.toISOString());
+    writes++;
+    return Promise.resolve(
+      new Response(EJSON.stringify({ insertedId: "object" })),
+    );
+  });
+  const data = schema.parse({ type: "summarization", start, end });
+  const result = await use({ id: "test", data } as unknown as Job<JobData>);
+  expect(result.success).toBe(true);
+  expect(writes).toBe(1);
+});
+
+Deno.test("an existing conversation without usable text gets a retry time and makes no inference call", async () => {
+  const start = new Date("2026-01-01T00:00:00Z");
+  const end = new Date(start.getTime() + 40_000);
+  const id = "65b000000000000000000000";
+  let failureSaved = false;
+  using _fetch = stub(globalThis, "fetch", (_request, init) => {
+    const body = EJSON.parse(String(init?.body));
+    if (body.action === "get") {
+      return Promise.resolve(
+        Response.json({ _id: id, version: 1, timeRanges: [{ start, end }] }),
+      );
+    }
+    if (body.action === "find") {
+      return Promise.resolve(
+        Response.json([{ start, end, text: "Субтитры делал DimaTorzok." }]),
+      );
+    }
+    expect(body.action).toBe("update");
+    expect(body.field).toBe("_summarizationFailure");
+    expect(body.value.code).toBe("NO_TRANSCRIPT_TEXT");
+    expect(Date.parse(body.value.retryAfter) - Date.parse(body.value.failedAt))
+      .toBe(15 * 60_000);
+    failureSaved = true;
+    return Promise.resolve(Response.json({}));
+  });
+  const data = schema.parse({ type: "summarization", objectId: id });
+  await expect(use({ id: "test", data } as unknown as Job<JobData>)).rejects
+    .toThrow(
+      "No usable transcript text in range",
+    );
+  expect(failureSaved).toBe(true);
+});
+
+Deno.test("summary selection clips crossing segments and requires containment for untimed legacy text", () => {
+  const time = (sec: number) => new Date(sec * 1000);
+  const docs = [
+    {
+      _id: "cut",
+      start: time(0),
+      end: time(100),
+      segments: [
+        { text: "No timestamp" },
+        { start: 3, end: 8, text: "Crosses start" },
+        { start: 12, end: 20, text: "Crosses end" },
+      ],
+    },
+    { _id: "whole", start: time(8), end: time(11), text: "Legacy text" },
+    { _id: "partial", start: time(4), end: time(12), text: "Uncertain" },
+    {
+      _id: "legacy-credit",
+      start: time(8),
+      end: time(11),
+      text: "Субтитры сделал DimaTorzok",
+    },
+  ];
+  expect(selectSummaryUtterances(docs, time(5), time(15))).toEqual([
+    { _id: "cut", start: 5000, end: 8000, text: "Crosses start" },
+    { _id: "whole", start: 8000, end: 11000, text: "Legacy text" },
+    { _id: "cut", start: 12000, end: 15000, text: "Crosses end" },
+  ]);
+});
+
+Deno.test("summary uses passthrough only for one short utterance or the configured short duration", () => {
+  const utterance = { start: 1000, end: 2000, text: "Когда это было?" };
+  expect(transcriptOnlyReason([utterance], 40, 10)).toContain(
+    "Single brief utterance",
+  );
+  expect(transcriptOnlyReason([utterance], 40, 0)).toBeNull();
+  expect(transcriptOnlyReason([utterance, utterance], 40, 10)).toBeNull();
+  expect(
+    transcriptOnlyReason([{ ...utterance, text: "Это было в среду." }], 40, 10),
+  ).toBeNull();
+  expect(transcriptOnlyReason([utterance, utterance], 5, 10)).toContain(
+    "Short duration",
+  );
+});
 
 Deno.test("summary pending query includes due failures and stale claims", () => {
   const now = new Date("2026-08-15T04:00:00.000Z");

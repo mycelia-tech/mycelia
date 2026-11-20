@@ -42,7 +42,39 @@ const TimelinePage = () => {
     (state) => state.ongoingObjects,
   );
 
-  const timeline = useTimeline();
+  const [dataBounds, setDataBounds] = useState<{ start: Date; end: Date }>();
+  const timeline = useTimeline(dataBounds);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.allSettled([
+      api.callResource("objects", { action: "getTimeRange" }),
+      api.callResource("media-library", { action: "timeRange" }),
+      ...([1, -1] as const).map((direction) =>
+        api.callResource("mongo", {
+          action: "findOne",
+          collection: "histogram_1day",
+          query: {},
+          options: {
+            sort: { start: direction },
+            projection: { start: 1, end: 1 },
+          },
+        })
+      ),
+    ]).then((results) => {
+      if (cancelled || results.some((result) => result.status === "rejected")) {
+        return;
+      }
+      const range = combineTimelineDataRanges(
+        results.flatMap((result) =>
+          result.status === "fulfilled" && result.value ? [result.value] : []
+        ),
+      );
+      if (range) setDataBounds(range);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const { zoomTo } = timeline;
   const zoomToRef = useRef(zoomTo);
   zoomToRef.current = zoomTo;
@@ -106,11 +138,9 @@ const TimelinePage = () => {
     const startParam = params.get("start");
     const endParam = params.get("end");
     if (!startParam) return;
-    const startMs = parseInt(startParam, 10);
-    if (Number.isNaN(startMs)) return;
+    const startMs = Number(startParam);
     const start = new Date(startMs);
-    const end = endParam ? new Date(parseInt(endParam, 10)) : new Date();
-    if (endParam && Number.isNaN(end.getTime())) return;
+    const end = endParam ? new Date(Number(endParam)) : new Date();
     setRange(start, end);
   }, [location.search, setRange]);
 
@@ -177,6 +207,10 @@ const TimelinePage = () => {
   };
 
   const handleZoomToFit = useCallback(async () => {
+    if (dataBounds) {
+      zoomTo(dataBounds.start, dataBounds.end);
+      return;
+    }
     try {
       const results = await Promise.allSettled([
         api.callResource("objects", { action: "getTimeRange" }),
@@ -198,7 +232,7 @@ const TimelinePage = () => {
     } catch (err) {
       console.error("Failed to get time range:", err);
     }
-  }, [zoomTo]);
+  }, [zoomTo, dataBounds]);
 
   const handleFocusedPhotoDismiss = useCallback(() => {
     setFocusedPhoto(undefined);

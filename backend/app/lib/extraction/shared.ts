@@ -1,5 +1,6 @@
 import { ObjectId } from "bson";
 import { extractJsonFromText } from "../llm/worker-response.ts";
+import { isSubtitleCreditArtifact } from "../transcription-filters.ts";
 
 /**
  * Extraction-domain code shared by the conversation extractor, entity typing
@@ -42,6 +43,7 @@ export type PromptTranscriptionInput = TranscriptionInput & {
 export type PromptWindow<T extends PromptTranscriptionInput> = {
   transcriptions: T[];
   utterances: Utterance[];
+  utterancesByLine: ReadonlyMap<number, Utterance>;
   prompt: string;
   start: Date;
   end: Date;
@@ -193,17 +195,22 @@ export function transcriptionToUtterances(
     }];
   });
 
-  if (utterances.length > 0) return utterances;
+  if (utterances.length > 0) {
+    // Keep legacy ASR boilerplate out of extraction even on a replay. The
+    // aggregate text often contains the very same discarded segment.
+    return utterances.filter(({ text }) => !isSubtitleCreditArtifact(text));
+  }
 
   const fallbackText = transcription.text?.trim() ||
     segments.map((segment) => segment.text ?? "").join("").trim();
-  return fallbackText
+  return fallbackText && !isSubtitleCreditArtifact(fallbackText)
     ? [{ start: transcriptionStart, end: transcriptionEnd, text: fallbackText }]
     : [];
 }
 
 export function formatChunkAsPrompt(
   utterances: Utterance[],
+  utterancesByLine?: Map<number, Utterance>,
 ): { prompt: string; start: Date; end: Date } {
   if (utterances.length === 0) {
     throw new Error("Cannot format empty utterances array");
@@ -233,7 +240,10 @@ export function formatChunkAsPrompt(
       strings.push(`[time: ${uStart.toISOString()}]`);
     }
 
-    strings.push(u.text);
+    for (const line of u.text.split("\n")) {
+      utterancesByLine?.set(strings.length, u);
+      strings.push(line);
+    }
     latest = new Date(Math.max(latest.getTime(), new Date(u.end).getTime()));
   }
 
@@ -260,10 +270,12 @@ function promptWindow<T extends PromptTranscriptionInput>(
   sourceKey: string,
   boundaryReason: PromptWindow<T>["boundaryReason"],
 ): PromptWindow<T> {
-  const formatted = formatChunkAsPrompt(utterances);
+  const utterancesByLine = new Map<number, Utterance>();
+  const formatted = formatChunkAsPrompt(utterances, utterancesByLine);
   return {
     transcriptions,
     utterances,
+    utterancesByLine,
     prompt: formatted.prompt,
     start: formatted.start,
     end: formatted.end,
@@ -578,11 +590,17 @@ function findAttrStartingWith(obj: Record<string, any>, prefix: string): any {
   return undefined;
 }
 
-function findPhraseLine(promptLines: string[], phrase: string): number {
+function findPhraseLine(
+  foldedLines: string[],
+  phrase: string,
+  fromLine = 0,
+): number {
   const needle = phrase.trim().toLocaleLowerCase();
   if (!needle) return -1;
-  return promptLines.findIndex((line) =>
-    line.toLocaleLowerCase().includes(needle)
+  const exact = foldedLines.indexOf(needle, fromLine);
+  if (exact >= 0) return exact;
+  return foldedLines.findIndex((line, index) =>
+    index >= fromLine && line.includes(needle)
   );
 }
 
@@ -596,12 +614,19 @@ export function createSegmentParser(
   promptLines: string[],
   chunkStart: Date,
   chunkEnd: Date,
+  utterancesByLine?: ReadonlyMap<number, Utterance>,
 ) {
   const timeMarkers = extractTimeMarkersFromPrompt(promptLines);
+  const phraseLines = promptLines.map((line, index) =>
+    !utterancesByLine || utterancesByLine.has(index)
+      ? line.trim().toLocaleLowerCase()
+      : ""
+  );
 
   return function parseSegmentationResponse(content: string): Segment[] {
     const parsed = extractJsonFromText(content);
     const segments = parsed.segments || [];
+    let nextPhraseLine = 0;
     return segments.map((s: any, index: number) => {
       // Handle null, undefined, non-string, or empty string titles
       let title = `Segment ${index + 1}`;
@@ -619,20 +644,40 @@ export function createSegmentParser(
       if (startVal != null && endVal != null) {
         // Both numbers → line indices
         if (typeof startVal === "number" && typeof endVal === "number") {
-          const start = findTimeAtOrBeforeLine(timeMarkers, startVal) ??
+          const start = utterancesByLine?.get(startVal)?.start ??
+            findTimeAtOrBeforeLine(timeMarkers, startVal) ??
             findTimeAtOrAfterLine(timeMarkers, startVal) ??
             chunkStart;
-          const end = findTimeAtOrAfterLine(timeMarkers, endVal) ??
+          const end = utterancesByLine?.get(endVal)?.end ??
+            findTimeAtOrAfterLine(timeMarkers, endVal) ??
             findTimeAtOrBeforeLine(timeMarkers, endVal) ??
             chunkEnd;
+          if (utterancesByLine?.has(endVal)) nextPhraseLine = endVal + 1;
           return { title, start, end };
         }
 
-        // Both strings → try as dates. V8 date parsing is lenient enough to
-        // turn transcript phrases into dates (new Date("Так, 300.") is the
-        // year 300), so a parse only counts when both dates land near the
-        // chunk window; otherwise fall through to phrase resolution.
         if (typeof startVal === "string" && typeof endVal === "string") {
+          // Resolve repeated phrases in transcript order. Some responses
+          // describe overlapping segments, so retain the full-window fallback.
+          let startLine = findPhraseLine(phraseLines, startVal, nextPhraseLine);
+          if (startLine < 0 && nextPhraseLine > 0) {
+            startLine = findPhraseLine(phraseLines, startVal);
+          }
+          const endLine = findPhraseLine(
+            phraseLines,
+            endVal,
+            Math.max(0, startLine),
+          );
+          const first = utterancesByLine?.get(startLine);
+          const last = utterancesByLine?.get(endLine);
+          if (first && last) {
+            nextPhraseLine = endLine + 1;
+            // The next prompt marker can be the start of a later utterance.
+            return { title, start: first.start, end: last.end };
+          }
+
+          // Legacy providers may return timestamps. Literal dates spoken in
+          // the transcript have already been matched to their ASR positions.
           const start = new Date(startVal);
           const end = new Date(endVal);
           const windowStart = chunkStart.getTime() - 24 * 60 * 60 * 1000;
@@ -644,21 +689,11 @@ export function createSegmentParser(
             return { title, start, end };
           }
 
-          // Some providers return phrase boundaries despite the JSON schema.
-          // Resolve them against the timestamped STT lines rather than
-          // expanding every topic to the full conversation chunk.
-          const startLine = findPhraseLine(promptLines, startVal);
-          const endLine = findPhraseLine(promptLines, endVal);
+          // Imported prompts may contain markers without source utterances.
           if (startLine >= 0 && endLine >= startLine) {
-            const phraseStart = findTimeAtOrBeforeLine(
-              timeMarkers,
-              startLine,
-            ) ??
-              chunkStart;
-            const phraseEnd = findTimeAtOrAfterLine(
-              timeMarkers,
-              endLine + 1,
-            ) ??
+            const phraseStart =
+              findTimeAtOrBeforeLine(timeMarkers, startLine) ?? chunkStart;
+            const phraseEnd = findTimeAtOrAfterLine(timeMarkers, endLine + 1) ??
               chunkEnd;
             return { title, start: phraseStart, end: phraseEnd };
           }

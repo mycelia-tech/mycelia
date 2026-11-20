@@ -16,6 +16,10 @@ export async function apiResourceHandler(req: Request, res: ExpressResponse) {
     return;
   }
 
+  if (toolName === "chat") {
+    res.setHeader("X-Mycelia-Request-Id", crypto.randomUUID());
+  }
+
   return tracer.startActiveSpan(`api.resource.${toolName}`, async (span) => {
     try {
       span.setAttributes({

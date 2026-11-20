@@ -1,4 +1,5 @@
 import type { Tool } from "ai";
+import { EJSON } from "bson";
 import type { Auth } from "@/lib/auth/core.server.ts";
 import { defaultResourceManager } from "@/lib/auth/resources.ts";
 import {
@@ -10,6 +11,22 @@ import type {
   ChatToolPolicy,
 } from "@myceliasdk/messengers.ts";
 import { aggregateResourceActions } from "@/lib/mongo/pipeline-policy.ts";
+
+function decodeMongoScalars(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(decodeMongoScalars);
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  const fields = Object.entries(value);
+  if (
+    fields.length === 1 && (fields[0][0] === "$oid" || fields[0][0] === "$date")
+  ) return EJSON.deserialize(value);
+  return Object.fromEntries(
+    fields.map(([key, nested]) => [key, decodeMongoScalars(nested)]),
+  );
+}
+
+export function decodeChatToolInput(toolName: string, input: unknown): unknown {
+  return toolName.startsWith("mongo_") ? decodeMongoScalars(input) : input;
+}
 
 export function validateChatToolInput(toolName: string, input: unknown): void {
   if (toolName !== "mongo_aggregate") return;
@@ -75,6 +92,7 @@ export function createChatTools(auth: Auth): Record<string, Tool> {
     toolsRequiringApproval: CHAT_TOOLS_REQUIRING_APPROVAL,
     toolFilter: chatToolFilter,
     resourceManager: defaultResourceManager,
+    decodeInput: decodeChatToolInput,
     validateInput: validateChatToolInput,
   });
 }

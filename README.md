@@ -173,6 +173,12 @@ verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-a
   per-chat Custom policies; data-changing actions require explicit approval.
 - Streaming responses with durable run status, observable tool activity and
   usage metadata, retry/stop controls, and in-app completion notifications.
+  Unparsed DeepSeek tool markup is replaced with a skipped-call notice.
+- Queue additional messages while a response is running. The open chat sends
+  them in order as each response finishes. A live timer above the composer
+  shows how long the current response has been running.
+- The model picker shows advertised models and catalogue errors by provider.
+  A failed submission keeps the message visible so it can be copied or retried.
 - Searchable chat history with favorites and a separate archive, compact
   message/pin counts, actual-model labels, unread states, resizable navigation,
   rename, and previous/next navigation across pinned messages.
@@ -202,6 +208,10 @@ verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-a
 - Per-object audio player with transcript sync and segment navigation.
 - LLM summarization with model selection and cost estimation.
 - Summary comparison (side-by-side, star/favorite).
+- Conversation bounds follow the selected transcript segments. Summaries use the
+  speech within those bounds and quote an isolated utterance of up to three
+  words directly with the default settings. Historical subtitle-credit errors
+  can be previewed and repaired [one conversation at a time](DEVELOPMENT.md#repair-a-sparse-conversation).
 - In `/summaries`, combine **Last X** (optional, 1–10,000) with a generated-date
   **Period**, or use either filter alone. The page shows matching summaries and
   distinct conversations. Choose a target model and click **Rerun summaries**;
@@ -792,6 +802,10 @@ Use the `whisper` alias when the Portainer stack should use whichever
 `ASR_MODEL` it has loaded. The service reports the actual model, and Mycelia
 stores it in `transcriptions.metadata.model`.
 
+The remote Portainer proxy uses HTTP on port 8001. For a real transcription
+check, HTTPS setup through Tailscale Serve, and the optional personal
+`check-models` command, see [GPU network access](gpu/README.md#option-a-tailscale-recommended).
+
 ### Change the Whisper model in Portainer
 
 The model shown in **Settings -> Speech-to-text -> Selected server** is the
@@ -952,6 +966,9 @@ You can reconfigure these settings anytime in Settings.
 
 ## For Developers
 
+For encrypted incremental file/config snapshots and resumable cold MongoDB
+backup to bastion, see [Backup setup and troubleshooting](docs/BACKUP.md).
+
 See **[DEVELOPMENT.md](DEVELOPMENT.md)** for:
 
 - Docker dev/prod modes, hot reload, and the rebuild/recreate matrix
@@ -986,9 +1003,11 @@ points are deduplicated and conflicting coordinates remain reviewable. See
 ### Map history and recording gaps
 
 The map's history chart separates teal **time at stops** and violet
-**conversation counts**, with an independent scale for each row. A single
-range slider has two handles and labelled start/end dates; click a chart bar
-to inspect a moment. **Source colours** colours the same continuity-aware
+**conversation counts**, with an independent scale for each row. The chart
+marks the history dates and highlights the selected period in blue. Drag either
+handle to see the start, end, and duration update, or use **Edit dates** to
+select dates and times directly. Click a chart bar to inspect a moment.
+**Source colours** colours the same continuity-aware
 recorded sections by source track. **Show recording gaps** is off by default;
 when enabled, faint dashed lines indicate unknown travel between recordings,
 not a recorded route. Open **Map settings** below the map for the gap toggle,
@@ -997,3 +1016,11 @@ at 50 m. Time limits apply to fixes with timestamps. New maps start at 100 m
 and 2 min. The browser remembers any limits and opacity values you select.
 The map reports when a selected layer has no results for the current area and
 period. If the map omits sections, zoom in or shorten the period.
+
+**Review** separates new differences, deferred items, and applied decisions.
+Open **Compare** and select the version you want to apply. Route comparisons
+show the source filenames and import dates. When both import dates are known
+and differ, the earlier import appears as **Existing route**. **Decide
+later** moves an item to **Later** without changing the map. Metadata decisions
+can be applied together for the items on the current page. In **Applied**, open
+a route comparison to see which source was chosen and undo that choice.

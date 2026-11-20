@@ -38,6 +38,8 @@ const stages: Record<Stage, true> = {
   "mongo-bootstrap": true,
 };
 const counters: Record<keyof PersistedCounters, true> = {
+  skipped: true,
+  omittedRoots: true,
   files: true,
   bytes: true,
   total: true,

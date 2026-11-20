@@ -46,6 +46,8 @@ export type FilesAcceptedReceipt = {
     unreadable: 0;
     outsideRoots: 0;
     invalid: 0;
+    skipped?: number;
+    omittedRoots?: number;
   };
   transportVerified: true;
 };
@@ -102,6 +104,8 @@ export type ToolLabel =
   | "mongodump"
   | "mongorestore";
 export type PersistedCounters = {
+  skipped?: number;
+  omittedRoots?: number;
   files?: number;
   bytes?: number;
   total?: number;

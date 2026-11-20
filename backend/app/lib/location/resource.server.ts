@@ -24,8 +24,10 @@ import {
   DEFAULT_GAP_DISTANCE_M,
   DEFAULT_GAP_MINUTES,
   getMapRouteDetail,
+  getRouteConflictPreview,
   listRouteConflicts,
   resolveRouteConflict,
+  reviewStatusQuery,
 } from "@/lib/location/route-projection.server.ts";
 import { MAP_CELL_ZOOMS } from "@/lib/location/map-spatial.ts";
 
@@ -194,6 +196,7 @@ const mapRouteDetailSchema = z.object({
   bounds: mapBoundsSchema,
   zoom: z.number().min(0).max(24),
   includeConnectors: z.boolean().default(false),
+  includeSourceTracks: z.boolean().default(false),
   gapDistanceM: z.number().int().min(50).max(2000).default(
     DEFAULT_GAP_DISTANCE_M,
   ),
@@ -209,7 +212,7 @@ const mapTimelineSummarySchema = z.object({
 
 const listRouteConflictsSchema = z.object({
   action: z.literal("list-route-conflicts"),
-  status: z.enum(["pending", "resolved", "superseded"]).optional(),
+  status: z.enum(["pending", "deferred", "resolved", "superseded"]).optional(),
   limit: z.number().int().min(1).max(500).default(100),
   skip: z.number().int().min(0).default(0),
 });
@@ -217,7 +220,22 @@ const listRouteConflictsSchema = z.object({
 const resolveRouteConflictSchema = z.object({
   action: z.literal("resolve-route-conflict"),
   id: z.string().min(1),
-  resolution: z.enum(["use_first", "use_second", "keep_both"]),
+  resolution: z.enum([
+    "use_first",
+    "use_second",
+    "keep_both",
+    "defer",
+    "resume",
+    "undo",
+  ]),
+  expectedResolvedAt: zDateOrString().optional(),
+}).refine((input) => input.resolution !== "undo" || !!input.expectedResolvedAt);
+
+const routeConflictPreviewSchema = z.object({
+  action: z.literal("route-conflict-preview"),
+  id: z.string().min(1),
+  gapDistanceM: z.number().min(10).max(100000).optional(),
+  gapMinutes: z.number().min(0.1).max(1440).optional(),
 });
 
 const statusSchema = z.object({
@@ -264,7 +282,7 @@ const backfillLocationImportsSchema = z.object({
 
 const listLocationConflictsSchema = z.object({
   action: z.literal("list-conflicts"),
-  status: z.enum(["pending", "resolved"]).optional(),
+  status: z.enum(["pending", "deferred", "resolved"]).optional(),
   limit: z.number().int().min(1).max(500).default(100),
   skip: z.number().int().min(0).default(0),
 });
@@ -272,13 +290,13 @@ const listLocationConflictsSchema = z.object({
 const resolveLocationConflictSchema = z.object({
   action: z.literal("resolve-conflict"),
   id: z.string().refine(ObjectId.isValid, "Invalid conflict id"),
-  resolution: z.enum(["keep_existing", "use_incoming", "defer"]),
+  resolution: z.enum(["keep_existing", "use_incoming", "defer", "resume"]),
   candidateImportId: z.string().refine(ObjectId.isValid).optional(),
 });
 
 const listMetadataConflictsSchema = z.object({
   action: z.literal("list-metadata-conflicts"),
-  status: z.enum(["pending", "resolved"]).optional(),
+  status: z.enum(["pending", "deferred", "resolved"]).optional(),
   limit: z.number().int().min(1).max(500).default(100),
   skip: z.number().int().min(0).default(0),
 });
@@ -286,7 +304,7 @@ const listMetadataConflictsSchema = z.object({
 const resolveMetadataConflictSchema = z.object({
   action: z.literal("resolve-metadata-conflict"),
   id: z.string().refine(ObjectId.isValid, "Invalid conflict id"),
-  resolution: z.enum(["keep_existing", "use_incoming", "defer"]),
+  resolution: z.enum(["keep_existing", "use_incoming", "defer", "resume"]),
 });
 
 export const locationRequestSchema = z.discriminatedUnion("action", [
@@ -306,6 +324,7 @@ export const locationRequestSchema = z.discriminatedUnion("action", [
   mapTimelineSummarySchema,
   listRouteConflictsSchema,
   resolveRouteConflictSchema,
+  routeConflictPreviewSchema,
   statusSchema,
   listImportsSchema,
   deleteImportSchema,
@@ -397,6 +416,28 @@ function overlapMs(
     Math.min(aEnd.getTime(), bEnd.getTime()) -
       Math.max(aStart.getTime(), bStart.getTime()),
   );
+}
+
+async function moveConflictReview(
+  mongo: Awaited<ReturnType<typeof getMongoResource>>,
+  collection: string,
+  id: ObjectId,
+  resolution: "defer" | "resume",
+  principal: string,
+) {
+  const defer = resolution === "defer";
+  const result = await mongo({
+    action: "updateOne",
+    collection,
+    query: { _id: id, ...reviewStatusQuery(defer ? "pending" : "deferred") },
+    update: defer
+      ? { $set: { resolution, decidedAt: new Date(), decidedBy: principal } }
+      : { $unset: { resolution: "", decidedAt: "", decidedBy: "" } },
+  });
+  return result.matchedCount ? { success: true, status: "pending" } : {
+    success: false,
+    error: "This item changed. Refresh and review it again.",
+  };
 }
 
 export class LocationResource
@@ -1126,9 +1167,12 @@ export class LocationResource
         return await resolveRouteConflict(db, {
           id: input.id,
           resolution: input.resolution,
+          expectedResolvedAt: input.expectedResolvedAt,
           principal: auth.principal,
         });
       }
+      case "route-conflict-preview":
+        return await getRouteConflictPreview(await getRootDB(), input);
 
       case "status": {
         const [
@@ -1144,6 +1188,7 @@ export class LocationResource
             action: "count",
             collection: POINTS,
             query: { visible: true, selection: "accepted" },
+            options: { mode: "cached-location-points" },
           }),
           mongo({ action: "count", collection: SEGMENTS, query: {} }),
           mongo({
@@ -1156,7 +1201,12 @@ export class LocationResource
             collection: TRACKS,
             query: { visible: { $ne: false } },
           }),
-          mongo({ action: "count", collection: GEONAMES, query: {} }),
+          mongo({
+            action: "count",
+            collection: GEONAMES,
+            query: {},
+            options: { mode: "estimated" },
+          }),
           mongo({
             action: "find",
             collection: IMPORTS,
@@ -1273,14 +1323,16 @@ export class LocationResource
         return await backfillLocationImports(auth, input.limit);
 
       case "list-conflicts": {
-        const query = input.status ? { status: input.status } : {};
+        const query = reviewStatusQuery(input.status);
         const [conflicts, total] = await Promise.all([
           mongo({
             action: "find",
             collection: CONFLICTS,
             query,
             options: {
-              sort: { ts: 1 },
+              sort: input.status === "resolved"
+                ? { decidedAt: -1, _id: 1 }
+                : { ts: 1, _id: 1 },
               limit: input.limit,
               skip: input.skip,
             },
@@ -1291,14 +1343,16 @@ export class LocationResource
       }
 
       case "list-metadata-conflicts": {
-        const query = input.status ? { status: input.status } : {};
+        const query = reviewStatusQuery(input.status);
         const [conflicts, total] = await Promise.all([
           mongo({
             action: "find",
             collection: METADATA_CONFLICTS,
             query,
             options: {
-              sort: { createdAt: -1 },
+              sort: input.status === "resolved"
+                ? { decidedAt: -1, _id: 1 }
+                : { createdAt: -1, _id: 1 },
               limit: input.limit,
               skip: input.skip,
             },
@@ -1310,27 +1364,25 @@ export class LocationResource
 
       case "resolve-metadata-conflict": {
         const conflictId = new ObjectId(input.id);
+        if (input.resolution === "defer" || input.resolution === "resume") {
+          return await moveConflictReview(
+            mongo,
+            METADATA_CONFLICTS,
+            conflictId,
+            input.resolution,
+            auth.principal,
+          );
+        }
         const conflict = await mongo({
           action: "findOne",
           collection: METADATA_CONFLICTS,
-          query: { _id: conflictId },
+          query: { _id: conflictId, ...reviewStatusQuery("pending") },
         });
-        if (!conflict) return { success: false, error: "Conflict not found" };
-        if (input.resolution === "defer") {
-          await mongo({
-            action: "updateOne",
-            collection: METADATA_CONFLICTS,
-            query: { _id: conflictId },
-            update: {
-              $set: {
-                status: "pending",
-                resolution: "defer",
-                decidedAt: new Date(),
-                decidedBy: auth.principal || "web",
-              },
-            },
-          });
-          return { success: true, status: "pending" };
+        if (!conflict) {
+          return {
+            success: false,
+            error: "This item is no longer awaiting review",
+          };
         }
         if (
           input.resolution === "use_incoming" ||
@@ -1425,27 +1477,25 @@ export class LocationResource
 
       case "resolve-conflict": {
         const conflictId = new ObjectId(input.id);
+        if (input.resolution === "defer" || input.resolution === "resume") {
+          return await moveConflictReview(
+            mongo,
+            CONFLICTS,
+            conflictId,
+            input.resolution,
+            auth.principal,
+          );
+        }
         const conflict = await mongo({
           action: "findOne",
           collection: CONFLICTS,
-          query: { _id: conflictId },
+          query: { _id: conflictId, ...reviewStatusQuery("pending") },
         });
-        if (!conflict) return { success: false, error: "Conflict not found" };
-        if (input.resolution === "defer") {
-          await mongo({
-            action: "updateOne",
-            collection: CONFLICTS,
-            query: { _id: conflictId },
-            update: {
-              $set: {
-                status: "pending",
-                resolution: "defer",
-                decidedAt: new Date(),
-                decidedBy: auth.principal || "web",
-              },
-            },
-          });
-          return { success: true, status: "pending" };
+        if (!conflict) {
+          return {
+            success: false,
+            error: "This item is no longer awaiting review",
+          };
         }
 
         if (input.resolution === "use_incoming") {
