@@ -156,7 +156,7 @@ export function ImportTracksDialog({
       } else {
         toast.success("Metadata and source provenance were saved.");
       }
-      const keys = ["imports", "importSources", "sourceFiles", "savedPlaces", "recordedTracks", "conflicts", "metadataConflicts"];
+      const keys = ["sourceExtent", "sourcePoints", "imports", "importSources", "sourceFiles", "savedPlaces", "recordedTracks", "conflicts", "metadataConflicts"];
       if (!receipt.duplicate) {
         for (const key of keys) {
           void queryClient.invalidateQueries({ queryKey: [...locationKeys.all, key] });

@@ -82,6 +82,20 @@ export interface LocationImportSource {
   origin?: LocationOrigin;
 }
 
+export interface MapSourceSelection {
+  provider: string;
+  importId?: string;
+  label: string;
+}
+
+export interface MapSourcePointCluster {
+  lat: number;
+  lng: number;
+  count: number;
+  firstAt: Date | string;
+  lastAt: Date | string;
+}
+
 export interface LocationImport extends LocationImportSource {
   pointCount: number;
   dedupedCount?: number;

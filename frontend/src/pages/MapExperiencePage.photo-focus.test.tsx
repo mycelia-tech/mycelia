@@ -17,6 +17,9 @@ import MapExperiencePage from "./MapExperiencePage";
 
 const mocks = vi.hoisted(() => ({
   flyTo: vi.fn(),
+  fitBounds: vi.fn(),
+  useMapSourceExtent: vi.fn(),
+  useMapSourcePoints: vi.fn(),
   setRange: vi.fn(),
   useLocationSegments: vi.fn(),
   locationAtData: undefined as
@@ -25,7 +28,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("react-leaflet", () => ({
-  useMap: () => ({ getZoom: () => 2, flyTo: mocks.flyTo }),
+  useMap: () => ({ getZoom: () => 2, flyTo: mocks.flyTo, fitBounds: mocks.fitBounds }),
 }));
 
 vi.mock("sonner", () => ({
@@ -49,7 +52,9 @@ vi.mock("@/stores/timelineRange", () => ({
 }));
 
 vi.mock("@/hooks/useLocationQueries", () => ({
-  useLocationImportSources: () => ({ data: [] }),
+  useLocationImportSources: () => ({ data: [{ provider: "reitti", count: 3 }] }),
+  useMapSourceExtent: mocks.useMapSourceExtent,
+  useMapSourcePoints: mocks.useMapSourcePoints,
   useLocationSourceFiles: () => ({ data: undefined }),
   useLocationAt: () => ({
     data: mocks.locationAtData,
@@ -158,6 +163,19 @@ describe("Map photo focus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.locationAtData = undefined;
+    mocks.useMapSourceExtent.mockReturnValue({});
+    mocks.useMapSourcePoints.mockReturnValue({});
+    const values = new Map<string, string>();
+    useSettingsStore.persist.setOptions({
+      storage: createJSONStorage(() => ({
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => { values.set(key, value); },
+        removeItem: (key) => { values.delete(key); },
+      })),
+    });
+    const unfiltered = { excludedProviders: [], excludedImportIds: [] };
+    useSettingsStore.getState().setMapSourceFilter("markers", unfiltered);
+    useSettingsStore.getState().setMapSourceFilter("routes", unfiltered);
     mocks.useLocationSegments.mockReturnValue({
       data: { segments: [] },
       isLoading: false,
@@ -299,6 +317,39 @@ describe("Map photo focus", () => {
         "data-fit-to-segments",
       ),
     ).toBe("false");
+  });
+
+  it("opens a marker source in the current period and leaves the route filter alone", async () => {
+    history.replaceState({}, "", "/map?layers=routes&places=off");
+    render(<BrowserRouter><MapExperiencePage /></BrowserRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Marker sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show Reitti on map" }));
+    await waitFor(() => expect(mocks.useMapSourceExtent.mock.lastCall?.[0]).toBe("markers"));
+    const filter = { excludedProviders: [], excludedImportIds: [], onlyProvider: "reitti" };
+    expect(mocks.useMapSourceExtent.mock.lastCall?.slice(1)).toEqual([
+      filter, new Date("2026-08-01"), new Date("2026-08-02"),
+    ]);
+    expect(mocks.useMapSourcePoints.mock.lastCall?.at(-1)).toEqual(filter);
+    expect(useSettingsStore.getState().mapSourceFilters.routes.onlyProvider).toBeUndefined();
+    expect(screen.getByRole("button", { name: "Saved places" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("fits an undated file opened from imports and keeps the previous period", async () => {
+    history.replaceState({ usr: { mapImport: { label: "Bookmarks.kmz", provider: "comaps",
+      importId: "0123456789abcdef01234567" } } }, "", "/map");
+    const bounds = { south: 35, north: 36, west: 43, east: 44 };
+    mocks.useMapSourceExtent.mockImplementation((layer) => layer ? {
+      data: { bounds, firstAt: null, lastAt: null },
+    } : {});
+    render(<BrowserRouter><MapExperiencePage /></BrowserRouter>);
+    expect(await screen.findByText("This source has no recorded dates.")).toBeTruthy();
+    expect(mocks.fitBounds).toHaveBeenCalledWith([[35, 43], [36, 44]], expect.anything());
+    expect(mocks.setRange).not.toHaveBeenCalled();
+    const { markers, routes } = useSettingsStore.getState().mapSourceFilters;
+    expect(markers.onlyImportId).toBe("0123456789abcdef01234567");
+    expect(routes).toEqual(markers);
+    expect(screen.getByRole("button", { name: "Photos" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Conversations" }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("clears the focused photo when the Photos layer is disabled", async () => {

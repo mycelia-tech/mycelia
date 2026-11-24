@@ -49,11 +49,12 @@ event, …) shows the same mini-map for the moment it happened.
 
 The Map has one shared selected period for presence, routes and conversations:
 
-- Presets (Day / Week / Month / Year / All) and the compact navigator update the
-  shared `start`/`end` range. Dragging a handle changes only a draft range and
-  commits once on release. Clicking a density bucket sets `at`; Mycelia flies to
-  a confirmed stay/manual position or accepted point inside a move. A gap shows
-  **No GPS near this time** and never invents a coordinate.
+- **Map period** shows the selected dates and duration. Choose the last 24 hours,
+  7 days, 30 days, 365 days, or **All dates**. **Edit dates** accepts exact
+  local dates and times. The history handles preview changes and commit them on
+  release. Clicking a history bar sets `at` and inspects its midpoint. Mycelia
+  flies to the recorded location when available. **Show this period** applies
+  the bar's full range. Collapse **Location history** for a larger map.
 - Exact links persist `start`, `end`, `lat`, `lng`, `z`, optional `at` and the
   selected `layers`. A valid saved viewport wins over automatic fitting;
   back/forward and reload restore it. **Fit selected data** is the explicit way
@@ -96,7 +97,15 @@ The Map has one shared selected period for presence, routes and conversations:
 - **Marker sources** and **Route sources** independently control the visibility
   of location markers and route geometry by application or by file. Any
   enabled source keeps a shared item visible. **Show all** restores visibility
-  for that layer. The choices are saved locally in the browser.
+  for that layer. The choices are saved locally in the browser. Select an app
+  or filename to focus the map on that source for the current period. The
+  marker view includes recorded GPS points, grouped as you zoom out. Saved
+  places remain visible across periods. **Use source dates** fits the source's
+  recorded time range. In the imports list, **Show on map** opens the entire
+  file, including undated bookmarks. Opening a file turns off photos and
+  conversations so its points are easy to see. Those layers can be switched
+  on again under **Other activity**. Switch between compact rows and detailed
+  cards to inspect its contents.
 - **Import tracks** button — preview/confirm import with a durable receipt:
   source size/hash/parser, the selected KML member, new and matched GPS points,
   repeated items inside the file, track kinds and coordinate counts, saved

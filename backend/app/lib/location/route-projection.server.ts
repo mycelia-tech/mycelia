@@ -1,6 +1,6 @@
 import type { LocationSourceFilter } from "@myceliasdk/location-sources.ts";
 import { locationSourceQuery } from "./sources.server.ts";
-import type { Db, MongoClient, ObjectId } from "mongodb";
+import type { Db, Document, MongoClient, ObjectId } from "mongodb";
 import simplify from "simplify-js";
 import type { MapBounds } from "./map-spatial.ts";
 import {
@@ -589,6 +589,17 @@ function rememberPreparedFragment(
   }
 }
 
+export function hiddenRouteTracks(conflicts: readonly Document[]) {
+  const hidden = new Set<string>();
+  for (const conflict of conflicts) {
+    if (conflict.status !== "resolved") continue;
+    const id = conflict.resolution === "use_first" ? conflict.trackIds?.[1]
+      : conflict.resolution === "use_second" ? conflict.trackIds?.[0] : null;
+    if (id != null) hidden.add(String(id));
+  }
+  return hidden;
+}
+
 export async function getMapRouteDetail(
   db: Db,
   input: {
@@ -671,16 +682,7 @@ export async function getMapRouteDetail(
         overlapStart: { $lte: input.end },
         overlapEnd: { $gte: input.start },
       }, readOptions()).toArray();
-  const hiddenTrackIds = new Set<string>();
-  for (const conflict of overlappingConflicts as any[]) {
-    if (conflict.status !== "resolved") continue;
-    if (conflict.resolution === "use_first" && conflict.trackIds?.[1]) {
-      hiddenTrackIds.add(String(conflict.trackIds[1]));
-    }
-    if (conflict.resolution === "use_second" && conflict.trackIds?.[0]) {
-      hiddenTrackIds.add(String(conflict.trackIds[0]));
-    }
-  }
+  const hiddenTrackIds = hiddenRouteTracks(overlappingConflicts);
   const visible = rows.filter((row) =>
     !hiddenTrackIds.has(String(row.trackId)) &&
     intersects(row.bbox, input.bounds)

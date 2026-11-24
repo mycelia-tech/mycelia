@@ -35,6 +35,8 @@ import {
 } from "@/stores/settingsStore";
 import { useTrackVisibilityStore } from "@/stores/trackVisibilityStore";
 import { useNavigate } from "react-router-dom";
+import type { LocationImport } from "@/types/location";
+import { UNKNOWN_LOCATION_PROVIDER } from "@myceliasdk/location-sources.ts";
 
 interface GeonamesProgress {
   stage?: string;
@@ -44,6 +46,14 @@ interface GeonamesProgress {
 
 export default function MapsSettingsPage() {
   const navigate = useNavigate();
+  function showImportOnMap(imp: LocationImport) {
+    navigate("/map", {
+      state: { mapImport: {
+        importId: String(imp._id), provider: imp.origin?.provider ?? UNKNOWN_LOCATION_PROVIDER,
+        label: imp.filename,
+      } },
+    });
+  }
   const queryClient = useQueryClient();
   const { data: status, isLoading } = useLocationStatus();
   const { mapTileUrl, setMapTileUrl } = useSettingsStore();
@@ -218,15 +228,7 @@ export default function MapsSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <ImportsList manageSources
-            onShowOnMap={(imp) => {
-              if (!imp.timeRange?.start) return;
-              const s = new Date(imp.timeRange.start).getTime() -
-                60 * 60 * 1000;
-              const e = new Date(imp.timeRange.end).getTime() + 60 * 60 * 1000;
-              navigate(`/map?start=${s}&end=${e}`);
-            }}
-          />
+          <ImportsList manageSources onShowOnMap={showImportOnMap} />
           <Button size="sm" onClick={() => setImportOpen(true)}>
             <Upload className="mr-2 h-4 w-4" />
             Import tracks…
@@ -336,7 +338,7 @@ export default function MapsSettingsPage() {
         </CardContent>
       </Card>
 
-      <ImportTracksDialog open={importOpen} onOpenChange={setImportOpen} />
+      <ImportTracksDialog open={importOpen} onOpenChange={setImportOpen} onShowImportOnMap={showImportOnMap} />
     </div>
   );
 }

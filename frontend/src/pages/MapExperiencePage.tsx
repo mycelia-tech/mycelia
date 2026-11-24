@@ -2,7 +2,7 @@ import {
   activeSourceFilter,
   LocationSourceFilter,
 } from "@/components/location/LocationSourceFilter";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMap } from "react-leaflet";
 import { toast } from "sonner";
@@ -40,6 +40,9 @@ import {
   useLocationStatus,
   useMapDensity,
   useMapRouteDetail,
+  useMapSourceExtent,
+  useMapSourcePoints,
+  type MapSourceLayerSelection,
   useMapTimelineSummary,
   useSavedPlaces,
 } from "@/hooks/useLocationQueries";
@@ -53,6 +56,8 @@ import {
   RouteProjectionLayer,
 } from "@/components/location/MapProjectionLayers";
 import { ConversationMapPanel } from "@/components/location/ConversationMapPanel";
+import { MapSourcePointsLayer } from "@/components/location/MapSourcePointsLayer";
+import { UNKNOWN_LOCATION_PROVIDER, type LocationSourceFilter as SourceFilter } from "@myceliasdk/location-sources.ts";
 import { PhotoClustersLayer } from "@/components/location/PhotoClustersLayer";
 import {
   GAP_DISTANCES_M,
@@ -67,6 +72,8 @@ import { AssignLocationDialog } from "@/components/location/AssignLocationDialog
 import { GeotagsSheet } from "@/components/location/GeotagsSheet";
 import type {
   ConversationMapCluster,
+  LocationImport,
+  MapSourceSelection,
   LocationSegment,
   MapBounds,
   MapRouteSourceTrack,
@@ -98,13 +105,32 @@ export const MAP_LAYERS = [
 ] as const;
 export type MapLayer = (typeof MAP_LAYERS)[number];
 
-const PRESETS: Array<{ label: string; days: number | null }> = [
-  { label: "Day", days: 1 },
-  { label: "Week", days: 7 },
-  { label: "Month", days: 30 },
-  { label: "Year", days: 365 },
-  { label: "All", days: null },
-];
+type FocusedSource = {
+  layer: MapSourceLayerSelection;
+  source: MapSourceSelection;
+  filter: SourceFilter;
+};
+
+function SourceBounds({ bounds, onFit }: { bounds: MapBounds; onFit: () => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const east = bounds.east < bounds.west ? bounds.east + 360 : bounds.east;
+    map.fitBounds([[bounds.south, bounds.west], [bounds.north, east]], {
+      maxZoom: 16, padding: [24, 24], animate: false,
+    });
+    onFit();
+  }, [map, bounds, onFit]);
+  return null;
+}
+
+function LayerGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div role="group" aria-label={label} className="flex min-w-0 max-w-full flex-col gap-1">
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+      <div className="flex flex-wrap items-center gap-1">{children}</div>
+    </div>
+  );
+}
 
 function maxPointsForRange(rangeMs: number): number {
   if (rangeMs <= 7 * DAY_MS) return 5000;
@@ -116,6 +142,7 @@ export function readMapUrlState() {
   if (typeof window === "undefined") {
     return {
       viewport: null,
+      showPlaces: true,
       layers: new Set<MapLayer>([
         "presence",
         "conversations",
@@ -146,6 +173,7 @@ export function readMapUrlState() {
   const atValue = Number(params.get("at"));
   return {
     viewport,
+    showPlaces: params.get("places") !== "off",
     layers: new Set<MapLayer>(
       layersParam !== null
         ? requestedLayers
@@ -185,6 +213,7 @@ export function updateMapUrl(
   at?: Date,
   gapDistanceM = DEFAULT_MAP_ROUTE_DISPLAY.gapDistanceM,
   gapMinutes = DEFAULT_MAP_ROUTE_DISPLAY.gapMinutes,
+  showPlaces = true,
 ) {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -201,7 +230,9 @@ export function updateMapUrl(
   else url.searchParams.delete("at");
   url.searchParams.set("gapM", String(gapDistanceM));
   url.searchParams.set("gapMin", String(gapMinutes));
-  window.history.replaceState({}, "", url);
+  if (showPlaces) url.searchParams.delete("places");
+  else url.searchParams.set("places", "off");
+  window.history.replaceState(window.history.state, "", url);
 }
 
 function FlyTo({ target }: { target: [number, number] | null }) {
@@ -225,8 +256,8 @@ function LayerButton({
     <Button
       type="button"
       size="sm"
-      variant={active ? "default" : "outline"}
-      className={active ? "h-8 shadow-sm" : "h-8 bg-background/95 shadow-sm"}
+      variant="outline"
+      className="h-8 gap-1 px-2.5 shadow-none aria-pressed:border-primary/45 aria-pressed:bg-primary/10 aria-pressed:text-primary"
       onClick={onClick}
       aria-pressed={active}
     >
@@ -261,6 +292,27 @@ const MapExperiencePage = () => {
   const markerSourceFilter = activeSourceFilter(markerSources);
   const routeSourceFilter = activeSourceFilter(routeSources);
   const [layers, setLayers] = useState(initialUrl.layers);
+  const [showPlaces, setShowPlaces] = useState(initialUrl.showPlaces);
+  const sourceLabels = useSettingsStore((state) => state.mapSourceSelections);
+  const [lastFocusedLayer, setLastFocusedLayer] = useState<MapSourceLayerSelection>();
+  const focus = useMemo<FocusedSource | undefined>(() => {
+    const { markers, routes } = sourceLabels;
+    if (routes && (!markers || lastFocusedLayer === "routes")) {
+      return { layer: "routes", source: routes, filter: routeSources };
+    }
+    if (markers) {
+      const sameFileOrProvider = routes && (markers.importId
+        ? markers.importId === routes.importId
+        : !routes.importId && markers.provider === routes.provider);
+      const layer = sameFileOrProvider && lastFocusedLayer !== "markers" ? "all" : "markers";
+      return { layer, source: markers, filter: markerSources };
+    }
+  }, [sourceLabels, markerSources, routeSources, lastFocusedLayer]);
+  const [extentMode, setExtentMode] = useState<"period" | "source">();
+  const [sourceBounds, setSourceBounds] = useState<MapBounds>();
+  const [sourceMessage, setSourceMessage] = useState("");
+  const finishSourceFit = useCallback(() => setSourceBounds(undefined), []);
+  const importEntry = useRef(location.state?.mapImport as MapSourceSelection | undefined);
   const [viewport, setViewport] = useState<
     {
       center: [number, number];
@@ -275,7 +327,7 @@ const MapExperiencePage = () => {
     key: number;
   }>();
   const [autoFitSegments, setAutoFitSegments] = useState(
-    !initialUrl.viewport && !focusedPhotoAssetId &&
+    !initialUrl.viewport && !focusedPhotoAssetId && !importEntry.current && !focus &&
       initialUrl.layers.has("presence"),
   );
   const [fitRequest, setFitRequest] = useState<{
@@ -399,13 +451,21 @@ const MapExperiencePage = () => {
   );
   const timeline = useMapTimelineSummary();
   const locationAt = useLocationAt(cursorTime, !!cursorTime);
-  const savedPlaces = useSavedPlaces(true, markerSourceFilter);
+  const savedPlaces = useSavedPlaces(showPlaces, markerSourceFilter);
+  const sourcePoints = useMapSourcePoints(
+    start, end, !extentMode && !sourceBounds && viewport === queryViewport ? queryViewport?.bounds : undefined,
+    showPresence ? markerSourceFilter : undefined,
+  );
+  const sourceExtent = useMapSourceExtent(
+    extentMode ? focus?.layer : undefined, focus?.filter,
+    extentMode === "period" ? start : undefined, extentMode === "period" ? end : undefined,
+  );
   const pointConflicts = useLocationConflicts("pending", true);
   const metadataConflicts = useLocationMetadataConflicts("pending", true);
   const routeConflicts = useLocationRouteConflicts("pending", true);
 
   useEffect(() => {
-    updateMapUrl(viewport, layers, cursorTime, gapDistanceM, gapMinutes);
+    updateMapUrl(viewport, layers, cursorTime, gapDistanceM, gapMinutes, showPlaces);
   }, [
     viewport?.center[0],
     viewport?.center[1],
@@ -414,6 +474,7 @@ const MapExperiencePage = () => {
     cursorTime?.getTime(),
     gapDistanceM,
     gapMinutes,
+    showPlaces,
   ]);
 
   useEffect(() => {
@@ -450,6 +511,9 @@ const MapExperiencePage = () => {
     const onPopState = () => {
       const next = readMapUrlState();
       setLayers(next.layers);
+      setShowPlaces(next.showPlaces);
+      setExtentMode(undefined);
+      setSourceBounds(undefined);
       setCursorTime(next.at);
       setGapDistanceM(next.gapDistanceM);
       setGapMinutes(next.gapMinutes);
@@ -492,18 +556,6 @@ const MapExperiencePage = () => {
     });
   };
 
-  const applyPreset = (days: number | null) => {
-    if (days === null && timeline.data) {
-      setRange(
-        new Date(timeline.data.dataRange.start),
-        new Date(timeline.data.dataRange.end),
-      );
-      return;
-    }
-    const nextEnd = new Date();
-    setRange(new Date(nextEnd.getTime() - (days ?? 30) * DAY_MS), nextEnd);
-  };
-
   const startGeonamesDownload = async () => {
     setDownloadingGeonames(true);
     try {
@@ -531,6 +583,92 @@ const MapExperiencePage = () => {
     setSelectedRecordedTrack(null);
   }, []);
 
+  const showSource = useCallback((
+    source: MapSourceSelection,
+    layer: MapSourceLayerSelection,
+    mode: "period" | "source" = "period",
+  ) => {
+    const filter: SourceFilter = {
+      excludedProviders: [], excludedImportIds: [],
+      ...(source.importId ? { onlyImportId: source.importId } : { onlyProvider: source.provider }),
+    };
+    if (focusedPhotoAssetId) closeFocusedPhoto();
+    closeSelection();
+    setFlyTarget(null);
+    setCursorTime(undefined);
+    setAutoFitSegments(false);
+    setFitRequest(undefined);
+    setSourceBounds(undefined);
+    setSourceMessage("");
+    if (layer !== "routes") {
+      setMapSourceFilter("markers", filter, source);
+      setShowPlaces(true);
+    }
+    if (layer !== "markers") setMapSourceFilter("routes", filter, source);
+    setLayers((current) => {
+      const next = new Set(current);
+      if (layer === "all") {
+        next.delete("conversations");
+        next.delete("photos");
+      }
+      if (layer !== "routes") next.add("presence");
+      if (layer !== "markers") next.add("routes");
+      return next;
+    });
+    setLastFocusedLayer(layer);
+    setExtentMode(mode);
+  }, [closeFocusedPhoto, closeSelection, focusedPhotoAssetId, setMapSourceFilter]);
+
+  useEffect(() => {
+    if (!importEntry.current) return;
+    const source = importEntry.current;
+    importEntry.current = undefined;
+    showSource(source, "all", "source");
+    navigate(window.location.pathname + window.location.search, { replace: true, state: null });
+  }, [showSource, navigate]);
+
+  useEffect(() => {
+    if (!extentMode) return;
+    if (sourceExtent.isError) {
+      setSourceMessage("Could not load this source.");
+    } else if (sourceExtent.data) {
+      const { bounds, firstAt, lastAt } = sourceExtent.data;
+      if (bounds) setSourceBounds({ ...bounds });
+      if (extentMode === "source" && firstAt && lastAt) {
+        setRange(new Date(firstAt), new Date(Math.max(+new Date(lastAt) + 1, +new Date(firstAt) + 1000)));
+      }
+      setSourceMessage(bounds
+        ? (extentMode === "source" && !firstAt ? "This source has no recorded dates." : "")
+        : extentMode === "source" ? "No mapped data in this source." : "No matches in the selected period.");
+    } else return;
+    setExtentMode(undefined);
+  }, [extentMode, sourceExtent.isError, sourceExtent.data, setRange]);
+
+  function changeSourceFilter(layer: "markers" | "routes", filter: SourceFilter) {
+    if (focus?.layer === layer || focus?.layer === "all") {
+      setExtentMode(undefined);
+      setSourceBounds(undefined);
+      setSourceMessage("");
+    }
+    if (layer === "markers") {
+      setAutoFitSegments(false);
+      setFitRequest(undefined);
+      setSelectedSegment(null);
+      setSelectedSavedPlace(null);
+    } else {
+      setSelectedRecordedTrack(null);
+    }
+    setMapSourceFilter(layer, filter);
+  }
+
+  function openImport(item: LocationImport) {
+    setImportOpen(false);
+    showSource({
+      importId: String(item._id), provider: item.origin?.provider ?? UNKNOWN_LOCATION_PROVIDER,
+      label: item.filename,
+    }, "all", "source");
+  }
+
   const selectRecordedTrack = useCallback((track: MapRouteSourceTrack) => {
     closeSelection();
     setSelectedRecordedTrack(track);
@@ -554,7 +692,8 @@ const MapExperiencePage = () => {
     density.isLoading || presence.isLoading || savedPlaces.isLoading ||
     (showRoutes && routes.isLoading);
   const layerMessages: string[] = [];
-  if (presence.isError || savedPlaces.isError || segmentsQuery.isError) {
+  if (sourcePoints.isError) layerMessages.push("Could not load GPS points for this source.");
+  if (presence.isError || (showPlaces && savedPlaces.isError) || segmentsQuery.isError) {
     layerMessages.push("Could not load location markers.");
   }
   if (showConversations) {
@@ -610,27 +749,17 @@ const MapExperiencePage = () => {
     selectedSavedPlace || selectedRecordedTrack;
 
   return (
-    <div className="flex h-[calc(100vh-7.5rem)] flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-md border p-0.5">
-          {PRESETS.map((preset) => (
-            <Button
-              key={preset.label}
-              variant="ghost"
-              size="sm"
-              onClick={() => applyPreset(preset.days)}
-            >
-              {preset.label}
-            </Button>
-          ))}
-        </div>
+    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[34rem] flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <h1 className="mr-auto text-lg font-semibold tracking-tight">Location map</h1>
         <Button
           variant="outline"
           size="sm"
-          disabled={fitPending}
+          disabled={fitPending || !!extentMode}
           onClick={() => {
             if (focusedPhotoAssetId) closeFocusedPhoto();
-            setFitRequest({ range: rangeKey, status: "loading" });
+            if (focus) setExtentMode("period");
+            else setFitRequest({ range: rangeKey, status: "loading" });
           }}
         >
           <Crosshair className="mr-1.5 h-4 w-4" /> Fit selected data
@@ -645,7 +774,7 @@ const MapExperiencePage = () => {
         >
           <LinkIcon className="mr-1.5 h-4 w-4" /> Copy link
         </Button>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           {status && !status.geonamesReady && (
             <Button
               variant="outline"
@@ -681,7 +810,56 @@ const MapExperiencePage = () => {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-3">
+      <section aria-label="Map layers and sources" className="flex flex-wrap items-start gap-x-5 gap-y-2 rounded-lg border bg-muted/25 px-3 py-2">
+        <LayerGroup label="Location markers">
+          <LayerButton active={showPresence} onClick={() => toggleLayer("presence")}>
+            <MapPin className="size-3.5" /> Presence
+          </LayerButton>
+          <LayerButton active={showPlaces} onClick={() => {
+            setShowPlaces(!showPlaces);
+            setSelectedSavedPlace(null);
+          }}>
+            <Bookmark className="size-3.5" /> Saved places
+          </LayerButton>
+          <LocationSourceFilter label="Marker sources" includeManual filter={markerSources}
+            focus={sourceLabels.markers} onChange={(filter) => changeSourceFilter("markers", filter)}
+            onShowOnMap={(source) => showSource(source, "markers")} />
+        </LayerGroup>
+        <LayerGroup label="Recorded routes">
+          <LayerButton active={showRoutes} onClick={() => toggleLayer("routes")}>
+            <Route className="size-3.5" /> Routes
+          </LayerButton>
+          <LayerButton active={layers.has("sourceTracks")} onClick={() => toggleLayer("sourceTracks")}>
+            Source colours
+          </LayerButton>
+          <LocationSourceFilter label="Route sources" filter={routeSources}
+            focus={sourceLabels.routes} onChange={(filter) => changeSourceFilter("routes", filter)}
+            onShowOnMap={(source) => showSource(source, "routes")} />
+        </LayerGroup>
+        <LayerGroup label="Other activity">
+          <LayerButton active={showConversations} onClick={() => toggleLayer("conversations")}>
+            <MessageSquare className="size-3.5" /> Conversations
+          </LayerButton>
+          <LayerButton active={layers.has("photos")} onClick={() => toggleLayer("photos")}>
+            <Images className="size-3.5" /> Photos
+          </LayerButton>
+        </LayerGroup>
+      </section>
+      {focus && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs">
+          <span className="min-w-0 truncate" title={focus.source.label}>
+            {focus.layer === "all" ? "File" : focus.layer === "routes" ? "Route source" : "Marker source"}
+            <span aria-hidden="true"> · </span><strong>{focus.source.label}</strong>
+          </span>
+          <span role="status" className="text-muted-foreground">
+            {extentMode ? "Locating source…" : sourceMessage}
+          </span>
+          <Button variant="outline" size="sm" className="h-7" disabled={!!extentMode}
+            onClick={() => setExtentMode("source")}>Use source dates</Button>
+        </div>
+      )}
+
+      <div className="relative flex min-h-0 flex-1 gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div className="relative isolate min-h-0 flex-1 overflow-hidden rounded-lg border">
             <LocationMap
@@ -707,7 +885,7 @@ const MapExperiencePage = () => {
                 <PhotoClustersLayer
                   focusedAssetId={focusedPhotoAssetId}
                   onFocusedAssetClose={closeFocusedPhoto}
-                  fitOnLoad={!initialUrl.viewport}
+                  fitOnLoad={!initialUrl.viewport && !focus && !importEntry.current}
                 />
               )}
               {layers.has("presence") && showPresenceClusters && (
@@ -740,67 +918,18 @@ const MapExperiencePage = () => {
                 />
               )}
               <SavedPlacesLayer
-                places={savedPlaces.data?.places ?? []}
+                places={showPlaces ? (savedPlaces.data?.places ?? []) : []}
                 onSelect={(place) => {
                   closeSelection();
                   setSelectedSavedPlace(place);
                 }}
               />
+              {showPresence && sourcePoints.data && (
+                <MapSourcePointsLayer clusters={sourcePoints.data.clusters} />
+              )}
+              {sourceBounds && <SourceBounds bounds={sourceBounds} onFit={finishSourceFit} />}
               <FlyTo target={focusedPhotoAssetId ? null : flyTarget} />
             </LocationMap>
-
-            <div className="pointer-events-none absolute inset-x-2 bottom-2 z-[1000] flex flex-wrap justify-center gap-1.5 [&>*]:pointer-events-auto">
-              <LayerButton
-                active={layers.has("presence")}
-                onClick={() => toggleLayer("presence")}
-              >
-                <MapPin className="mr-1 h-3.5 w-3.5" /> Presence
-              </LayerButton>
-              <LocationSourceFilter
-                label="Marker sources"
-                includeManual
-                filter={markerSources}
-                onChange={(filter) => {
-                  setAutoFitSegments(false);
-                  setFitRequest(undefined);
-                  setSelectedSegment(null);
-                  setSelectedSavedPlace(null);
-                  setMapSourceFilter("markers", filter);
-                }}
-              />
-              <LayerButton
-                active={layers.has("conversations")}
-                onClick={() => toggleLayer("conversations")}
-              >
-                <MessageSquare className="mr-1 h-3.5 w-3.5" /> Conversations
-              </LayerButton>
-              <LayerButton
-                active={layers.has("routes")}
-                onClick={() => toggleLayer("routes")}
-              >
-                <Route className="mr-1 h-3.5 w-3.5" /> Routes
-              </LayerButton>
-              <LocationSourceFilter
-                label="Route sources"
-                filter={routeSources}
-                onChange={(filter) => {
-                  setSelectedRecordedTrack(null);
-                  setMapSourceFilter("routes", filter);
-                }}
-              />
-              <LayerButton
-                active={layers.has("sourceTracks")}
-                onClick={() => toggleLayer("sourceTracks")}
-              >
-                Source colours
-              </LayerButton>
-              <LayerButton
-                active={layers.has("photos")}
-                onClick={() => toggleLayer("photos")}
-              >
-                <Images className="mr-1 h-3.5 w-3.5" /> Photos
-              </LayerButton>
-            </div>
 
             <div className="pointer-events-none absolute top-3 right-3 left-14 z-[1000] flex flex-col items-end gap-1.5 text-xs">
               <div role="status" className="max-w-sm empty:sr-only">
@@ -891,7 +1020,11 @@ const MapExperiencePage = () => {
             start={start}
             end={end}
             cursor={cursorTime}
-            onCommitRange={setRange}
+            onCommitRange={(from, to) => {
+              setSourceMessage("");
+              if (focus) setExtentMode("period");
+              setRange(from, to);
+            }}
             onSelectTime={setCursorTime}
           />
         </div>
@@ -908,7 +1041,7 @@ const MapExperiencePage = () => {
         )}
 
         {!selectedCluster && hasSelection && (
-          <Card className="flex w-80 shrink-0 flex-col overflow-hidden">
+          <Card className="z-[1001] flex w-80 max-w-full shrink-0 flex-col overflow-hidden max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:max-h-[65%] max-md:w-full">
             <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
               <CardTitle className="text-base">
                 {selectedSavedPlace
@@ -921,6 +1054,7 @@ const MapExperiencePage = () => {
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
+                aria-label="Close location details"
                 onClick={closeSelection}
               >
                 <X className="h-4 w-4" />
@@ -995,14 +1129,7 @@ const MapExperiencePage = () => {
       <ImportTracksDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        onShowImportOnMap={(item) => {
-          if (!item.timeRange?.start || !item.timeRange.end) return;
-          setImportOpen(false);
-          setRange(
-            new Date(item.timeRange.start),
-            new Date(item.timeRange.end),
-          );
-        }}
+        onShowImportOnMap={openImport}
       />
       <GeotagsSheet
         open={geotagsOpen}

@@ -18,6 +18,7 @@ import type {
   MapCell,
   MapDensityResponse,
   MapRouteDetailResponse,
+  MapSourcePointCluster,
   MapTimelineSummary,
   RecordedLocationTrack,
   SavedPlace,
@@ -197,6 +198,42 @@ export function useMapDensity(
     staleTime: 60 * 1000,
     placeholderData: (previous, query) =>
       sameSourceFilter(query?.queryKey.at(-1), sourceFilter) ? previous : undefined,
+  });
+}
+
+export type MapSourceLayerSelection = "markers" | "routes" | "all";
+
+export function useMapSourceExtent(
+  layer: MapSourceLayerSelection | undefined,
+  sourceFilter: LocationSourceFilter | undefined,
+  start?: Date,
+  end?: Date,
+) {
+  return useQuery<{ bounds: MapBounds | null; firstAt: Date | null; lastAt: Date | null }>({
+    queryKey: ["location", "sourceExtent", layer, start?.getTime(), end?.getTime(), sourceFilter],
+    queryFn: ({ signal }) => callResource("location", {
+      action: "map-source-extent", sourceFilter, layer, start, end,
+    }, { signal }),
+    enabled: !!layer && !!(sourceFilter?.onlyImportId || sourceFilter?.onlyProvider),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useMapSourcePoints(
+  start: Date,
+  end: Date,
+  bounds: MapBounds | undefined,
+  sourceFilter?: LocationSourceFilter,
+) {
+  return useQuery<{ clusters: MapSourcePointCluster[] }>({
+    queryKey: ["location", "sourcePoints", +start, +end, bounds, sourceFilter],
+    queryFn: ({ signal }) => callResource("location", {
+      action: "map-source-points", sourceFilter, start, end, bounds,
+    }, { signal }),
+    enabled: !!bounds && !!(sourceFilter?.onlyImportId || sourceFilter?.onlyProvider),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -468,7 +505,7 @@ export function useUpdateLocationImportSource() {
     },
     onSuccess: () => {
       const sourceKeys = ["imports", "importSources", "sourceFiles", "segments", "geotags"];
-      const filteredKeys = ["mapRoutes", "mapDensity", "savedPlaces"];
+      const filteredKeys = ["sourceExtent", "sourcePoints", "mapRoutes", "mapDensity", "savedPlaces"];
       void queryClient.invalidateQueries({
         predicate: ({ queryKey }) => queryKey[0] === "location" &&
           (sourceKeys.includes(String(queryKey[1])) ||

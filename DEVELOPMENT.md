@@ -1918,7 +1918,10 @@ with independent scales, date ticks, and one two-handle date range control.
 The selected range is highlighted across the chart and slider. Changes commit
 on release, with live start/end times and duration while dragging. **Edit dates**
 accepts local dates and times and commits once on Apply. Accessible thumbs
-announce the selected date/time. Chart tooltips show the values for each bucket.
+announce the selected date/time. The shortcuts and exact dates stay visible
+when history is collapsed. **All dates** uses the timeline summary's recorded
+extent. Selecting a chart bar inspects a moment, and **Show this period**
+commits that bar's start and end to the shared map range.
 
 `MapExperiencePage` uses `RouteProjectionLayer` for both Routes and Source colours.
 Do not overlay raw `RecordedTracksLayer` previews here: they can join recording

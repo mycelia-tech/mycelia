@@ -79,7 +79,7 @@ export function ConversationMapPanel({
     items.data?.error === "projection_changed";
 
   return (
-    <Card className="flex w-80 shrink-0 flex-col overflow-hidden">
+    <Card className="z-[1001] flex w-80 max-w-full shrink-0 flex-col overflow-hidden max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:max-h-[65%] max-md:w-full">
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="flex min-w-0 items-center gap-1">
           {selectedGroup && !cluster.singleGroupKey && (

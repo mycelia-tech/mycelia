@@ -1,4 +1,5 @@
 import type { LocationSourceFilter } from "@myceliasdk/location-sources.ts";
+import type { MapSourceSelection } from "@/types/location";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { BROWSER_TIME_ZONE, type DefaultTimeZone } from "@/lib/timeZones";
@@ -63,7 +64,8 @@ interface SettingsState {
   mapTileUrl: string;
   mapRouteDisplay: MapRouteDisplay;
   mapSourceFilters: Record<MapSourceLayer, LocationSourceFilter>;
-  setMapSourceFilter: (layer: MapSourceLayer, filter: LocationSourceFilter) => void;
+  mapSourceSelections: Partial<Record<MapSourceLayer, MapSourceSelection>>;
+  setMapSourceFilter: (layer: MapSourceLayer, filter: LocationSourceFilter, source?: MapSourceSelection) => void;
   setApiEndpoint: (endpoint: string) => void;
   setClientId: (id: string) => void;
   setClientSecret: (secret: string) => void;
@@ -118,8 +120,10 @@ export const useSettingsStore = create<SettingsState>()(
       mapTileUrl: DEFAULT_MAP_TILE_URL,
       mapRouteDisplay: DEFAULT_MAP_ROUTE_DISPLAY,
       mapSourceFilters: DEFAULT_MAP_SOURCE_FILTERS,
-      setMapSourceFilter: (layer, filter) => set((state) => ({
+      mapSourceSelections: {},
+      setMapSourceFilter: (layer, filter, source) => set((state) => ({
         mapSourceFilters: { ...state.mapSourceFilters, [layer]: filter },
+        mapSourceSelections: { ...state.mapSourceSelections, [layer]: source },
       })),
       preferredAudioDeviceId: null,
       echoCancellation: true,
@@ -176,6 +180,7 @@ export const useSettingsStore = create<SettingsState>()(
           mapTileUrl: DEFAULT_MAP_TILE_URL,
           mapRouteDisplay: DEFAULT_MAP_ROUTE_DISPLAY,
           mapSourceFilters: DEFAULT_MAP_SOURCE_FILTERS,
+          mapSourceSelections: {},
           preferredAudioDeviceId: null,
           echoCancellation: true,
           noiseSuppression: false,

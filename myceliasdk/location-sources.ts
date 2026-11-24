@@ -18,6 +18,8 @@ export interface LocationSourceFilter {
   excludedProviders: string[];
   excludedImportIds: string[];
   excludeManual?: boolean;
+  onlyProvider?: string;
+  onlyImportId?: string;
 }
 
 export function locationProviderLabel(provider?: string): string {

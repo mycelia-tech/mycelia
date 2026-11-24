@@ -1,10 +1,12 @@
 import type { LocationOrigin } from "@myceliasdk/location-sources.ts";
 import {
+  focusedSourceFilterSchema,
   importProviderQuery,
   locationProviderSchema,
   locationSourceFilterSchema,
   locationSourceQuery,
 } from "./sources.server.ts";
+import { getMapSourceExtent, getMapSourcePoints } from "./source-map.server.ts";
 import { ObjectId } from "bson";
 import { z } from "zod";
 import tzLookup from "tz-lookup";
@@ -171,6 +173,26 @@ const mapDensitySchema = z.object({
   maxClusters: z.number().int().min(1).max(2000).default(1200),
 }).refine((value) => value.end > value.start, {
   message: "Map density end must be after start",
+});
+
+const mapSourceExtentSchema = z.object({
+  action: z.literal("map-source-extent"),
+  layer: z.enum(["markers", "routes", "all"]),
+  sourceFilter: focusedSourceFilterSchema,
+  start: zDateOrString().optional(),
+  end: zDateOrString().optional(),
+}).refine(({ start, end }) => !start && !end || Boolean(start && end && end > start), {
+  message: "Provide both ends of a valid period, or omit both for all dates",
+});
+
+const mapSourcePointsSchema = z.object({
+  action: z.literal("map-source-points"),
+  start: zDateOrString(),
+  end: zDateOrString(),
+  bounds: mapBoundsSchema,
+  sourceFilter: focusedSourceFilterSchema,
+}).refine(({ start, end }) => end > start, {
+  message: "Period end must follow its start",
 });
 
 const conversationMapClusterGroupsSchema = z.object({
@@ -354,6 +376,8 @@ export const locationRequestSchema = z.discriminatedUnion("action", [
   updateSegmentSchema,
   conversationsOnMapSchema,
   mapDensitySchema,
+  mapSourceExtentSchema,
+  mapSourcePointsSchema,
   conversationMapClusterGroupsSchema,
   conversationMapGroupItemsSchema,
   mapRouteDetailSchema,
@@ -503,6 +527,10 @@ export class LocationResource
     const mongo = await getMongoResource(auth);
 
     switch (input.action) {
+      case "map-source-extent":
+        return await getMapSourceExtent(await getRootDB(), input);
+      case "map-source-points":
+        return await getMapSourcePoints(await getRootDB(), input);
       case "list-segments": {
         const segments: any[] = await mongo({
           action: "find",

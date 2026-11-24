@@ -1,5 +1,5 @@
-import { useEffect, useId, useState } from "react";
-import { CalendarDays } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { CalendarDays, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,6 +11,12 @@ import { Slider } from "@/components/ui/slider";
 import type { MapTimelineSummary } from "@/types/location";
 
 const dayMs = 86_400_000;
+const shortcuts = [
+  { label: "24h", days: 1, title: "Last 24 hours" },
+  { label: "7d", days: 7, title: "Last 7 days" },
+  { label: "30d", days: 30, title: "Last 30 days" },
+  { label: "365d", days: 365, title: "Last 365 days" },
+];
 const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
@@ -27,17 +33,16 @@ const scaleMarks = [
   { fraction: 1, className: "-translate-x-full" },
 ];
 
-function dateLabel(value: number) {
-  return new Date(value).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 function dateTimeLabel(value: number) {
   return (value % 60_000 === 0 ? dateTimeFormat : dateTimeWithSecondsFormat)
     .format(value);
+}
+
+function periodLabel(from: number, to: number) {
+  const format = to - from < 60_000
+    ? dateTimeWithSecondsFormat
+    : dateTimeFormat;
+  return format.formatRange(from, to);
 }
 
 function scaleLabel(value: number, span: number) {
@@ -100,6 +105,10 @@ export function MapTimeNavigator({
   onSelectTime: (time: Date) => void;
 }) {
   const helpId = useId();
+  const chartId = useId();
+  const [showHistory, setShowHistory] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 768,
+  );
   const editorTitleId = useId();
   const editorErrorId = useId();
   const dataStart = summary
@@ -119,7 +128,17 @@ export function MapTimeNavigator({
     start.getTime(),
     end.getTime(),
   ]);
-  const buckets = summary?.buckets ?? [];
+  const buckets = useMemo(() =>
+    (summary?.buckets ?? []).map((bucket) => {
+      const from = new Date(bucket.start).getTime();
+      const to = new Date(bucket.end).getTime();
+      return {
+        ...bucket,
+        from,
+        to,
+        period: to > from ? periodLabel(from, to) : "",
+      };
+    }).filter((bucket) => bucket.to > bucket.from), [summary?.buckets]);
   const maxDwell = Math.max(1, ...buckets.map((b) => b.dwellMs));
   const maxConversations = Math.max(
     1,
@@ -128,6 +147,11 @@ export function MapTimeNavigator({
   const percent = (value: number) =>
     Math.max(0, Math.min(100, (value - min) / (max - min) * 100));
   const cursorTime = cursor?.getTime();
+  const inspected = cursorTime === undefined
+    ? undefined
+    : buckets.find((bucket) =>
+      bucket.from <= cursorTime && cursorTime < bucket.to
+    );
   const commitRange = (from: number, to: number) => {
     setDraft([from, to]);
     onCommitRange(new Date(from), new Date(to));
@@ -138,157 +162,19 @@ export function MapTimeNavigator({
       aria-label="Location history and date range"
       className="shrink-0 rounded-lg border bg-background px-3 py-2.5"
     >
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs">
-        <h2 className="font-medium text-foreground">Location history</h2>
-        <div
-          className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground"
-          aria-label="History chart legend"
-        >
-          <span>
-            <span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-teal-500" />Time
-            at stops
-          </span>
-          <span>
-            <span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-violet-500" />Conversations
-          </span>
-          {cursor && (
-            <span>
-              <span className="mr-1.5 inline-block h-2.5 w-0.5 bg-amber-500" />Selected
-              moment
-            </span>
-          )}
-          <span className="text-[11px]">Each row has its own scale</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+        <div className="min-w-0">
+          <h2 className="text-xs font-medium text-muted-foreground">
+            Map period
+          </h2>
+          <p
+            className="text-sm font-semibold tabular-nums"
+            title={`${dateTimeLabel(draft[0])} — ${dateTimeLabel(draft[1])}`}
+          >
+            {periodLabel(draft[0], draft[1])}
+          </p>
         </div>
-      </div>
-      <div
-        className="relative mx-2 h-14 rounded bg-muted/30"
-        aria-label="Activity across all dates"
-      >
-        <div
-          className="pointer-events-none absolute inset-y-0 bg-blue-500/10"
-          style={{
-            left: `${percent(draft[0])}%`,
-            width: `${percent(draft[1]) - percent(draft[0])}%`,
-          }}
-        />
-        {scaleMarks.slice(1, -1).map(({ fraction, className }) => (
-          <span
-            key={fraction}
-            aria-hidden="true"
-            className={`pointer-events-none absolute inset-y-0 border-l border-border ${className}`}
-            style={{ left: `${fraction * 100}%` }}
-          />
-        ))}
-        {buckets.map((bucket) => {
-          const from = new Date(bucket.start).getTime();
-          const to = new Date(bucket.end).getTime();
-          const selected = to > draft[0] && from < draft[1];
-          const label = `${dateLabel(from)} — ${dateLabel(to)}: ${
-            durationLabel(bucket.dwellMs)
-          } at stops, ${bucket.stayCount} stops, ${bucket.conversationCount} conversations`;
-          return (
-            <button
-              type="button"
-              key={from}
-              title={label}
-              aria-label={label}
-              className="absolute inset-y-0 flex min-w-px flex-col gap-1 px-px hover:bg-primary/10 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-              style={{
-                left: `${percent(from)}%`,
-                width: `${Math.max(0, percent(to) - percent(from))}%`,
-                opacity: selected ? 1 : 0.28,
-              }}
-              onClick={() => onSelectTime(new Date((from + to) / 2))}
-            >
-              <span className="flex h-6 w-full items-end">
-                <span
-                  className="w-full rounded-t-sm bg-teal-500/80"
-                  style={{ height: `${bucket.dwellMs / maxDwell * 100}%` }}
-                />
-              </span>
-              <span className="flex h-6 w-full items-end">
-                <span
-                  className="w-full rounded-t-sm bg-violet-500/80"
-                  style={{
-                    height: `${
-                      bucket.conversationCount / maxConversations * 100
-                    }%`,
-                  }}
-                />
-              </span>
-            </button>
-          );
-        })}
-        {buckets.length === 0 && (
-          <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-            No activity summary yet
-          </span>
-        )}
-        {draft.map((value, index) => (
-          <span
-            key={index}
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 w-px bg-blue-600/85 dark:bg-blue-400/85"
-            style={{ left: `${percent(value)}%` }}
-          />
-        ))}
-        {cursorTime !== undefined && cursorTime >= min && cursorTime <= max && (
-          <span
-            className="pointer-events-none absolute inset-y-0 w-0.5 bg-amber-500"
-            style={{ left: `${percent(cursorTime)}%` }}
-          />
-        )}
-      </div>
-      <div className="relative mx-2 h-5 text-[11px] tabular-nums text-muted-foreground">
-        {scaleMarks.map(({ fraction, className }) => {
-          const value = Math.round(min + (max - min) * fraction);
-          return (
-            <div
-              key={fraction}
-              className={`absolute top-0 whitespace-nowrap pt-1 ${className}`}
-              style={{ left: `${fraction * 100}%` }}
-            >
-              <time
-                dateTime={new Date(value).toISOString()}
-                title={dateTimeLabel(value)}
-              >
-                {scaleLabel(value, max - min)}
-              </time>
-            </div>
-          );
-        })}
-      </div>
-      <Slider
-        min={min}
-        max={max}
-        step={max - min >= 60_000 ? 60_000 : 1}
-        minStepsBetweenThumbs={1}
-        value={draft}
-        thumbLabels={["Selected period start", "Selected period end"]}
-        thumbValueTexts={draft.map(dateTimeLabel)}
-        aria-describedby={helpId}
-        className="h-7 [&_[role=slider]]:border-2 [&_[role=slider]]:border-blue-600 [&_[role=slider]]:focus-visible:ring-blue-500 dark:[&_[role=slider]]:border-blue-400"
-        rangeClassName="bg-blue-600 dark:bg-blue-400"
-        onValueChange={setDraft}
-        onValueCommit={([from, to]) => commitRange(from, to)}
-      />
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-blue-500/25 bg-blue-500/5 px-2.5 py-1.5">
-        <div className="grid flex-1 grid-cols-2 gap-x-4">
-          {["From", "To"].map((label, index) => (
-            <div key={label} className="text-xs">
-              <div className="font-medium text-blue-700 dark:text-blue-300">
-                {label}
-              </div>
-              <time
-                className="font-semibold tabular-nums"
-                dateTime={new Date(draft[index]).toISOString()}
-              >
-                {dateTimeLabel(draft[index])}
-              </time>
-            </div>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
             {rangeDuration(draft[1] - draft[0])} selected
           </span>
@@ -398,10 +284,222 @@ export function MapTimeNavigator({
           </Popover>
         </div>
       </div>
-      <p id={helpId} className="mt-1 text-[11px] text-muted-foreground">
-        Drag either handle or edit the dates. Click an activity bar to inspect a
-        moment.
-      </p>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div
+          role="group"
+          aria-label="Map period shortcuts"
+          className="flex items-center gap-0.5 rounded-md bg-muted p-0.5"
+        >
+          {shortcuts.map(({ label, days, title }) => (
+            <Button
+              key={label}
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2.5 text-xs tabular-nums"
+              title={title}
+              aria-label={title}
+              onClick={() => {
+                const now = Date.now();
+                commitRange(now - days * dayMs, now);
+              }}
+            >
+              {label}
+            </Button>
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2.5 text-xs"
+            disabled={!summary || !(dataEnd > dataStart)}
+            onClick={() => commitRange(dataStart, dataEnd)}
+          >
+            All dates
+          </Button>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-1.5 text-xs"
+          onClick={() => setShowHistory(!showHistory)}
+          aria-expanded={showHistory}
+          aria-controls={chartId}
+        >
+          Location history
+          {showHistory
+            ? <ChevronUp className="h-3.5 w-3.5" />
+            : <ChevronDown className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+      <div
+        id={chartId}
+        hidden={!showHistory}
+        className="mt-2 border-t pt-2 text-xs"
+      >
+        <div
+          className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground"
+          aria-label="History chart legend"
+        >
+          <span>
+            <span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-teal-500" />Time
+            at stops
+          </span>
+          <span>
+            <span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-violet-500" />Conversations
+          </span>
+          {cursor && (
+            <span>
+              <span className="mr-1.5 inline-block h-2.5 w-0.5 bg-amber-500" />Selected
+              moment
+            </span>
+          )}
+          <span className="text-[11px]">Each row has its own scale</span>
+        </div>
+        <div
+          className="relative mx-2 h-14 rounded bg-muted/30"
+          aria-label="Activity across all dates"
+        >
+          <div
+            className="pointer-events-none absolute inset-y-0 bg-blue-500/10"
+            style={{
+              left: `${percent(draft[0])}%`,
+              width: `${percent(draft[1]) - percent(draft[0])}%`,
+            }}
+          />
+          {scaleMarks.slice(1, -1).map(({ fraction, className }) => (
+            <span
+              key={fraction}
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-y-0 border-l border-border ${className}`}
+              style={{ left: `${fraction * 100}%` }}
+            />
+          ))}
+          {buckets.map((bucket) => {
+            const { from, to, period } = bucket;
+            const selected = to > draft[0] && from < draft[1];
+            const label = `${period}: ${
+              durationLabel(bucket.dwellMs)
+            } at stops, ${bucket.stayCount} stops, ${bucket.conversationCount} conversations`;
+            return (
+              <button
+                type="button"
+                key={from}
+                title={label}
+                aria-label={label}
+                className="absolute inset-y-0 flex min-w-px flex-col gap-1 px-px hover:bg-primary/10 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                style={{
+                  left: `${percent(from)}%`,
+                  width: `${Math.max(0, percent(to) - percent(from))}%`,
+                  opacity: selected ? 1 : 0.28,
+                }}
+                onClick={() => onSelectTime(new Date((from + to) / 2))}
+              >
+                <span className="flex h-6 w-full items-end">
+                  <span
+                    className="w-full rounded-t-sm bg-teal-500/80"
+                    style={{ height: `${bucket.dwellMs / maxDwell * 100}%` }}
+                  />
+                </span>
+                <span className="flex h-6 w-full items-end">
+                  <span
+                    className="w-full rounded-t-sm bg-violet-500/80"
+                    style={{
+                      height: `${
+                        bucket.conversationCount / maxConversations * 100
+                      }%`,
+                    }}
+                  />
+                </span>
+              </button>
+            );
+          })}
+          {buckets.length === 0 && (
+            <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+              No activity summary yet
+            </span>
+          )}
+          {draft.map((value, index) => (
+            <span
+              key={index}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 w-px bg-blue-600/85 dark:bg-blue-400/85"
+              style={{ left: `${percent(value)}%` }}
+            />
+          ))}
+          {cursorTime !== undefined && cursorTime >= min && cursorTime <= max &&
+            (
+              <span
+                className="pointer-events-none absolute inset-y-0 w-0.5 bg-amber-500"
+                style={{ left: `${percent(cursorTime)}%` }}
+              />
+            )}
+        </div>
+        <div className="relative mx-2 h-5 text-[11px] tabular-nums text-muted-foreground">
+          {scaleMarks.map(({ fraction, className }) => {
+            const value = Math.round(min + (max - min) * fraction);
+            return (
+              <div
+                key={fraction}
+                className={`absolute top-0 whitespace-nowrap pt-1 ${className}`}
+                style={{ left: `${fraction * 100}%` }}
+              >
+                <time
+                  dateTime={new Date(value).toISOString()}
+                  title={dateTimeLabel(value)}
+                >
+                  {scaleLabel(value, max - min)}
+                </time>
+              </div>
+            );
+          })}
+        </div>
+        <Slider
+          min={min}
+          max={max}
+          step={max - min >= 60_000 ? 60_000 : 1}
+          minStepsBetweenThumbs={1}
+          value={draft}
+          thumbLabels={["Selected period start", "Selected period end"]}
+          thumbValueTexts={draft.map(dateTimeLabel)}
+          aria-describedby={helpId}
+          className="h-7 [&_[role=slider]]:border-2 [&_[role=slider]]:border-blue-600 [&_[role=slider]]:focus-visible:ring-blue-500 dark:[&_[role=slider]]:border-blue-400"
+          rangeClassName="bg-blue-600 dark:bg-blue-400"
+          onValueChange={setDraft}
+          onValueCommit={([from, to]) => commitRange(from, to)}
+        />
+        {inspected && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-xs font-medium">
+              {inspected.period}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {durationLabel(inspected.dwellMs)} at stops ·{" "}
+              {inspected.conversationCount} conversations
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={inspected.from === draft[0] &&
+                inspected.to === draft[1]}
+              onClick={() =>
+                commitRange(
+                  inspected.from,
+                  inspected.to,
+                )}
+            >
+              Show this period
+            </Button>
+          </div>
+        )}
+        <p id={helpId} className="text-[11px] text-muted-foreground">
+          Drag the handles to change the map period. Select a bar to inspect its
+          activity.
+        </p>
+      </div>
     </section>
   );
 }

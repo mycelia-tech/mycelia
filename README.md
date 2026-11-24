@@ -63,7 +63,8 @@ verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-a
   dwell/visit density, saved places/source tracks, and persistent paginated
   conversation clusters that do not scan raw objects.
 - Independent marker and route source filters by exporting application and
-  file. Maps settings can search, sort and correct the source of past imports.
+  file. Select a source to see its GPS points, bookmarks or routes on the map.
+  Maps settings can search, sort and correct the source of past imports.
 - Fully offline reverse geocoding (GeoNames) and automatic timezone periods
   derived from your movements; manual location assignment for ranges without
   data. See [LOCATIONS.md](docs/LOCATIONS.md) for the full manual.
@@ -1006,9 +1007,10 @@ points are deduplicated and conflicting coordinates remain reviewable. See
 
 The map's history chart separates teal **time at stops** and violet
 **conversation counts**, with an independent scale for each row. The chart
-marks the history dates and highlights the selected period in blue. Drag either
-handle to see the start, end, and duration update, or use **Edit dates** to
-select dates and times directly. Click a chart bar to inspect a moment.
+highlights the active **Map period** in blue. Choose a preset, drag the range
+handles, or use **Edit dates** to enter local dates and times. Click a history
+bar to inspect its activity, then **Show this period** to apply its dates to
+the map. Collapse **Location history** to give the map more room.
 **Source colours** colours the same continuity-aware
 recorded sections by source track. **Show recording gaps** is off by default;
 when enabled, faint dashed lines indicate unknown travel between recordings,

@@ -73,6 +73,51 @@ describe("MapTimeNavigator", () => {
     expect(onSelectTime.mock.calls[0][0].getTime()).toBe(2500);
     expect(onCommitRange).not.toHaveBeenCalled();
   });
+  it("shows an inspected bar on the map only when its period is requested", () => {
+    const onCommitRange = vi.fn();
+    render(
+      <MapTimeNavigator
+        summary={summary}
+        start={new Date(1_000)}
+        end={new Date(9_000)}
+        cursor={new Date(2_500)}
+        onCommitRange={onCommitRange}
+        onSelectTime={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show this period" }));
+    expect(onCommitRange).toHaveBeenCalledExactlyOnceWith(
+      new Date(0),
+      new Date(5_000),
+    );
+  });
+  it("keeps the period controls available when history is collapsed", () => {
+    const { onCommitRange } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Location history" }));
+    expect(screen.queryByRole("slider")).toBeNull();
+    expect(onCommitRange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "All dates" }));
+    expect(onCommitRange).toHaveBeenCalledExactlyOnceWith(
+      new Date(0),
+      new Date(10_000),
+    );
+  });
+  it("waits for the recorded range before enabling All dates", () => {
+    render(
+      <MapTimeNavigator
+        summary={undefined}
+        start={new Date(1_000)}
+        end={new Date(9_000)}
+        onCommitRange={vi.fn()}
+        onSelectTime={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "All dates" }).hasAttribute(
+        "disabled",
+      ),
+    ).toBe(true);
+  });
   it("validates dates and commits the edited period once", () => {
     const { onCommitRange } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Edit dates" }));
