@@ -822,7 +822,9 @@ Whisper's internal VAD filters that audio for decoding and maps the resulting
 timestamps back to the input. This matters when Mycelia adds the preceding
 chunk as context for a short utterance. The effective setting is exposed as
 `whisperVadFilter` by the proxy's status endpoint and saved in
-`transcriptions.metadata.whisperVadFilter` for new transcriptions. See
+`transcriptions.metadata.whisperVadFilter` for new transcriptions. When the file
+proxy confirms VAD was enabled, Mycelia keeps isolated replies such as “Спасибо.” and
+“Okay.” during transcription and cleanup. Subtitle credits and non-speech markers are still filtered. See
 [shared audio VAD checks](gpu/SHARED_AUDIO.md#file-and-live-voice-activity-detection).
 
 To change it, for example to `large-v3-turbo`:

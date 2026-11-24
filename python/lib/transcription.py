@@ -10,17 +10,20 @@ known_errors = {
     'おやすみなさい。',
     '*sad breathing*',
     '*mimics*',
+    '-',
+    'Дякую за перегляд!',
+}
+
+
+short_interjections = {
     '- Mm.',
     '- Oh.',
     '- Yeah.',
     'И...',
     'uh',
     'Ну...',
-    '-',
-    'Дякую за перегляд!',
     'oh',
 }
-
 
 asterisk_pattern = re.compile(r'^\*.*\*$')
 

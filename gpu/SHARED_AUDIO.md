@@ -111,6 +111,15 @@ check that the short utterance survives. A segment can still span an internal
 pause. Clients that need sub-segment timing can request word timestamps with
 `timestamp_granularities[]=word` and use the word intervals for display.
 
+For quiet files up to 60 seconds, shared Whisper can recover a phrase after
+the initial file VAD returns no segments. It filters and amplifies a temporary
+copy, then decodes with VAD again. A candidate needs at least two consecutive
+words that also match in the original audio decoded without VAD, including
+their timing and word confidence. The file response marks recovered phrases
+with `metadata.quietSpeechRecovery`. Digital silence, ordinary nonempty
+results, prompted requests, and live requests skip recovery. A quiet single
+word can still be missed. Saved results require an explicit replay.
+
 ## Updating an existing deployment
 
 Keep the existing Compose project names (`mycelia-stt` and `sky-livekit` on

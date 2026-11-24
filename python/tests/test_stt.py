@@ -90,6 +90,27 @@ class RemoteTranscriptionTest(TestCase):
         ):
             stt.transcribe_with_remote_server(b"audio")
 
+    def test_vad_confirmed_short_reply_survives(self):
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            wav.writeframes(bytes(32000))
+        sequence = MagicMock()
+        sequence.start = datetime(2026, 1, 1, tzinfo=UTC)
+        with (
+            patch("stt.combine_chunks_with_ffmpeg", return_value=buffer.getvalue()),
+            patch("stt.transcribe_with_remote_server") as transcribe,
+            patch("stt.call_resource"),
+        ):
+            for text in ("Спасибо.", "uh"):
+                for enabled in (False, True):
+                    transcribe.return_value = {
+                        "segments": [{"text": text, "start": 0.2, "end": 0.6}],
+                        "metadata": {"whisperVadFilter": enabled},
+                    }
+                    self.assertEqual(stt.transcribe_sequence(sequence),
+                                     text if enabled else stt.NO_SPEECH_DETECTED)
+
     def test_filters_subtitle_credit_and_bounds_saved_segment_to_wav(self):
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav:

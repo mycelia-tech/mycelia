@@ -6,15 +6,8 @@ export const knownErrors = new Set([
   'おやすみなさい。',
   '*sad breathing*',
   '*mimics*',
-  '- Mm.',
-  '- Oh.',
-  '- Yeah.',
-  'И...',
-  'uh',
-  'Ну...',
   '-',
   'Дякую за перегляд!',
-  'oh',
 ]);
 
 export const asteriskPattern = /^\*.*\*$/;
@@ -22,6 +15,16 @@ export const asteriskPattern = /^\*.*\*$/;
 export function isSubtitleCreditArtifact(text: string): boolean {
   return /^субтитры\s+с?делал\s+dimatorzok[.!?…]*$/iu.test(text.trim());
 }
+
+const shortInterjections = new Set([
+  '- Mm.',
+  '- Oh.',
+  '- Yeah.',
+  'И...',
+  'uh',
+  'Ну...',
+  'oh',
+]);
 
 export const removeIfLonely = new Set([
   'Thank you.',
@@ -49,12 +52,18 @@ function clipTimestamps(item: any, durationSeconds: number) {
   };
 }
 
-export function filterSegments(segments: any[], durationSeconds: number) {
+export function filterSegments(
+  segments: any[],
+  durationSeconds: number,
+  whisperVadFilter = false,
+) {
   const filtered = [];
   for (const segment of segments) {
     const text = segment.text?.trim();
     if (
       !text || knownErrors.has(text) || knownErrors.has(text.toLowerCase()) ||
+      (!whisperVadFilter &&
+        (shortInterjections.has(text) || shortInterjections.has(text.toLowerCase()))) ||
       asteriskPattern.test(text) || isSubtitleCreditArtifact(text)
     ) continue;
     const clipped = clipTimestamps(segment, durationSeconds);
@@ -73,7 +82,7 @@ export function filterSegments(segments: any[], durationSeconds: number) {
 
   if (filtered.length === 0) return [];
   
-  if (filtered.length === 1) {
+  if (!whisperVadFilter && filtered.length === 1) {
     const text = filtered[0].text?.trim();
     if (removeIfLonely.has(text)) return [];
   }

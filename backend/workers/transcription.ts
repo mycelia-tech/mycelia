@@ -350,6 +350,7 @@ const capability: JobCapability = {
         const filteredSegments = filterSegments(
           segments,
           combinedWavDurationSeconds(combinedAudio),
+          (transcript as any).metadata?.whisperVadFilter === true,
         );
         log("INFO", `Segments filtered`, {
           sequenceId: seqId,

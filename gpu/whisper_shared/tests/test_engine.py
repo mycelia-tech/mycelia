@@ -1,7 +1,8 @@
 import unittest
 from types import SimpleNamespace
+from dataclasses import dataclass
 
-from engine import FixedFeatureExtractor, transcribe
+from engine import FixedFeatureExtractor, _confirmed_segments, transcribe
 from scheduler import Cancelled, Scheduler, current_job
 
 
@@ -53,6 +54,31 @@ class EngineTests(unittest.TestCase):
             },
         )
         self.assertEqual(closed, [True])
+
+    def test_recovery_needs_contiguous_timed_words_in_both_passes(self):
+        @dataclass
+        class Segment:
+            words: list
+            id: int = 1
+            start: float = 0
+            end: float = 10
+            text: str = ""
+            tokens: tuple = ()
+
+        def word(text, start, confidence=0.9):
+            return SimpleNamespace(word=" " + text, start=start, end=start + 0.2,
+                                   probability=confidence)
+
+        candidate = Segment([word("guess", 0), word("Two", 3), word("words!", 3.4)])
+        reference = Segment([word("other", 1), word("two", 3.1), word("words.", 3.5)])
+        result = _confirmed_segments([candidate], [reference], True)
+        self.assertEqual([(s.start, s.end, s.text) for s in result], [(3, 3.6, " Two words!")])
+        self.assertEqual(result[0].words, candidate.words[1:])
+        self.assertIsNone(_confirmed_segments([candidate], [reference], False)[0].words)
+        for words in ([word("two", 3)], [word("two", 8), word("words", 8.4)],
+                      [word("two", 3), word("other", 3.2), word("words", 3.4)],
+                      [word("two", 3), word("words", 3.4, 0.1)]):
+            self.assertEqual(_confirmed_segments([candidate], [Segment(words)], True), [])
 
     def test_fixed_feature_extractor_rejects_shared_configuration_mutation(self):
         class Features:

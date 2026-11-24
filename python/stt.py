@@ -21,7 +21,7 @@ load_environment()
 from lib.resources import call_resource
 from lib.api import job_token_var, exchange_api_key_for_jwt
 
-from lib.transcription import clip_timestamps, known_errors, remove_if_lonely, subtitle_credit_pattern
+from lib.transcription import clip_timestamps, known_errors, remove_if_lonely, short_interjections, subtitle_credit_pattern
 
 from lib.worker import mongo_cursor, claim_chunks, release_chunks
 
@@ -609,13 +609,15 @@ def transcribe_sequence(sequence: SpeechSequence):
 
     # Filter out known errors and asterisk patterns to prevent cleanup need
     # This matches the filtering logic in cleanup.py but applied during transcription
+    whisper_vad = (transcript.get('metadata') or {}).get('whisperVadFilter') is True
     filtered_segments = []
     for segment in segments:
-        text = segment.get('text', '').strip().lower()
+        text = segment.get('text', '').strip()
 
         if (
             not text or
-            text in known_errors or
+            text in known_errors or text.lower() in known_errors or
+            (not whisper_vad and (text in short_interjections or text.lower() in short_interjections)) or
             subtitle_credit_pattern.fullmatch(text) or
             text.startswith('*') and text.endswith('*')
         ):
@@ -629,9 +631,9 @@ def transcribe_sequence(sequence: SpeechSequence):
             clipped = {**clipped, 'words': [word for word in words if word is not None]}
         filtered_segments.append(clipped)
 
-    if not filtered_segments or all(
+    if not filtered_segments or (not whisper_vad and all(
         segment['text'].strip() in remove_if_lonely for segment in filtered_segments
-    ):
+    )):
         return NO_SPEECH_DETECTED
 
 

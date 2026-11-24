@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytz
 
 from lib.resources import call_resource
-from lib.transcription import known_errors, remove_if_lonely, subtitle_credit_pattern
+from lib.transcription import known_errors, remove_if_lonely, short_interjections, subtitle_credit_pattern
 
 
 # %%
@@ -36,6 +36,15 @@ pipeline = [
                                         list(known_errors)
                                     ]
                                 }
+                            },
+                            {
+                                "$or": [
+                                    {"$eq": ["$metadata.whisperVadFilter", True]},
+                                    {"$not": [{"$in": [
+                                        {"$trim": {"input": "$$seg.text"}},
+                                        list(short_interjections),
+                                    ]}]},
+                                ]
                             },
                             {
                                 "$not": {
@@ -87,7 +96,13 @@ pipeline = [
     },
     {
         "$addFields": {
-            "shouldDelete": {"$eq": ["$keepableCount", 0]},
+            "shouldDelete": {"$or": [
+                {"$eq": ["$cleanedSegmentCount", 0]},
+                {"$and": [
+                    {"$ne": [{"$ifNull": ["$metadata.whisperVadFilter", False]}, True]},
+                    {"$eq": ["$keepableCount", 0]},
+                ]},
+            ]},
         },
     },
     {

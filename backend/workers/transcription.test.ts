@@ -7,6 +7,17 @@ import transcription, {
   buildTranscriptionSequenceClaimQuery,
 } from "./transcription.ts";
 
+Deno.test("VAD-confirmed short replies survive postprocessing", () => {
+  for (const text of [" Спасибо.", "Okay.", "uh", "- Yeah.", "Ну..."]) {
+    const segment = { text, start: 3, end: 3.6 };
+    expect(filterSegments([segment], 5, true)).toEqual([segment]);
+    expect(filterSegments([segment], 5)).toEqual([]);
+  }
+  for (const text of ["...", "*mimics*", "Субтитры делал DimaTorzok"]) {
+    expect(filterSegments([{ text, start: 0, end: 1 }], 5, true)).toEqual([]);
+  }
+});
+
 Deno.test("standalone subtitle credits are empty and quoted credits survive", () => {
   for (const text of [" Субтитры делал DimaTorzok", "Субтитры сделал DIMATORZOK… "]) {
     expect(filterSegments([{ text, start: 0, end: 29.98 }], 20)).toEqual([]);
