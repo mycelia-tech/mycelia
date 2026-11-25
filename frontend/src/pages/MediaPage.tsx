@@ -885,7 +885,7 @@ export default function MediaPage() {
     : "";
 
   return (
-    <div className="container mx-auto space-y-4 p-4">
+    <div className="min-w-0 space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
@@ -917,7 +917,7 @@ export default function MediaPage() {
         </div>
       )}
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid items-start gap-3 lg:grid-cols-2">
         <MediaBatchPanel
           status={status}
           onInventoryChanged={() => load({ silent: true })}
@@ -927,7 +927,7 @@ export default function MediaPage() {
           <CardContent className="p-0">
             <div
               aria-disabled={busy || Boolean(preview)}
-              className={`flex min-h-20 items-center justify-between gap-3 rounded-lg border border-dashed p-3 ${
+              className={`flex min-h-20 flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3 ${
                 busy || Boolean(preview) ? "cursor-not-allowed opacity-60" : ""
               }`}
               onDragOver={(event) => event.preventDefault()}
@@ -956,7 +956,7 @@ export default function MediaPage() {
                   </div>
                 </div>
               </div>
-              <label>
+              <label className="rounded-md focus-within:ring-2 focus-within:ring-ring">
                 <span className="inline-flex h-9 cursor-pointer items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground">
                   Choose files
                 </span>
@@ -1089,10 +1089,10 @@ export default function MediaPage() {
                   <AuthenticatedMediaImage
                     path={result.thumbnailUrl}
                     alt={result.fileName}
-                    className="h-20 w-20 rounded object-cover"
+                    className="size-16 shrink-0 rounded object-cover"
                   />
-                  <div>
-                    <div className="font-medium">{result.fileName}</div>
+                  <div className="min-w-0">
+                    <div className="break-words font-medium">{result.fileName}</div>
                     <div className="text-sm text-muted-foreground">
                       {result.shortCaption ?? result.snippet ?? result.label}
                     </div>
@@ -1115,10 +1115,10 @@ export default function MediaPage() {
       </Card>
 
       <Card id="media-inventory">
-        <CardHeader className="flex-row items-center justify-between space-y-0 p-3">
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 p-3">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-base">Library</CardTitle>
-            <span className="text-xs text-muted-foreground">
+            <CardTitle className="text-lg">Library</CardTitle>
+            <span className="text-sm tabular-nums text-muted-foreground">
               {assets.length} of {assetTotal}
             </span>
             <MediaHint label="About photo placement">
@@ -1319,7 +1319,7 @@ export default function MediaPage() {
           {inventoryLoading && filteredAssets.length === 0
             ? (
               <div
-                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+                className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,14rem),1fr))] gap-3"
                 aria-label="Loading media"
               >
                 {Array.from(
@@ -1347,7 +1347,7 @@ export default function MediaPage() {
             )
             : viewMode === "grid"
             ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,14rem),1fr))] gap-3">
                 {filteredAssets.map((asset) => {
                   const id = String(asset._id);
                   const metadata = mediaMetadataSummary(asset);
@@ -1521,7 +1521,7 @@ export default function MediaPage() {
                               </div>
                             </button>
                           </TableCell>
-                          <TableCell className="min-w-[165px] py-2 text-xs">
+                          <TableCell className="min-w-[165px] py-2 text-sm">
                             {metadata.captured}
                           </TableCell>
                           <TableCell className="py-2">
@@ -1537,7 +1537,7 @@ export default function MediaPage() {
                                 : asset.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="py-2 text-xs">
+                          <TableCell className="py-2 text-sm">
                             {(Number(asset.byteLength ?? 0) / 1_000_000)
                               .toFixed(2)} MB
                           </TableCell>

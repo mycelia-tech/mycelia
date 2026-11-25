@@ -708,7 +708,7 @@ const TranscriptPage = () => {
   if (loading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold">Transcript</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Transcript</h1>
         <div className="border rounded-lg p-8 text-center">
           <p className="text-muted-foreground">Loading transcripts...</p>
         </div>
@@ -719,7 +719,7 @@ const TranscriptPage = () => {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold">Transcript</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Transcript</h1>
         <div className="border rounded-lg p-8 text-center">
           <p className="text-red-500">Error: {error}</p>
         </div>
@@ -727,10 +727,46 @@ const TranscriptPage = () => {
     );
   }
 
+  const visibleSegments = (lastSearchedQ ? searchSegments : segments).filter((segment) => {
+    if (
+      identityFilter === "all" && profileFilter === "all" &&
+      minConfidence === 0
+    ) return true;
+    return diarizations.some((diarization) => {
+      if (!diarizationOverlapsTranscript(diarization, segment)) {
+        return false;
+      }
+      const display = resolveDiarizationIdentity(diarization);
+      const matchesIdentity = identityFilter === "all" ||
+        (identityFilter === "matched" &&
+          display.selectedResolution === "identified") ||
+        (identityFilter === "rejected" &&
+          display.selectedResolution === "rejected") ||
+        (identityFilter === "uncertain" &&
+          display.selectedResolution === "uncertain") ||
+        (identityFilter === "ambiguous" &&
+          display.selectedResolution === "ambiguous");
+      if (!matchesIdentity) return false;
+      const relatedProfileIds = new Set([
+        display.profile?.id,
+        display.evaluatedProfile?.id,
+        ...display.candidates.map((candidate) => candidate.id),
+      ].filter((id): id is string => Boolean(id)));
+      if (
+        profileFilter !== "all" &&
+        !relatedProfileIds.has(profileFilter)
+      ) {
+        return false;
+      }
+      const score = display.score ?? 0;
+      return score >= minConfidence;
+    });
+  });
+
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-4">
       <div className="space-y-1">
-        <h1 className="text-3xl font-bold">Transcript</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Transcript</h1>
       </div>
       <VoiceProfileContextBar selection={voiceSelection} />
 
@@ -792,61 +828,71 @@ const TranscriptPage = () => {
           >
             Last 30 days
           </Button>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search transcript…"
-            className="flex-1"
-          />
           <Button
             type="button"
+            size="sm"
             variant="outline"
             onClick={handleGoToLatest15Min}
             disabled={loading || searching}
           >
-            Latest 15min
+            Latest 15 min
           </Button>
-          <select
-            value={identityFilter}
-            onChange={(event) =>
-              setIdentityFilter(event.target.value as typeof identityFilter)}
-            className="h-10 rounded-md border bg-background px-3 text-sm"
-            aria-label="Speaker identity filter"
-          >
-            <option value="all">All voices</option>
-            <option value="matched">
-              Contains {selectedProfileName ?? "identified voice"}
-            </option>
-            <option value="rejected">
-              Not {selectedProfileName ?? "selected voice"}
-            </option>
-            <option value="uncertain">Uncertain</option>
-            <option value="ambiguous">Ambiguous candidates</option>
-          </select>
-          <select
-            value={profileFilter}
-            onChange={(event) => setProfileFilter(event.target.value)}
-            className="h-10 rounded-md border bg-background px-3 text-sm"
-            aria-label="Speaker profile filter"
-          >
-            <option value="all">All profiles</option>
-            {visibleProfiles.map(([id, name]) => (
-              <option key={id} value={id}>{name}</option>
-            ))}
-          </select>
-          <label className="flex h-10 items-center gap-2 rounded-md border px-3 text-xs text-muted-foreground">
-            Confidence ≥ {Math.round(minConfidence * 100)}%
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={minConfidence}
-              onChange={(event) => setMinConfidence(Number(event.target.value))}
-            />
-          </label>
+        </div>
+        <details className="rounded-md border bg-muted/20">
+          <summary className="cursor-pointer rounded-md px-3 py-2 text-sm font-medium">
+            Speaker filters{identityFilter !== "all" || profileFilter !== "all" || minConfidence > 0 ? " (active)" : ""}
+          </summary>
+          <div className="grid min-w-0 gap-2 border-t p-3 sm:grid-cols-2 lg:grid-cols-3">
+            <select
+              value={identityFilter}
+              onChange={(event) =>
+                setIdentityFilter(event.target.value as typeof identityFilter)}
+              className="h-10 min-w-0 w-full rounded-md border bg-background px-3 text-sm"
+              aria-label="Speaker identity filter"
+            >
+              <option value="all">All voices</option>
+              <option value="matched">
+                Contains {selectedProfileName ?? "identified voice"}
+              </option>
+              <option value="rejected">
+                Not {selectedProfileName ?? "selected voice"}
+              </option>
+              <option value="uncertain">Uncertain</option>
+              <option value="ambiguous">Ambiguous candidates</option>
+            </select>
+            <select
+              value={profileFilter}
+              onChange={(event) => setProfileFilter(event.target.value)}
+              className="h-10 min-w-0 w-full rounded-md border bg-background px-3 text-sm"
+              aria-label="Speaker profile filter"
+            >
+              <option value="all">All profiles</option>
+              {visibleProfiles.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+            <label className="flex min-h-10 min-w-0 flex-wrap items-center gap-x-3 rounded-md border px-3 py-1.5 text-sm">
+              Confidence ≥ {Math.round(minConfidence * 100)}%
+              <input
+                type="range"
+                className="min-w-16 flex-1 accent-primary"
+                min="0"
+                max="1"
+                step="0.05"
+                value={minConfidence}
+                onChange={(event) => setMinConfidence(Number(event.target.value))}
+              />
+            </label>
+          </div>
+        </details>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search transcript…"
+            aria-label="Search transcript"
+            className="min-w-0"
+          />
           <Button
             type="submit"
             disabled={loading || !formStartDate || !formEndDate || searching}
@@ -872,60 +918,27 @@ const TranscriptPage = () => {
             onClick={handleLoadEarlier}
             disabled={loading || loadingTop}
           >
-            −100
+            Load 100 earlier
           </Button>
         </div>
       )}
 
-      <div className="border rounded-lg">
-        {(lastSearchedQ && searchSegments.length === 0) ||
-            (!lastSearchedQ && segments.length === 0)
+      <div className="rounded-lg border bg-card">
+        {visibleSegments.length === 0
           ? (
-            <div className="p-8 text-center">
+            <div className="px-4 py-6 text-center">
               <p className="text-muted-foreground">
-                No transcript segments{lastSearchedQ
-                  ? " matching your search"
-                  : ""} in this interval
+                {(lastSearchedQ ? searchSegments : segments).length > 0
+                  ? "No segments match the selected speaker filters."
+                  : lastSearchedQ
+                  ? "No transcript segments match your search in this interval."
+                  : "No transcript segments in this interval."}
               </p>
             </div>
           )
           : (
             <div className="divide-y">
-              {(lastSearchedQ ? searchSegments : segments).filter((segment) => {
-                if (
-                  identityFilter === "all" && profileFilter === "all" &&
-                  minConfidence === 0
-                ) return true;
-                return diarizations.some((diarization) => {
-                  if (!diarizationOverlapsTranscript(diarization, segment)) {
-                    return false;
-                  }
-                  const display = resolveDiarizationIdentity(diarization);
-                  const matchesIdentity = identityFilter === "all" ||
-                    (identityFilter === "matched" &&
-                      display.selectedResolution === "identified") ||
-                    (identityFilter === "rejected" &&
-                      display.selectedResolution === "rejected") ||
-                    (identityFilter === "uncertain" &&
-                      display.selectedResolution === "uncertain") ||
-                    (identityFilter === "ambiguous" &&
-                      display.selectedResolution === "ambiguous");
-                  if (!matchesIdentity) return false;
-                  const relatedProfileIds = new Set([
-                    display.profile?.id,
-                    display.evaluatedProfile?.id,
-                    ...display.candidates.map((candidate) => candidate.id),
-                  ].filter((id): id is string => Boolean(id)));
-                  if (
-                    profileFilter !== "all" &&
-                    !relatedProfileIds.has(profileFilter)
-                  ) {
-                    return false;
-                  }
-                  const score = display.score ?? 0;
-                  return score >= minConfidence;
-                });
-              }).map(
+              {visibleSegments.map(
                 (seg, idx, arr) => {
                   const prev = idx > 0 ? arr[idx - 1] : null;
                   const showGap = prev &&
@@ -970,7 +983,7 @@ const TranscriptPage = () => {
                   );
 
                   return (
-                    <div key={idx} className="relative p-4">
+                    <div key={idx} className="relative px-3 py-3 sm:px-4">
                       {gapBadge}
                       <div className="flex gap-3">
                         <div className="flex flex-col gap-1 items-center pt-1">
@@ -1048,23 +1061,23 @@ const TranscriptPage = () => {
                             );
                           })}
                         </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex flex-wrap items-center gap-2">
                             <button
                               type="button"
                               onClick={() => handlePlayFromSegment(seg.time)}
-                              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                              className="inline-flex size-8 items-center justify-center rounded-md border bg-card text-primary hover:bg-accent"
                               title="Play from here"
                             >
                               <svg
-                                className="w-3 h-3"
+                                className="size-3.5"
                                 fill="currentColor"
                                 viewBox="0 0 16 16"
                               >
                                 <path d="M3 2v12l10-6L3 2z" />
                               </svg>
                             </button>
-                            <div className="text-xs text-muted-foreground flex items-center gap-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
                               <span>{formatTime(seg.time, timeFormat)}</span>
                               <span>
                                 {formatTimeRangeDuration(seg.time, seg.endTime)}
@@ -1073,7 +1086,7 @@ const TranscriptPage = () => {
                                 <>
                                   <button
                                     type="button"
-                                    className="ml-2 text-blue-600 hover:text-blue-800 hover:underline"
+                                    className="ml-2 text-primary hover:underline"
                                     onClick={() => {
                                       const center = seg.time.getTime();
                                       const offset = 5 * 60 * 1000;
@@ -1095,7 +1108,7 @@ const TranscriptPage = () => {
                                   </button>
                                   <button
                                     type="button"
-                                    className="ml-2 text-blue-600 hover:text-blue-800 hover:underline disabled:cursor-wait disabled:opacity-50"
+                                    className="ml-2 text-primary hover:underline disabled:cursor-wait disabled:opacity-50"
                                     disabled={openingConversationKey ===
                                       `full-${seg.time.getTime()}-${seg.endTime.getTime()}`}
                                     onClick={() =>
@@ -1108,7 +1121,7 @@ const TranscriptPage = () => {
                                   </button>
                                   <button
                                     type="button"
-                                    className="ml-2 font-medium text-blue-600 hover:text-blue-800 hover:underline disabled:cursor-wait disabled:opacity-50"
+                                    className="ml-2 font-medium text-primary hover:underline disabled:cursor-wait disabled:opacity-50"
                                     disabled={openingConversationKey ===
                                       `summary-${seg.time.getTime()}-${seg.endTime.getTime()}`}
                                     onClick={() =>
@@ -1163,7 +1176,7 @@ const TranscriptPage = () => {
                               </Badge>
                             ))}
                           </div>
-                          <div className="whitespace-pre-wrap leading-relaxed">
+                          <div className="max-w-prose whitespace-pre-wrap break-words text-base leading-relaxed">
                             {lastSearchedQ
                               ? renderHighlightedText(seg.text, lastSearchedQ)
                               : seg.text}
@@ -1186,7 +1199,7 @@ const TranscriptPage = () => {
             onClick={handleLoadLater}
             disabled={loading || loadingBottom}
           >
-            +100
+            Load 100 later
           </Button>
         </div>
       )}

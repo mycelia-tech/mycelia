@@ -239,6 +239,7 @@ function EditableTitle({
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Input
               ref={inputRef}
+              aria-label="Object name"
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -248,6 +249,7 @@ function EditableTitle({
             <Button
               variant="ghost"
               size="sm"
+              aria-label="Save object name"
               onClick={handleSave}
               className="flex-shrink-0"
             >
@@ -256,6 +258,7 @@ function EditableTitle({
             <Button
               variant="ghost"
               size="sm"
+              aria-label="Cancel name edit"
               onClick={handleCancel}
               className="flex-shrink-0"
             >
@@ -264,12 +267,16 @@ function EditableTitle({
           </div>
         )
         : (
-          <h1
-            className="text-2xl font-bold cursor-pointer hover:text-primary transition-colors flex items-center gap-2 flex-1 min-w-0"
-            onClick={() => setIsEditing(true)}
-          >
-            <span className="truncate">{name || "Untitled Object"}</span>
-            <Pencil className="w-4 h-4 opacity-0 group-hover:opacity-50 transition-opacity flex-shrink-0" />
+          <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">
+            <button
+              type="button"
+              className="flex max-w-full items-center gap-2 rounded text-left hover:text-primary focus-visible:outline focus-visible:outline-ring"
+              title="Edit object name"
+              onClick={() => setIsEditing(true)}
+            >
+              <span className="break-words [overflow-wrap:anywhere]">{name || "Untitled Object"}</span>
+              <Pencil className="size-4 shrink-0 text-muted-foreground" />
+            </button>
           </h1>
         )}
     </div>
@@ -639,8 +646,8 @@ const ObjectDetailPage = () => {
   return (
     <div className="max-w-7xl mx-auto space-y-4">
       {/* Sticky Header with navigation and actions */}
-      <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b pb-3 -mx-4 px-4 pt-2">
-        <div className="flex items-center justify-between">
+      <div className="z-10 rounded-lg border bg-card p-2 lg:sticky lg:top-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <SmartBackButton defaultPath="/objects" />
             {/* Star toggle button */}
@@ -658,7 +665,7 @@ const ObjectDetailPage = () => {
               />
             </Button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {/* Status indicator */}
             <div className="flex items-center gap-1.5 text-sm">
               {updateObjectMutation.isPending
@@ -676,6 +683,7 @@ const ObjectDetailPage = () => {
             {/* Autosave toggle */}
             <div className="flex items-center gap-1.5 text-sm">
               <Switch
+                aria-label="Autosave"
                 checked={autoSave}
                 onCheckedChange={setAutoSave}
                 className="h-4 w-7"
@@ -745,6 +753,7 @@ const ObjectDetailPage = () => {
             <Button
               variant="destructive"
               size="sm"
+              aria-label="Delete object"
               onClick={handleDelete}
               disabled={deleteObjectMutation.isPending}
             >
@@ -754,8 +763,7 @@ const ObjectDetailPage = () => {
         </div>
       </div>
 
-      {/* Title row: Icon + Name on left, metadata on right - all on one line */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <EditableTitle
           icon={object.icon}
           name={object.name || ""}
@@ -763,8 +771,7 @@ const ObjectDetailPage = () => {
           onNameChange={(name) => handleFieldUpdate("name", name)}
         />
 
-        {/* Object Type, Date, Duration, Tags - aligned on one line */}
-        <div className="flex items-center gap-3 flex-shrink-0 text-xs">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
           {/* Object Type Badge */}
           <div
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-medium ${typeInfo.color}`}
@@ -813,13 +820,13 @@ const ObjectDetailPage = () => {
       </div>
 
       {/* Tags on their own line so a long title never hides them */}
-      <div className="text-xs -mt-3">
+      <div className="text-sm">
         <TagChips object={object} />
       </div>
 
       {/* Row 1: Summary (left) + Player/Transcript (right) - flexible height */}
       {hasTimeRanges && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Summary - with model selector, generate button, and history navigation */}
           <SummarySection
             object={pendingChanges.summaries
@@ -934,23 +941,24 @@ const ObjectDetailPage = () => {
       {/* Row 3: Time Info + Metadata + Details (3 columns) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* Time Information - compact inline */}
-        <div className="border rounded-lg p-3 space-y-2">
+        <div className="space-y-2 rounded-lg border bg-card p-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-muted-foreground">
+            <h3 className="text-sm font-semibold text-foreground">
               Time Information
             </h3>
             {hasTimeRanges && (
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-5 px-1.5 text-xs"
+                className="h-8 px-2 text-sm"
+                aria-label="Edit time range"
                 onClick={() => setEditingTimeRangeIndex(0)}
               >
                 <Pencil className="w-3 h-3" />
               </Button>
             )}
           </div>
-          <div className="text-xs space-y-1">
+          <div className="space-y-1.5 text-sm">
             {hasTimeRanges && object.timeRanges?.[0] && (
               <>
                 <div className="flex justify-between">
@@ -983,11 +991,11 @@ const ObjectDetailPage = () => {
         </div>
 
         {/* Metadata - compact */}
-        <div className="border rounded-lg p-3 space-y-2">
-          <h3 className="text-xs font-semibold text-muted-foreground">
+        <div className="space-y-2 rounded-lg border bg-card p-3">
+          <h3 className="text-sm font-semibold text-foreground">
             Metadata
           </h3>
-          <div className="text-xs space-y-1">
+          <div className="space-y-1.5 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Created:</span>
               <span>{formatTime(object.createdAt, dateFormat)}</span>
@@ -1005,16 +1013,16 @@ const ObjectDetailPage = () => {
         </div>
 
         {/* Details - compact */}
-        <div className="border rounded-lg p-3 bg-muted/30 flex flex-col max-h-[150px]">
+        <div className="flex max-h-60 flex-col rounded-lg border bg-card p-3">
           <div className="flex items-center justify-between mb-2 flex-shrink-0">
-            <h3 className="text-xs font-semibold text-muted-foreground">
+            <h3 className="text-sm font-semibold text-foreground">
               Details
             </h3>
             <div className="flex items-center gap-1">
               <Button
                 variant={isEditingDetails ? "default" : "ghost"}
                 size="sm"
-                className="h-5 px-1.5 text-xs"
+                className="h-8 px-2 text-sm"
                 onClick={() => {
                   if (!isEditingDetails) {
                     setEditingDetailsValue(object.details || "");
@@ -1028,7 +1036,7 @@ const ObjectDetailPage = () => {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 px-1.5 text-xs"
+                  className="h-8 px-2 text-sm"
                   onClick={() => {
                     handleFieldUpdate("details", editingDetailsValue);
                     setIsEditingDetails(false);
@@ -1045,12 +1053,12 @@ const ObjectDetailPage = () => {
                 value={editingDetailsValue}
                 onChange={(e) => setEditingDetailsValue(e.target.value)}
                 placeholder="Add details..."
-                className="flex-1 min-h-[60px] resize-none font-mono text-xs"
+                className="flex-1 min-h-[60px] resize-none font-mono text-sm"
               />
             )
             : (
               <ScrollArea className="flex-1 [&>[data-radix-scroll-area-viewport]]:!overflow-y-scroll">
-                <div className="prose prose-xs max-w-none pr-2 text-xs">
+                <div className="prose prose-sm max-w-none break-words pr-2 text-sm">
                   {object.details
                     ? <Markdown>{object.details}</Markdown>
                     : (

@@ -788,14 +788,15 @@ export const RefreshObjectsTool: Tool = {
         onClick={handleRefresh}
         disabled={isRefreshing}
         variant="outline"
-        size="icon"
+        size="sm"
+        aria-label="Refresh objects"
       >
         <RefreshCw
           className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
         />
+        Refresh
       </Button>
     );
   },
   tooltip: "Refresh objects for current time range",
-  label: "Refresh",
 };

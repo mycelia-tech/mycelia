@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { apiClient } from "@/lib/api";
-import { useSettingsStore } from "@/stores/settingsStore";
 import { SmartBackButton } from "@/components/SmartBackButton";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { Button } from "@/components/ui/button";
@@ -10,7 +9,6 @@ import { Download, Loader2 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
 const AudioExportPage = () => {
-  const { timeFormat } = useSettingsStore();
   const [startDate, setStartDate] = useState<Date | null>(
     new Date(Date.now() - 3600000),
   );
@@ -76,13 +74,13 @@ const AudioExportPage = () => {
   const durationSecondsRemainder = durationSeconds % 60;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="w-full max-w-2xl space-y-4">
       <div className="flex items-center gap-4">
         <SmartBackButton defaultPath="/audio" />
-        <h1 className="text-3xl font-bold">Export Audio</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Export Audio</h1>
       </div>
 
-      <div className="border rounded-lg p-6 space-y-6">
+      <div className="space-y-4 rounded-xl border bg-card p-4 sm:p-5">
         <div className="space-y-4">
           {startDate && endDate && (
             <DateRangePicker
@@ -116,7 +114,7 @@ const AudioExportPage = () => {
               placeholder="MongoDB ObjectId of original audio file"
               className="font-mono"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Leave empty to export from all audio chunks in the time range
             </p>
           </div>
@@ -128,12 +126,11 @@ const AudioExportPage = () => {
           </div>
         )}
 
-        <div className="flex justify-end pt-4">
+        <div className="flex justify-end border-t pt-4">
           <Button
             onClick={handleDownload}
             disabled={!startDate || !endDate || endDate <= startDate ||
               downloading}
-            size="lg"
           >
             {downloading
               ? (

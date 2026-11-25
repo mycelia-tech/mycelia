@@ -49,7 +49,7 @@ export function TimelineDateJump(
     <div className="flex flex-wrap items-center gap-1.5">
       <label
         htmlFor="timeline-jump-date"
-        className="text-xs text-muted-foreground"
+        className="sr-only text-sm text-muted-foreground sm:not-sr-only"
       >
         Go to date
       </label>
@@ -59,7 +59,7 @@ export function TimelineDateJump(
         value={date}
         onChange={(event) => setDate(event.target.value)}
         onInput={(event) => setDate(event.currentTarget.value)}
-        className="h-8 max-w-full rounded-md border bg-background px-2 text-xs"
+        className="h-8 max-w-full rounded-md border bg-background px-2 text-sm"
       />
       <Button
         variant="outline"

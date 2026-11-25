@@ -46,14 +46,14 @@ export function ChatPinnedNavigation({
       className="flex min-w-0 items-center gap-1 border-b bg-amber-500/5 px-3 py-1.5 sm:px-4"
     >
       <Pin className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-      <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+      <span className="shrink-0 text-xs font-medium text-muted-foreground">
         {activeIndex + 1}/{messages.length}
       </span>
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="h-7 w-7 shrink-0"
+        className="size-8 shrink-0"
         onClick={() => jump(activeIndex - 1)}
         disabled={messages.length < 2}
         aria-label="Previous pinned message"
@@ -63,7 +63,7 @@ export function ChatPinnedNavigation({
       <button
         type="button"
         onClick={() => jump(activeIndex)}
-        className="min-w-0 flex-1 truncate rounded px-1 text-left text-xs hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="min-w-0 flex-1 truncate rounded px-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         title={excerpt}
       >
         {excerpt}
@@ -72,7 +72,7 @@ export function ChatPinnedNavigation({
         type="button"
         variant="ghost"
         size="icon"
-        className="h-7 w-7 shrink-0"
+        className="size-8 shrink-0"
         onClick={() => jump(activeIndex + 1)}
         disabled={messages.length < 2}
         aria-label="Next pinned message"
@@ -85,7 +85,7 @@ export function ChatPinnedNavigation({
             type="button"
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0"
+            className="size-8 shrink-0"
             aria-label={`Show all ${messages.length} pinned messages`}
           >
             <List className="h-3.5 w-3.5" />
@@ -108,7 +108,7 @@ export function ChatPinnedNavigation({
                 <span className="line-clamp-2">
                   {messageText(message) || "Tool activity"}
                 </span>
-                <span className="text-[10px] capitalize text-muted-foreground">
+                <span className="text-xs capitalize text-muted-foreground">
                   {message.role}
                 </span>
               </button>

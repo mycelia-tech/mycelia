@@ -6,16 +6,16 @@ export const useTheme = () => {
 
   useEffect(() => {
     const root = window.document.documentElement;
-    root.classList.remove("light", "dark");
-
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = theme === "system" ? system.matches : theme === "dark";
+      root.classList.toggle("dark", dark);
+      root.classList.toggle("light", !dark);
+    };
+    apply();
     if (theme === "system") {
-      const systemTheme =
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
-      root.classList.add(systemTheme);
-    } else {
-      root.classList.add(theme);
+      system.addEventListener("change", apply);
+      return () => system.removeEventListener("change", apply);
     }
   }, [theme]);
 

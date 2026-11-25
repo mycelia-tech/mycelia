@@ -1112,7 +1112,7 @@ export default function ChatPage() {
         aria-live="polite"
         aria-busy={chat.status === "submitted" || chat.status === "streaming"}
         onScroll={(event) => setAtBottom(isNearBottom(event.currentTarget))}
-        className="relative flex-1 overflow-y-auto p-3 sm:p-4"
+        className="relative min-h-0 flex-1 overflow-y-auto bg-background/60 p-3 sm:p-4"
       >
         <ChatActivity
           messages={chat.messages}
@@ -1188,9 +1188,9 @@ export default function ChatPage() {
           ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">
               <div className="text-center">
-                <MessageSquare className="mx-auto mb-4 h-12 w-12 opacity-50" />
-                <p>Start a new conversation</p>
-                <p className="mt-1 text-xs">
+                <MessageSquare className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                <p className="text-lg font-semibold text-foreground">Start a new conversation</p>
+                <p className="mt-1 text-sm">
                   Choose a model and tools, then send a message.
                 </p>
               </div>
@@ -1212,11 +1212,11 @@ export default function ChatPage() {
                       "rounded-lg bg-primary/5 ring-2 ring-primary/60 ring-offset-2 ring-offset-background",
                   )}
                 >
-                  <div className="absolute right-1 top-1 z-10 flex rounded-md border bg-background/90 opacity-0 shadow-sm transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                  <div className="relative z-10 ml-auto flex w-fit rounded-md border bg-card shadow-sm [@media(hover:hover)]:absolute [@media(hover:hover)]:right-1 [@media(hover:hover)]:top-1 [@media(hover:hover)]:opacity-0 group-hover/message:opacity-100! group-focus-within/message:opacity-100!">
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7"
+                      className="size-8"
                       onClick={() => void toggleMessagePin(message)}
                       disabled={!routeChatId || !isValidObjectId(message.id)}
                       aria-label={message.metadata?.pinnedAt
@@ -1235,7 +1235,7 @@ export default function ChatPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7"
+                      className="size-8"
                       onClick={() => void copyMessage(messageText(message))}
                       disabled={!messageText(message)}
                       aria-label="Copy message"
@@ -1259,7 +1259,7 @@ export default function ChatPage() {
               ) && (
                 <div className="flex w-full justify-end py-2">
                   <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2 text-primary-foreground sm:max-w-[75%]">
-                    <p className="whitespace-pre-wrap text-sm">
+                    <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
                       {pendingMessage.text}
                     </p>
                   </div>
@@ -1352,7 +1352,7 @@ export default function ChatPage() {
           </Button>
         )}
       </div>
-      <div className="border-t p-3 sm:p-4">
+      <div className="border-t bg-card p-2.5 sm:p-3">
         {responseProgressLabel && (
           <ChatResponseProgress
             label={responseProgressLabel}
@@ -1442,7 +1442,7 @@ export default function ChatPage() {
   );
 
   return (
-    <div className="h-[calc(100vh-7.5rem)] min-h-[520px] w-full overflow-hidden rounded-lg border bg-background shadow-sm">
+    <div className="h-[var(--workspace-panel-height,calc(100dvh-7rem))] min-h-64 w-full overflow-hidden rounded-xl border bg-card shadow-sm">
       {isMobile
         ? (routeChatId || mobileDraftOpen ? thread : sidebar)
         : (

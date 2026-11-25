@@ -30,12 +30,12 @@ export function TimelineHeader({
   onClearTimeSelection,
 }: TimelineHeaderProps) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-2">
       {/* Player Controls - Left side */}
       <TimelinePlayerControls onGoToAudio={onGoToAudio} />
 
       {/* Right side controls */}
-      <div className="flex min-w-0 flex-wrap items-start gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         {hasTimeSelection && timeSelectionStart && timeSelectionEnd && (
           <TimelineSelectionActions
             startDate={timeSelectionStart}

@@ -945,7 +945,7 @@ const InferenceSettingsPage = () => {
               : "No providers are enabled for routing."}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" onClick={addProfile}>
             <Plus className="mr-2 h-4 w-4" />
             Add provider
@@ -962,7 +962,7 @@ const InferenceSettingsPage = () => {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 @xl/settings:grid-cols-2 @4xl/settings:grid-cols-3">
         {currentProfiles.map((profile) => {
           const health = healthById.get(profile.id);
           return (
@@ -971,7 +971,7 @@ const InferenceSettingsPage = () => {
               type="button"
               aria-pressed={profile.id === activeId}
               onClick={() => selectProfile(profile.id)}
-              className={`rounded-lg border p-4 text-left transition-colors ${
+              className={`min-w-0 rounded-lg border p-4 text-left [overflow-wrap:anywhere] transition-colors ${
                 profile.id === activeId
                   ? "border-primary bg-primary/5"
                   : "hover:bg-muted/50"
@@ -994,7 +994,7 @@ const InferenceSettingsPage = () => {
                 {profile.baseUrl || "URL not set"}
               </span>
               {health && (
-                <span className="mt-2 flex items-center gap-2 text-xs">
+                <span className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                   <span className="text-muted-foreground">Health</span>
                   <StatusBadge
                     tone={routeHealthTone(health.status)}
@@ -1009,7 +1009,7 @@ const InferenceSettingsPage = () => {
         })}
       </div>
 
-      <Card className="space-y-5 p-5">
+      <Card className="space-y-5 p-4 [overflow-wrap:anywhere] sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">Selected provider</h3>
@@ -1029,8 +1029,8 @@ const InferenceSettingsPage = () => {
           </label>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-6">
-          <div className="space-y-2 md:col-span-4">
+        <div className="grid gap-4 @2xl/settings:grid-cols-6">
+          <div className="space-y-2 @2xl/settings:col-span-4">
             <Label htmlFor="llmName">Provider name</Label>
             <Input
               id="llmName"
@@ -1042,7 +1042,7 @@ const InferenceSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-1">
+          <div className="space-y-2 @2xl/settings:col-span-1">
             <Label htmlFor="llmPriority">Priority</Label>
             <Input
               id="llmPriority"
@@ -1057,7 +1057,7 @@ const InferenceSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-1">
+          <div className="space-y-2 @2xl/settings:col-span-1">
             <Label htmlFor="llmConcurrency" title="Simultaneous requests">
               Parallel req.
             </Label>
@@ -1074,7 +1074,7 @@ const InferenceSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-4">
+          <div className="space-y-2 @2xl/settings:col-span-4">
             <Label htmlFor="llmBaseUrl">OpenAI-compatible base URL</Label>
             <Input
               id="llmBaseUrl"
@@ -1087,7 +1087,7 @@ const InferenceSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-2">
+          <div className="space-y-2 @2xl/settings:col-span-2">
             <Label htmlFor="llmApiKey">API key</Label>
             <Input
               id="llmApiKey"
@@ -1140,9 +1140,9 @@ const InferenceSettingsPage = () => {
             models; in fixed mode an empty alias is skipped. Profiles can be
             saved while offline or before any model is selected.
           </p>
-          <div className="mt-3 grid gap-4 md:grid-cols-3">
+          <div className="mt-3 grid grid-cols-1 gap-4 @2xl/settings:grid-cols-3">
             {MODEL_ALIASES.map((alias) => (
-              <div key={alias} className="space-y-2">
+              <div key={alias} className="min-w-0 space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor={`alias-${alias}`} className="capitalize">
                     {alias}
@@ -1353,7 +1353,7 @@ const InferenceSettingsPage = () => {
         )}
       </Card>
 
-      <Card className="space-y-5 p-5">
+      <Card className="space-y-5 p-4 [overflow-wrap:anywhere] sm:p-5">
         <div>
           <h3 className="text-lg font-semibold">Model routing for tasks</h3>
           <div className="text-sm text-muted-foreground">
@@ -1463,7 +1463,7 @@ const InferenceSettingsPage = () => {
                     placeholder={`Use default: ${globalAlias}${
                       globalModel ? ` → ${globalModel}` : ""
                     }`}
-                    className="flex-1"
+                    className="min-w-0 flex-1"
                     prefetch
                   />
                   <Button
@@ -1502,7 +1502,7 @@ const InferenceSettingsPage = () => {
                           [route.workerType]: model,
                         }))}
                       placeholder="Use the provider route's configured fallback"
-                      className="flex-1"
+                      className="min-w-0 flex-1"
                       prefetch
                     />
                     <Button

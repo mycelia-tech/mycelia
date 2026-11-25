@@ -97,8 +97,8 @@ function SummaryHistoryCard({ entry }: { entry: SummaryHistoryEntry }) {
       : undefined;
   const modelName = entry.executedModel?.split("/").pop() || "Unknown model";
   return (
-    <Card className="overflow-hidden rounded-2xl border-border/60 shadow-sm transition-colors hover:border-primary/30">
-      <div className="space-y-4 p-5 sm:p-6">
+    <Card className="overflow-hidden rounded-xl border-border shadow-sm transition-colors hover:border-primary/30">
+      <div className="space-y-3 p-4 sm:p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-2">
             <Link
@@ -132,7 +132,7 @@ function SummaryHistoryCard({ entry }: { entry: SummaryHistoryEntry }) {
             </Link>
           </Button>
         </div>
-        <p className="line-clamp-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+        <p className="line-clamp-3 max-w-prose whitespace-pre-line text-base leading-relaxed">
           {summaryPreview(entry.text)}
         </p>
         <details className="group">
@@ -140,7 +140,7 @@ function SummaryHistoryCard({ entry }: { entry: SummaryHistoryEntry }) {
             <span className="group-open:hidden">Read summary</span>
             <span className="hidden group-open:inline">Close summary</span>
           </summary>
-          <div className="prose prose-sm mt-4 max-w-none border-t pt-4 dark:prose-invert">
+          <div className="prose mt-4 max-w-prose border-t pt-4 dark:prose-invert">
             <Markdown>{entry.text}</Markdown>
           </div>
         </details>
@@ -220,7 +220,7 @@ function SummaryTaskCard({ task }: { task: SummaryTaskEntry }) {
             <Badge variant={taskStateVariant(task.state)}>
               {taskStateLabel(task.state)}
             </Badge>
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className="break-all font-mono text-xs text-muted-foreground">
               {task.id}
             </span>
           </div>
@@ -633,7 +633,7 @@ export default function SummaryHistoryPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
         <div>
           <div className="flex items-center gap-2">
@@ -658,7 +658,7 @@ export default function SummaryHistoryPage() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-1 rounded-xl bg-muted/50 p-1 w-fit">
+      <div role="group" aria-label="History views" className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg border bg-muted p-1">
         {([
           ["summaries", "Summaries", FileText],
           ["tasks", "Activity", ListChecks],
@@ -667,8 +667,9 @@ export default function SummaryHistoryPage() {
           <Button
             key={key}
             variant={view === key ? "secondary" : "ghost"}
-            className={`gap-2 rounded-lg ${
-              view === key ? "bg-background shadow-sm" : "text-muted-foreground"
+            aria-pressed={view === key}
+            className={`gap-1.5 rounded-md px-2.5 sm:px-3 ${
+              view === key ? "bg-card text-primary shadow-sm" : "text-muted-foreground"
             }`}
             onClick={() => changeView(key)}
           >
@@ -678,17 +679,17 @@ export default function SummaryHistoryPage() {
         ))}
       </div>
 
-      <Card className="overflow-hidden rounded-2xl border-border/60 shadow-sm">
-        <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3 sm:p-6">
+      <Card className="overflow-hidden rounded-xl border-border shadow-sm">
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {view === "tasks" && (
             <div className="space-y-2">
-              <Label>Task status</Label>
+              <Label htmlFor="history-task-status">Task status</Label>
               <Select
                 value={taskStatus}
                 onValueChange={(value) =>
                   setTaskStatus(value as SummaryTaskStatus)}
               >
-                <SelectTrigger>
+                <SelectTrigger id="history-task-status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -705,13 +706,13 @@ export default function SummaryHistoryPage() {
           )}
           {view === "models" && (
             <div className="space-y-2">
-              <Label>Output type</Label>
+              <Label htmlFor="history-output-type">Output type</Label>
               <Select
                 value={artifactType}
                 onValueChange={(value) =>
                   setArtifactType(value as ModelArtifactType | "all")}
               >
-                <SelectTrigger>
+                <SelectTrigger id="history-output-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -726,11 +727,9 @@ export default function SummaryHistoryPage() {
             </div>
           )}
           <div className="space-y-2">
-            <Label>
-              Model
-            </Label>
+            <Label htmlFor="history-model">Model</Label>
             <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
+              <SelectTrigger id="history-model">
                 <SelectValue placeholder="All models" />
               </SelectTrigger>
               <SelectContent>
@@ -744,14 +743,14 @@ export default function SummaryHistoryPage() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>
+            <Label htmlFor="history-date">
               {view === "tasks" ? "Task creation date" : "Period (generated)"}
             </Label>
             <Select
               value={datePreset}
               onValueChange={(value) => applyDatePreset(value as DatePreset)}
             >
-              <SelectTrigger>
+              <SelectTrigger id="history-date">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -788,7 +787,7 @@ export default function SummaryHistoryPage() {
           )}
         </div>
         {datePreset === "custom" && (
-          <div className="mx-5 mb-5 rounded-xl border bg-muted/20 p-4 sm:mx-6">
+          <div className="mx-4 mb-4 rounded-lg border bg-muted/30 p-3">
             <DateRangePicker
               label={view === "tasks" ? "Created range" : "Generated range"}
               value={{
@@ -806,7 +805,7 @@ export default function SummaryHistoryPage() {
           </div>
         )}
         <div
-          className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-5 py-3 sm:px-6"
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-4 py-2"
           aria-live="polite"
         >
           <p className="text-sm text-muted-foreground">
@@ -842,42 +841,45 @@ export default function SummaryHistoryPage() {
           </Button>
         </div>
         {view === "summaries" && (
-          <div className="space-y-3 border-t border-border/60 bg-muted/20 p-5 sm:p-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="min-w-0 flex-1 space-y-2">
-                <Label>Rerun with</Label>
-                <ModelSelector
-                  value={rerunTargetModel}
-                  onChange={setRerunTargetModel}
-                  providerValue={rerunTargetProviderId}
-                  onSelectWithProvider={(_model, providerProfileId) =>
-                    setRerunTargetProviderId(providerProfileId)}
-                  placeholder="Choose a model"
-                  prefetch
-                />
+          <details className="border-t bg-muted/30 px-4">
+            <summary className="cursor-pointer py-3 text-sm font-semibold text-primary">Rerun selected summaries</summary>
+            <div className="space-y-2 pb-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Label>Rerun with</Label>
+                  <ModelSelector
+                    value={rerunTargetModel}
+                    onChange={setRerunTargetModel}
+                    providerValue={rerunTargetProviderId}
+                    onSelectWithProvider={(_model, providerProfileId) =>
+                      setRerunTargetProviderId(providerProfileId)}
+                    placeholder="Choose a model"
+                    prefetch
+                  />
+                </div>
+                <Button
+                  className="gap-2 rounded-lg"
+                  onClick={rerunSummaries}
+                  disabled={!canRerun}
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${rerunPending ? "animate-spin" : ""}`}
+                  />
+                  {rerunPending ? "Queueing…" : "Rerun summaries"}
+                </Button>
               </div>
-              <Button
-                className="gap-2 rounded-lg"
-                onClick={rerunSummaries}
-                disabled={!canRerun}
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${rerunPending ? "animate-spin" : ""}`}
-                />
-                {rerunPending ? "Queueing…" : "Rerun summaries"}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {amount == null && !dateBounds
-                ? "Set an amount or period to choose what to rerun."
-                : "One new version per conversation. Originals are kept."}
-            </p>
-            {rerunResult && (
-              <p role="status" className="rounded-lg bg-background p-3 text-sm">
-                {rerunResult}
+              <p className="text-xs text-muted-foreground">
+                {amount == null && !dateBounds
+                  ? "Set an amount or period to choose what to rerun."
+                  : "One new version per conversation. Originals are kept."}
               </p>
-            )}
-          </div>
+              {rerunResult && (
+                <p role="status" className="rounded-lg bg-background p-3 text-sm">
+                  {rerunResult}
+                </p>
+              )}
+            </div>
+          </details>
         )}
       </Card>
 
@@ -885,7 +887,7 @@ export default function SummaryHistoryPage() {
         ? (
           <>
             {query.isLoading && (
-              <Card className="p-10 text-center text-muted-foreground">
+              <Card className="p-5 text-center text-muted-foreground">
                 Loading summary history…
               </Card>
             )}
@@ -898,7 +900,7 @@ export default function SummaryHistoryPage() {
             )}
             {!query.isLoading && !query.isError && data.entries.length === 0 &&
               (
-                <Card className="p-10 text-center">
+                <Card className="p-5 text-center">
                   <FileText className="mx-auto h-10 w-10 text-muted-foreground" />
                   <h2 className="mt-3 font-semibold">
                     No saved summaries match
@@ -937,35 +939,35 @@ export default function SummaryHistoryPage() {
         : view === "tasks"
         ? (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <Card className="p-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+              <Card className="p-3">
                 <p className="text-sm text-muted-foreground">All tasks</p>
                 <p className="mt-1 text-2xl font-semibold">
                   {taskData.counts.total.toLocaleString()}
                 </p>
               </Card>
-              <Card className="p-4">
+              <Card className="p-3">
                 <CheckCircle2 className="h-4 w-4 text-green-500" />
                 <p className="mt-2 text-sm text-muted-foreground">Successful</p>
                 <p className="mt-1 text-2xl font-semibold">
                   {taskData.counts.completed.toLocaleString()}
                 </p>
               </Card>
-              <Card className="p-4">
+              <Card className="p-3">
                 <CircleDashed className="h-4 w-4 text-amber-500" />
                 <p className="mt-2 text-sm text-muted-foreground">Unfinished</p>
                 <p className="mt-1 text-2xl font-semibold">
                   {taskData.counts.unfinished.toLocaleString()}
                 </p>
               </Card>
-              <Card className="p-4">
+              <Card className="p-3">
                 <AlertTriangle className="h-4 w-4 text-destructive" />
                 <p className="mt-2 text-sm text-muted-foreground">Failed</p>
                 <p className="mt-1 text-2xl font-semibold">
                   {taskData.counts.failed.toLocaleString()}
                 </p>
               </Card>
-              <Card className="p-4">
+              <Card className="p-3">
                 <Ban className="h-4 w-4 text-muted-foreground" />
                 <p className="mt-2 text-sm text-muted-foreground">Cancelled</p>
                 <p className="mt-1 text-2xl font-semibold">
@@ -975,7 +977,7 @@ export default function SummaryHistoryPage() {
             </div>
 
             {taskQuery.isLoading && (
-              <Card className="p-10 text-center text-muted-foreground">
+              <Card className="p-5 text-center text-muted-foreground">
                 Loading summarization tasks…
               </Card>
             )}
@@ -988,7 +990,7 @@ export default function SummaryHistoryPage() {
             )}
             {!taskQuery.isLoading && !taskQuery.isError &&
               taskData.entries.length === 0 && (
-              <Card className="p-10 text-center">
+              <Card className="p-5 text-center">
                 <ListChecks className="mx-auto h-10 w-10 text-muted-foreground" />
                 <h2 className="mt-3 font-semibold">
                   No tasks match these filters
@@ -1008,7 +1010,7 @@ export default function SummaryHistoryPage() {
         : (
           <>
             {modelArtifactQuery.isLoading && (
-              <Card className="p-10 text-center text-muted-foreground">
+              <Card className="p-5 text-center text-muted-foreground">
                 Loading model-produced data…
               </Card>
             )}
@@ -1022,7 +1024,7 @@ export default function SummaryHistoryPage() {
             )}
             {!modelArtifactQuery.isLoading && !modelArtifactQuery.isError &&
               artifactData.entries.length === 0 && (
-              <Card className="p-10 text-center">
+              <Card className="p-5 text-center">
                 <Cpu className="mx-auto h-10 w-10 text-muted-foreground" />
                 <h2 className="mt-3 font-semibold">
                   No model outputs match these filters

@@ -35,7 +35,7 @@ export function MainNavigation(
   return (
     <nav
       aria-label="Main navigation"
-      className="grid grid-cols-2 gap-1 sm:grid-cols-3 xl:flex xl:flex-wrap"
+      className="grid grid-cols-2 gap-1 sm:grid-cols-3 xl:flex xl:items-center xl:gap-0.5"
     >
       {destinations.map(({ to, label, icon: Icon }) => (
         <NavLink
@@ -44,9 +44,9 @@ export function MainNavigation(
           onClick={onNavigate}
           data-testid={label === "Pipeline" ? "nav-pipeline" : undefined}
           className={({ isActive }) =>
-            `flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+            `flex min-h-10 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium xl:gap-1.5 xl:px-2 2xl:px-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
               isActive
-                ? "bg-primary text-primary-foreground"
+                ? "bg-accent text-accent-foreground ring-1 ring-inset ring-primary/30"
                 : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             }`}
         >
@@ -55,7 +55,7 @@ export function MainNavigation(
           {label === "Jobs" && runningCount > 0 && (
             <Badge
               variant="secondary"
-              className="ml-1"
+              className="rounded-full px-1.5 py-0 text-xs tabular-nums"
               aria-label={`${runningCount} jobs in progress`}
             >
               {runningCount}

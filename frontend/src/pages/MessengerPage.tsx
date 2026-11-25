@@ -1,7 +1,7 @@
 import { RequestError } from "@/components/RequestError";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Info } from "lucide-react";
+import { ArrowLeft, Info } from "lucide-react";
 import * as InfiniteScrollModule from "react-infinite-scroll-component";
 const InfiniteScroll = (InfiniteScrollModule as any).default ||
   InfiniteScrollModule;
@@ -320,13 +320,13 @@ export default function MessengerPage() {
   const updatedAtFormatted = useFormattedTime(updatedAtDate);
 
   return (
-    <div className="h-[calc(100vh-6rem)] w-full overflow-hidden border rounded-lg shadow-sm bg-background">
+    <div className="h-[var(--workspace-panel-height,calc(100dvh-7rem))] min-h-64 w-full overflow-hidden rounded-xl border bg-card shadow-sm">
       <ResizablePanelGroup direction="horizontal">
         {/* Chat List */}
-        <ResizablePanel defaultSize={30} minSize={20}>
+        <ResizablePanel defaultSize={30} minSize={20} maxSize={45} className={chatId ? "hidden md:block" : undefined}>
           <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-muted/40">
-              <h2 className="font-semibold">Chats</h2>
+            <div className="border-b bg-muted/40 px-4 py-3">
+              <h1 className="text-lg font-semibold">Chats</h1>
             </div>
             <ScrollArea className="flex-1">
               {chatsError && (
@@ -367,18 +367,27 @@ export default function MessengerPage() {
           </div>
         </ResizablePanel>
 
-        <ResizableHandle />
+        <ResizableHandle withHandle className="hidden md:flex" />
 
         {/* Message Thread */}
-        <ResizablePanel defaultSize={70}>
+        <ResizablePanel defaultSize={70} className={chatId ? undefined : "hidden md:block"}>
           {chatId
             ? (
               <div className="h-full flex flex-col">
-                <div className="p-4 border-b flex items-center justify-between bg-muted/40">
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <h2 className="font-semibold text-sm">
-                        {selectedChat?.name}
+                <div className="flex items-center justify-between gap-2 border-b bg-card px-3 py-2.5 sm:px-4">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="shrink-0 md:hidden"
+                      onClick={() => navigate("/messaging")}
+                      aria-label="Back to chats"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-lg font-semibold" title={selectedChat?.name}>
+                        {selectedChat?.name || "Messages"}
                       </h2>
                       <p className="text-xs text-muted-foreground capitalize">
                         {selectedChat?.platform}
@@ -391,7 +400,8 @@ export default function MessengerPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0"
+                          aria-label="Chat information"
+                          className="shrink-0"
                         >
                           <Info className="h-4 w-4" />
                         </Button>
@@ -431,7 +441,7 @@ export default function MessengerPage() {
                                 <span className="text-sm font-medium text-muted-foreground">
                                   External ID:
                                 </span>
-                                <span className="text-sm font-mono text-xs">
+                                <span className="break-all font-mono text-sm">
                                   {String(selectedChat.externalId)}
                                 </span>
                               </div>
@@ -439,7 +449,7 @@ export default function MessengerPage() {
                                 <span className="text-sm font-medium text-muted-foreground">
                                   Chat ID:
                                 </span>
-                                <span className="text-sm font-mono text-xs">
+                                <span className="break-all font-mono text-sm">
                                   {selectedChat._id.toString()}
                                 </span>
                               </div>
@@ -494,7 +504,7 @@ export default function MessengerPage() {
                 </div>
                 <div
                   ref={scrollContainerRef}
-                  className="flex-1 overflow-hidden"
+                  className="min-h-0 flex-1 overflow-hidden"
                 >
                   {loadingMessages
                     ? (
@@ -568,7 +578,7 @@ export default function MessengerPage() {
                             display: "flex",
                             flexDirection: "column-reverse",
                           }}
-                          className="p-4 space-y-4"
+                          className="gap-2 bg-background/60 p-3 sm:p-4"
                         >
                           {messages.map((msg) => {
                             const messageId = msg._id.toString();

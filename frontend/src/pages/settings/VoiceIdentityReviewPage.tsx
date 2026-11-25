@@ -1837,9 +1837,10 @@ export default function VoiceIdentityReviewPage() {
             Label voices → check accuracy → classify existing audio.
           </p>
         </div>
-        <div className="max-w-md space-y-1 text-right">
+        <div className="min-w-0 max-w-full space-y-1 sm:max-w-md sm:text-right">
           <Button
             variant="outline"
+            className="h-auto min-h-9 max-w-full whitespace-normal break-all py-1.5 text-left"
             onClick={() => reenroll.mutate()}
             disabled={!profileId || reenroll.isPending || !diarizatorReady}
             title={reenrollUnavailableReason ?? undefined}
@@ -1855,7 +1856,7 @@ export default function VoiceIdentityReviewPage() {
           )}
         </div>
       </div>
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 @3xl/settings:grid-cols-3">
         <Card
           className={primary?.embeddingSpaceId
             ? "border-green-500/30"
@@ -2093,8 +2094,8 @@ export default function VoiceIdentityReviewPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="sticky top-20 z-10 grid gap-2 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur md:grid-cols-[minmax(12rem,1fr)_minmax(15rem,1fr)_auto_auto]">
-            <label className="text-xs text-muted-foreground">
+          <div className="grid gap-2 @4xl/settings:sticky @4xl/settings:top-3 @4xl/settings:z-10 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur @lg/settings:grid-cols-2 @4xl/settings:grid-cols-[minmax(0,1fr)_minmax(12rem,1fr)_auto_auto]">
+            <label className="min-w-0 text-sm text-muted-foreground">
               Saved session
               <select
                 className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm text-foreground"
@@ -2127,7 +2128,7 @@ export default function VoiceIdentityReviewPage() {
                 })}
               </select>
             </label>
-            <div className="flex min-w-48 items-end gap-2 text-xs">
+            <div className="flex min-w-0 items-end gap-2 text-xs">
               <div className="flex-1">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Current stream</span>
@@ -2140,7 +2141,7 @@ export default function VoiceIdentityReviewPage() {
                   className="mt-2 h-2"
                   value={sessionProgressPercent}
                 />
-                <p className="mt-1 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {!reviewSession
                     ? "Choose or start a stream"
                     : reviewSession.status === "active"
@@ -2161,7 +2162,7 @@ export default function VoiceIdentityReviewPage() {
                     />
                     <span>
                       <strong className="block">Continuous</strong>
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         load next automatically
                       </span>
                     </span>
@@ -2416,7 +2417,7 @@ export default function VoiceIdentityReviewPage() {
                         1 · Find clips
                       </p>
                       <Button
-                        className="w-full"
+                        className="h-auto min-h-9 w-full whitespace-normal py-2"
                         variant="outline"
                         onClick={startSourcePreview}
                         disabled={!reviewProfileId ||
@@ -2454,7 +2455,7 @@ export default function VoiceIdentityReviewPage() {
                         2 · Start the stream
                       </p>
                       <Button
-                        className="w-full"
+                        className="h-auto min-h-9 w-full whitespace-normal py-2"
                         onClick={startAdvancedReview}
                         disabled={!reviewProfileId || createSession.isPending ||
                           sourcePreviewDirty || !sourcePreview ||
@@ -3043,7 +3044,7 @@ export default function VoiceIdentityReviewPage() {
                   return (
                     <div key={id}>
                       {item.groupId !== previousGroupId && group && (
-                        <div className="sticky top-0 flex items-center justify-between border-b bg-muted/90 px-3 py-1 text-[11px] text-muted-foreground backdrop-blur">
+                        <div className="sticky top-0 flex items-center justify-between border-b bg-muted/90 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
                           <span>
                             {group.segmentIds.length > 1
                               ? `Group · ${group.segmentIds.length} nearby segments`
@@ -3056,7 +3057,7 @@ export default function VoiceIdentityReviewPage() {
                         </div>
                       )}
                       <div
-                        className={`flex min-w-[48rem] items-center border-b transition-colors ${
+                        className={`flex min-w-0 items-center border-b transition-colors ${
                           id === reviewId
                             ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40"
                             : "hover:bg-muted/50"
@@ -3064,7 +3065,7 @@ export default function VoiceIdentityReviewPage() {
                       >
                         <button
                           type="button"
-                          className="grid h-10 flex-1 grid-cols-[2.5rem_8rem_4rem_minmax(7rem,1fr)_10rem] items-center gap-2 px-3 text-left text-xs"
+                          className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-2 text-left text-sm @4xl/settings:grid-cols-[2.5rem_8rem_3rem_minmax(0,1fr)_minmax(6rem,0.8fr)]"
                           onClick={() => openReviewSegment(id)}
                         >
                           <span className="tabular-nums text-muted-foreground">
@@ -3080,7 +3081,7 @@ export default function VoiceIdentityReviewPage() {
                           >
                             {duration.toFixed(1)}s
                           </span>
-                          <span className="truncate text-muted-foreground">
+                          <span className="col-span-3 break-words text-muted-foreground @4xl/settings:col-span-1">
                             {(segment as any).speaker ?? "speaker unknown"}
                             {duration < 1
                               ? " · very short; skip if unclear/noise"
@@ -3092,11 +3093,11 @@ export default function VoiceIdentityReviewPage() {
                               : ""}
                           </span>
                           <span
-                            className={item.decisionSummary
+                            className={`col-span-3 @4xl/settings:col-span-1 ${item.decisionSummary
                               ? "font-medium text-green-600"
                               : item.status === "skipped"
                               ? "text-amber-600"
-                              : "text-muted-foreground"}
+                              : "text-muted-foreground"}`}
                           >
                             {identityLabel}
                             {!item.decisionSummary && typeof score === "number"
@@ -3353,7 +3354,7 @@ export default function VoiceIdentityReviewPage() {
                         <div
                           key={item.decisionId + "-" +
                             normalizeObjectId(item.segment._id)}
-                          className={`grid gap-2 border-b px-3 py-2 text-xs last:border-b-0 sm:grid-cols-[minmax(12rem,1fr)_8rem_auto_auto] sm:items-center ${
+                          className={`grid gap-2 border-b px-3 py-2 text-xs last:border-b-0 @3xl/settings:grid-cols-[minmax(0,1fr)_8rem_auto_auto] @3xl/settings:items-center ${
                             historyEditingItem?.decisionId === item.decisionId
                               ? "bg-sky-500/10"
                               : "hover:bg-muted/40"
@@ -3697,7 +3698,7 @@ export default function VoiceIdentityReviewPage() {
                       }%`
                       : "—"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {calibrationPreview.validationMetrics
                       ? `${calibrationPreview.validationMetrics.positives} ${
                         primary?.name ?? "target"
@@ -3716,7 +3717,7 @@ export default function VoiceIdentityReviewPage() {
                       ? calibrationPreview.validationMetrics.identified
                       : "—"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     At least 20 independent matches are required
                   </p>
                 </div>
@@ -3770,7 +3771,7 @@ export default function VoiceIdentityReviewPage() {
                   <p className="text-xl font-semibold tabular-nums">
                     {calibrationPreview.validationMetrics?.uncertain ?? "—"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Safe fallback; review later if useful
                   </p>
                 </div>
@@ -3889,7 +3890,7 @@ export default function VoiceIdentityReviewPage() {
                               Problem {calibrationEditingIndex + 1} of{" "}
                               {visibleCalibrationIssues.length}
                             </span>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
                               <Button
                                 type="button"
                                 size="sm"
@@ -4051,7 +4052,7 @@ export default function VoiceIdentityReviewPage() {
                           return (
                             <div
                               key={issue.kind + "-" + issue.segmentId}
-                              className={`grid gap-2 border-b px-3 py-2 text-xs last:border-b-0 sm:grid-cols-[minmax(14rem,1fr)_7rem_auto_auto] sm:items-center ${
+                              className={`grid gap-2 border-b px-3 py-2 text-xs last:border-b-0 @3xl/settings:grid-cols-[minmax(0,1fr)_7rem_auto_auto] @3xl/settings:items-center ${
                                 calibrationEditingItem?.decisionId ===
                                     issue.decisionId
                                   ? "bg-sky-500/10"
@@ -4412,7 +4413,7 @@ export default function VoiceIdentityReviewPage() {
                       <div
                         key={recording.id}
                         title="Calibration source group"
-                        className="grid gap-2 rounded-md border p-3 text-sm md:grid-cols-[minmax(14rem,1fr)_auto_minmax(13rem,auto)] md:items-center"
+                        className="grid gap-2 rounded-md border p-3 text-sm @4xl/settings:grid-cols-[minmax(0,1fr)_auto_minmax(13rem,auto)] @4xl/settings:items-center"
                       >
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
@@ -4578,7 +4579,7 @@ export default function VoiceIdentityReviewPage() {
               )}
 
               <Button
-                className="w-full"
+                className="h-auto min-h-9 w-full whitespace-normal py-2"
                 onClick={() => saveCalibration.mutate()}
                 disabled={saveCalibration.isPending || !canSaveCalibration}
               >
@@ -4722,7 +4723,7 @@ export default function VoiceIdentityReviewPage() {
                     {identityStatus.latestCampaign.estimatedBatches ?? "?"}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {identityStatus.latestCampaign.currentJobId && (
                     <Button asChild size="sm" variant="outline">
                       <Link

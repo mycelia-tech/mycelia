@@ -2,7 +2,6 @@ import { Radio, RefreshCw } from "lucide-react";
 import { useAudioRecording } from "@/hooks/useAudioRecording";
 import { RecordingControls } from "@/components/audio/RecordingControls";
 import { RecordingStatus } from "@/components/audio/RecordingStatus";
-import { AudioVisualizer } from "@/components/audio/AudioVisualizer";
 import { Card } from "@/components/ui/card";
 import {
   Select,
@@ -28,10 +27,10 @@ export default function CreateAudioRecordPage() {
   } = useSettingsStore();
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="w-full max-w-2xl space-y-4">
       <div className="flex items-center gap-2">
         <Radio className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold">Audio Recording</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Audio Recording</h1>
       </div>
 
       <Card className="p-4">
@@ -74,7 +73,7 @@ export default function CreateAudioRecordPage() {
           </Select>
 
           {recording.availableDevices.length === 0 && (
-            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 p-3">
               <span className="text-sm text-muted-foreground">
                 Microphone permission may be needed
               </span>
@@ -89,7 +88,7 @@ export default function CreateAudioRecordPage() {
             </div>
           )}
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="sample-rate-select">Sample Rate</Label>
             <Select
               value={recording.sampleRate.toString()}
@@ -110,9 +109,9 @@ export default function CreateAudioRecordPage() {
             </Select>
           </div>
 
-          <div className="space-y-3">
-            <Label>Audio Processing</Label>
-            <div className="space-y-2">
+          <fieldset className="border-t">
+            <legend className="pr-2 text-sm font-semibold">Audio Processing</legend>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-3">
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="echo-cancellation"
@@ -159,18 +158,11 @@ export default function CreateAudioRecordPage() {
                 </Label>
               </div>
             </div>
-          </div>
-
-          {!recording.canAccessMicrophone && (
-            <p className="text-sm text-muted-foreground">
-              Microphone access requires HTTPS or localhost
-            </p>
-          )}
+          </fieldset>
         </div>
       </Card>
 
       <RecordingControls recording={recording} />
-
       <RecordingStatus recording={recording} />
     </div>
   );

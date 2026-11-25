@@ -401,7 +401,7 @@ function SpeakerIdentityLauncher({
 
       <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <CollapsibleTrigger asChild>
-          <Button type="button" variant="outline" size="sm">
+          <Button type="button" variant="outline" size="sm" className="h-auto min-h-8 max-w-full whitespace-normal py-1.5 text-left">
             Advanced · period and technical details
             <ChevronDown
               className={`ml-2 h-4 w-4 transition-transform ${

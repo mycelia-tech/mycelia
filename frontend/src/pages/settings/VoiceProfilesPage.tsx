@@ -834,7 +834,7 @@ const VoiceProfilesPage = () => {
   return (
     <div className="space-y-6">
       <VoiceProfileContextBar selection={voiceSelection} />
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold">Voice Profiles</h2>
           <p className="text-muted-foreground">
@@ -989,7 +989,7 @@ const VoiceProfilesPage = () => {
 
                   {unattachedSamples.length > 0 && !selectedSampleId && (
                     <div className="space-y-2 pt-2 border-t">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
                         <Label className="text-sm font-medium">
                           Saved Voice Samples
                         </Label>
@@ -1084,7 +1084,7 @@ const VoiceProfilesPage = () => {
               embedding. One Timeline clip can be used for both workflows.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex min-w-0 flex-wrap gap-2">
             <Button asChild size="sm" variant="outline">
               <Link
                 to={withVoiceProfile(
@@ -1156,18 +1156,20 @@ const VoiceProfilesPage = () => {
                     : undefined}
                 >
                   <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-10 h-10 rounded-full flex items-center justify-center cursor-pointer"
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex min-w-0 max-w-full items-center gap-3">
+                        <button
+                          type="button"
+                          aria-label={`Edit ${profile.name}`}
+                          className="flex size-10 shrink-0 items-center justify-center rounded-full"
                           style={{ backgroundColor: profile.color }}
                           onClick={() => openEditDialog(profile)}
                         >
                           <UserRound className="w-5 h-5 text-white" />
-                        </div>
-                        <div>
-                          <CardTitle className="text-lg flex items-center gap-2">
-                            {profile.name}
+                        </button>
+                        <div className="min-w-0">
+                          <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
+                            <span className="min-w-0 max-w-full break-all">{profile.name}</span>
                             {profile.is_primary && (
                               <Badge variant="secondary">My Voice</Badge>
                             )}
@@ -1193,7 +1195,7 @@ const VoiceProfilesPage = () => {
                           </CardDescription>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                         {isArchived
                           ? (
                             <Button
@@ -1259,6 +1261,7 @@ const VoiceProfilesPage = () => {
                             <Button
                               variant="ghost"
                               size="icon"
+                              aria-label={`Edit profile ${profile.name}`}
                               onClick={() => openEditDialog(profile)}
                             >
                               <Pencil className="w-4 h-4" />
@@ -1312,11 +1315,11 @@ const VoiceProfilesPage = () => {
                           {profileSamples.map((sample) => (
                             <div
                               key={getSampleId(sample)}
-                              className="flex items-center gap-2 p-2 border rounded"
+                              className="flex flex-wrap items-center gap-2 rounded border p-2"
                             >
-                              <div className="min-w-0 flex-1 space-y-1">
+                              <div className="min-w-0 basis-full space-y-1 @lg/settings:flex-1">
                                 <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                                  <span className="max-w-64 truncate font-medium text-foreground">
+                                  <span className="max-w-full truncate @lg/settings:max-w-64 font-medium text-foreground">
                                     {sample.filename.split("/").at(-1) ??
                                       sample.filename}
                                   </span>
@@ -1328,7 +1331,7 @@ const VoiceProfilesPage = () => {
                                   {sample.metadata?.source && (
                                     <Badge
                                       variant="outline"
-                                      className="text-[10px]"
+                                      className="text-xs"
                                     >
                                       {sample.metadata.source.replaceAll(
                                         "_",
@@ -1405,10 +1408,10 @@ const VoiceProfilesPage = () => {
             {unattachedSamples.map((sample) => (
               <div
                 key={getSampleId(sample)}
-                className="flex items-center gap-3 p-3 border rounded"
+                className="flex flex-wrap items-center gap-3 rounded border p-3"
               >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium mb-1">
+                <div className="min-w-0 basis-full @lg/settings:flex-1">
+                  <div className="mb-1 break-all text-sm font-medium">
                     {sample.metadata?.speaker_name || "Unknown"}
                   </div>
                   <WaveformPlayer

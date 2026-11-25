@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AlertCircle, Shield } from "lucide-react";
 import { ApiClient } from "@/lib/api";
-import { useTheme } from "@/hooks/useTheme";
 
 interface ConsentDetails {
   client_id: string;
@@ -18,7 +17,6 @@ const defaultScopeYaml = `- resource: "*"
   effect: allow`;
 
 const OAuthConsentPage = () => {
-  useTheme(); // Respect user theme settings
   const [searchParams] = useSearchParams();
   const requestId = searchParams.get("request_id");
 
@@ -104,7 +102,7 @@ const OAuthConsentPage = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="max-w-md w-full space-y-6">
+      <div className="max-w-lg w-full space-y-4">
         <div className="text-center space-y-2">
           <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
             <Shield className="h-6 w-6 text-primary" />
@@ -115,10 +113,10 @@ const OAuthConsentPage = () => {
           </p>
         </div>
 
-        <div className="p-6 border rounded-lg space-y-4 bg-card">
+        <div className="p-4 sm:p-5 border rounded-xl space-y-4 bg-card">
           <div>
             <h2 className="text-sm font-medium text-muted-foreground mb-1">Application</h2>
-            <p className="text-lg font-semibold">{details.client_name}</p>
+            <p className="break-words text-lg font-semibold">{details.client_name}</p>
           </div>
 
           <div className="space-y-2">
@@ -127,7 +125,7 @@ const OAuthConsentPage = () => {
               id="scope"
               value={scopeYaml}
               onChange={(e) => setScopeYaml(e.target.value)}
-              className="flex min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm font-mono focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex min-h-36 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm font-mono focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               placeholder={defaultScopeYaml}
             />
             <p className="text-xs text-muted-foreground">

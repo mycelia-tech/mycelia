@@ -111,12 +111,12 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
 
   return (
     <div ref={containerRef} className={`relative ${className || ""}`}>
-      <div className="mb-1 flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md bg-muted/50 p-2">
         <div className="flex items-center gap-1">
           <Button
             variant="outline"
             size="icon"
-            className="h-7 w-7"
+            className="h-8 w-8"
             aria-label="Zoom in"
             title="Zoom in"
             onClick={() =>
@@ -130,7 +130,7 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
           <Button
             variant="outline"
             size="icon"
-            className="h-7 w-7"
+            className="h-8 w-8"
             aria-label="Zoom out"
             title="Zoom out"
             onClick={() =>
@@ -146,7 +146,7 @@ export const MultiTrackTimeline = memo(function MultiTrackTimeline({
           center={new Date((+start + +end) / 2)}
           onJump={timeline.zoomTo}
         />
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Scroll inside to zoom · Drag a track to move through time
         </p>
       </div>

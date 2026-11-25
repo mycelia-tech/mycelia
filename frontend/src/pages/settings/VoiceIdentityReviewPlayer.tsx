@@ -408,7 +408,7 @@ export function VoiceIdentityReviewPlayer({
         </div>
       </div>
 
-      <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="grid gap-5 p-4 sm:p-6 @4xl/settings:grid-cols-[minmax(0,1fr)_16rem]">
         <div className="space-y-5">
           {editingLabel && (
             <div className="flex items-center justify-between gap-3 rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
@@ -456,7 +456,7 @@ export function VoiceIdentityReviewPlayer({
               <ArrowLeft className="mr-2 h-5 w-5" />
               <span className="text-left">
                 <span className="block">Not {profileName}</span>
-                <span className="block text-[11px] font-normal opacity-70">
+                <span className="block text-xs font-normal opacity-70">
                   clear other voice · calibration
                 </span>
               </span>
@@ -469,7 +469,7 @@ export function VoiceIdentityReviewPlayer({
             >
               <span className="text-left">
                 <span className="block">{profileName} · clear</span>
-                <span className="block text-[11px] font-normal opacity-80">
+                <span className="block text-xs font-normal opacity-80">
                   Timeline + calibration
                 </span>
               </span>
@@ -485,7 +485,7 @@ export function VoiceIdentityReviewPlayer({
             >
               <span className="text-left">
                 <span className="block">{profileName} · Timeline only</span>
-                <span className="block text-[11px] font-normal text-muted-foreground">
+                <span className="block text-xs font-normal text-muted-foreground">
                   overlap / mumble · not calibration
                 </span>
               </span>
@@ -501,7 +501,7 @@ export function VoiceIdentityReviewPlayer({
               <SkipForward className="mr-2 h-4 w-4" />
               <span className="text-left">
                 <span className="block">Noise / unclear</span>
-                <span className="block text-[11px] font-normal opacity-70">
+                <span className="block text-xs font-normal opacity-70">
                   no reliable speaker label
                 </span>
               </span>
@@ -535,7 +535,7 @@ export function VoiceIdentityReviewPlayer({
                     onClick={() => stopThen(() => onAssignProfile(profile.id))}
                     title={`Assign ${profile.name} · shortcut ${index + 1}`}
                   >
-                    <kbd className="mr-2 rounded border bg-background px-1.5 py-0.5 text-[10px]">
+                    <kbd className="mr-2 rounded border bg-background px-1.5 py-0.5 text-xs">
                       {index + 1}
                     </kbd>
                     <span className="truncate">{profile.name}</span>

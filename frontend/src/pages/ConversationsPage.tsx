@@ -75,31 +75,31 @@ function ConversationCard({ conversation }: { conversation: ConversationObject }
     <Link
       to={`/objects/${conversation._id}`}
       className={cn(
-        "block p-4 border rounded-lg hover:border-primary transition-all",
-        "hover:shadow-sm group bg-card"
+        "group block min-w-0 px-3 py-3 transition-colors sm:px-4",
+        "hover:bg-muted/55 focus-visible:relative focus-visible:outline focus-visible:outline-ring"
       )}
     >
       <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-xl">
+        <div className="flex-shrink-0 size-9 rounded-lg bg-primary/10 flex items-center justify-center text-xl">
           {emoji || <MessagesSquare className="w-5 h-5 text-primary" />}
         </div>
         
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <h3 className="font-medium text-base truncate group-hover:text-primary transition-colors">
+            <h3 className="line-clamp-2 break-words text-base font-semibold leading-snug group-hover:text-primary transition-colors">
               {conversation.name}
             </h3>
             <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary flex-shrink-0 mt-1" />
           </div>
           
           {conversation.summary && (
-            <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+            <p className="mt-1 line-clamp-2 max-w-[85ch] break-words text-sm leading-relaxed text-muted-foreground">
               {conversation.summary}
             </p>
           )}
           
           {timeInfo && (
-            <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
               <Clock className="w-3 h-3" />
               <span>{timeInfo}</span>
               {duration && (
@@ -179,10 +179,10 @@ export default function ConversationsPage() {
 
   if (isLoading && !data) {
     return (
-      <div className="space-y-6">
+      <div className="mx-auto max-w-5xl space-y-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <MessagesSquare className="w-8 h-8 text-primary" />
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+            <MessagesSquare className="size-6 text-primary" />
             Conversations
           </h1>
           <p className="text-muted-foreground">
@@ -199,10 +199,10 @@ export default function ConversationsPage() {
   
   if (error) {
     return (
-      <div className="space-y-6">
+      <div className="mx-auto max-w-5xl space-y-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <MessagesSquare className="w-8 h-8 text-primary" />
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+            <MessagesSquare className="size-6 text-primary" />
             Conversations
           </h1>
         </div>
@@ -220,10 +220,10 @@ export default function ConversationsPage() {
   const hasMore = data?.hasMore ?? false;
   
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-5xl space-y-4">
       <div className="space-y-1">
-        <h1 className="text-3xl font-bold flex items-center gap-3">
-          <MessagesSquare className="w-8 h-8 text-primary" />
+        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <MessagesSquare className="size-6 text-primary" />
           Conversations
         </h1>
         <p className="text-muted-foreground">
@@ -242,7 +242,7 @@ export default function ConversationsPage() {
         </div>
       ) : (
         <>
-          <div className="grid gap-3">
+          <div className="divide-y overflow-hidden rounded-lg border bg-card">
             {conversations.map((conversation) => (
               <ConversationCard key={conversation._id} conversation={conversation} />
             ))}

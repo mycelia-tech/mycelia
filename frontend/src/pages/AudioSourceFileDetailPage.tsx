@@ -100,31 +100,31 @@ export default function AudioSourceFileDetailPage() {
   ) => {
     if (value === undefined || value === null) return null;
     return (
-      <div className="flex items-start gap-3 py-3">
+      <div className="flex items-start gap-2 py-2">
         {Icon && (
           <Icon className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
         )}
-        <div className="flex-1 space-y-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-sm text-muted-foreground">
             {label}
           </p>
-          <div className="text-sm font-medium">{value}</div>
+          <div className="break-words font-medium">{value}</div>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link to="/audio/source_files">
-            <Button variant="ghost" size="icon">
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button asChild variant="outline" size="icon">
+            <Link to="/audio/source_files" aria-label="Back to source files">
               <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
+            </Link>
+          </Button>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
+            <h1 className="text-2xl font-semibold tracking-tight">
               Source File Details
             </h1>
             <p className="text-muted-foreground font-mono text-xs mt-1">{id}</p>
@@ -144,7 +144,7 @@ export default function AudioSourceFileDetailPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -167,7 +167,7 @@ export default function AudioSourceFileDetailPage() {
                 <InfoRow
                   label="File Path"
                   value={
-                    <span className="font-mono break-all text-xs">
+                    <span className="font-mono break-all text-sm">
                       {file?.path}
                     </span>
                   }
@@ -253,15 +253,15 @@ export default function AudioSourceFileDetailPage() {
           <CardContent className="space-y-6">
             <div className="flex items-center justify-between p-4 bg-primary/5 rounded-lg border border-primary/10">
               <div className="space-y-1">
-                <p className="text-xs font-bold uppercase text-primary/70 tracking-tight">
+                <p className="text-sm font-medium text-muted-foreground">
                   Audio Chunks
                 </p>
-                <p className="text-3xl font-mono font-bold">
+                <p className="text-2xl font-semibold tabular-nums">
                   {chunksCount ?? 0}
                 </p>
               </div>
               <div className="p-3 bg-primary/10 rounded-full">
-                <Layers className="w-8 h-8 text-primary" />
+                <Layers className="size-5 text-primary" />
               </div>
             </div>
 
@@ -279,7 +279,7 @@ export default function AudioSourceFileDetailPage() {
                     : JSON.stringify(file.ingestion.error)}
                 </p>
                 {file.ingestion.last_attempt && (
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Attempted:{" "}
                     {format(new Date(file.ingestion.last_attempt), "PPPpp")}
                   </p>

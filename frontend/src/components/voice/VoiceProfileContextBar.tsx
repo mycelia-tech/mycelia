@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 export function VoiceProfileSelect({
   selection,
   ariaLabel = "Voice profile",
-  className = "h-9 rounded-md border bg-background px-2 text-sm",
+  className = "h-9 max-w-full min-w-0 rounded-md border bg-background px-2 text-sm",
 }: {
   selection: SelectedVoiceProfile;
   ariaLabel?: string;
@@ -60,7 +60,7 @@ export function VoiceProfileContextBar({
     <div
       className={compact
         ? "space-y-2 rounded-md border bg-background/95 p-3"
-        : "sticky top-0 z-20 flex flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur"}
+        : "flex min-w-0 flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur lg:sticky lg:top-0 lg:z-20"}
       data-testid="voice-profile-context"
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -93,7 +93,7 @@ export function VoiceProfileContextBar({
         </div>
       )}
       {selection.invalidRequestedProfileId && (
-        <div className="flex items-center gap-2 text-xs text-destructive">
+        <div className="flex min-w-0 items-center gap-2 break-all text-xs text-destructive">
           <AlertCircle className="h-4 w-4" />
           Profile {selection.invalidRequestedProfileId}{" "}
           is unavailable or archived. Choose another voice; the page did not
@@ -103,7 +103,7 @@ export function VoiceProfileContextBar({
       <div
         className={compact
           ? "flex flex-wrap gap-2"
-          : "ml-auto flex flex-wrap gap-2"}
+          : "flex flex-wrap gap-2 lg:ml-auto"}
       >
         <Button asChild size="sm" variant="outline">
           <Link

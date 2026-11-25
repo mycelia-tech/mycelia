@@ -144,7 +144,7 @@ const WorkersPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold mb-2">Workers</h2>
           <p className="text-muted-foreground">
@@ -198,7 +198,7 @@ const WorkersPage = () => {
             </Card>
           )
           : (
-            <div className="grid gap-4">
+            <div className="grid gap-2">
               {discoveredWorkers.map((worker) => {
                 const status = workerStatuses[worker.type];
                 const isPaused = status?.paused ?? false;
@@ -210,13 +210,13 @@ const WorkersPage = () => {
                 return (
                   <Card
                     key={worker.type}
-                    className={`p-4 transition-colors ${
+                    className={`p-3.5 transition-colors ${
                       isPaused
                         ? "border-amber-500/50 bg-amber-500/5"
-                        : "border-green-500/30 bg-green-500/5"
+                        : "bg-card"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col items-stretch gap-3 @2xl/settings:flex-row @2xl/settings:items-center @2xl/settings:justify-between">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
                         {isPaused
                           ? (
@@ -237,9 +237,9 @@ const WorkersPage = () => {
                               </Badge>
                             )}
                           </div>
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                             <span
-                              className="max-w-[34rem] truncate"
+                              className="basis-full break-words"
                               title={worker.description}
                             >
                               {worker.description}
@@ -251,7 +251,7 @@ const WorkersPage = () => {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex shrink-0 items-center gap-2 self-end @2xl/settings:self-center">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -270,12 +270,12 @@ const WorkersPage = () => {
                             ? <Play className="w-4 h-4" />
                             : <Pause className="w-4 h-4" />}
                         </Button>
-                        <Link to={`/settings/workers/${worker.type}`}>
-                          <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link to={`/settings/workers/${worker.type}`}>
                             <Settings className="w-4 h-4 mr-2" />
                             Configure
-                          </Button>
-                        </Link>
+                          </Link>
+                        </Button>
                       </div>
                     </div>
                   </Card>
@@ -304,26 +304,27 @@ const WorkersPage = () => {
               {unavailableWorkers.map((worker) => (
                 <Card
                   key={worker.type}
-                  className="p-4 opacity-60"
+                  className="p-3.5"
                 >
-                  <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col items-stretch gap-3 @2xl/settings:flex-row @2xl/settings:items-center @2xl/settings:justify-between">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <XCircle className="w-5 h-5 text-muted-foreground shrink-0" />
                       <div className="min-w-0 flex-1">
                         <h4 className="font-medium">{worker.label}</h4>
-                        <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
-                          <span className="truncate" title={worker.description}>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                          <span className="basis-full break-words" title={worker.description}>
                             {worker.description}
                           </span>
                           <span>{worker.availability}</span>
                         </div>
                       </div>
                     </div>
-                    <Link to={`/settings/workers/${worker.type}`}>
-                      <Button variant="ghost" size="sm">
-                        <Settings className="w-4 h-4" />
-                      </Button>
-                    </Link>
+                    <Button variant="outline" size="sm" className="self-end" asChild>
+                      <Link to={`/settings/workers/${worker.type}`} aria-label={`Configure ${worker.label}`}>
+                        <Settings className="size-4" />
+                        Configure
+                      </Link>
+                    </Button>
                   </div>
                 </Card>
               ))}

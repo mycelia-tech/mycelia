@@ -121,10 +121,10 @@ export default function CreateJobPage() {
   const jobTypes = schemas ? Object.keys(schemas) : [];
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="max-w-4xl space-y-5">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
-          <Link to="/jobs">
+          <Link to="/jobs" aria-label="Back to Jobs">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
@@ -140,7 +140,7 @@ export default function CreateJobPage() {
             onValueChange={handleTypeChange}
             value={selectedType || undefined}
           >
-            <SelectTrigger className="w-[300px]">
+            <SelectTrigger aria-label="Job type" className="w-full sm:max-w-md">
               <SelectValue placeholder="Select a job type..." />
             </SelectTrigger>
             <SelectContent>

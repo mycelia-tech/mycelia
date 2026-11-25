@@ -485,7 +485,7 @@ const WorkerDetailPage = () => {
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <Button variant="ghost" onClick={() => navigate("/settings/workers")}>
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Workers
@@ -545,7 +545,7 @@ const WorkerDetailPage = () => {
         )}
 
         <Card className="p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-lg font-semibold">Configuration Fields</h3>
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <div className="flex items-center gap-1">
@@ -573,7 +573,7 @@ const WorkerDetailPage = () => {
 
                 return (
                   <div key={name} className="space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="flex items-center gap-2">
                         <span title={isUsingDefault ? "Using schema default" : "Custom override"}>
                           {isUsingDefault ? "📋" : "✏️"}
@@ -652,12 +652,12 @@ const WorkerDetailPage = () => {
                     return (
                       <div
                         key={key}
-                        className="p-3 grid grid-cols-[auto_auto_1fr_auto] gap-3 items-center"
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-3 @2xl/settings:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
                       >
-                        <span title="Custom field">✏️</span>
-                        <div className="font-mono text-sm font-medium">{key}</div>
+                        <div className="col-span-2 break-all font-mono text-sm font-medium @2xl/settings:col-span-1">{key}</div>
                         {isBoolean ? (
                           <select
+                            aria-label={key}
                             value={String(value)}
                             onChange={(e) => {
                               handleFieldChange(key, e.target.value === "true");
@@ -671,6 +671,7 @@ const WorkerDetailPage = () => {
                           <Input
                             type="number"
                             step="any"
+                            aria-label={key}
                             value={value !== undefined ? String(value) : ""}
                             onChange={(e) => {
                               const numValue =
@@ -681,6 +682,7 @@ const WorkerDetailPage = () => {
                           />
                         ) : (
                           <Input
+                            aria-label={key}
                             value={typeof value === "string" ? value : JSON.stringify(value)}
                             onChange={(e) => {
                               handleFieldChange(key, e.target.value);
@@ -691,6 +693,7 @@ const WorkerDetailPage = () => {
                         <Button
                           variant="ghost"
                           size="sm"
+                          aria-label={`Delete ${key}`}
                           onClick={() => handleDeleteField(key)}
                           className="h-8 w-8 p-0"
                         >
@@ -833,7 +836,7 @@ const WorkerDetailPage = () => {
         {/* Policies Section */}
         {worker.policies && worker.policies.length > 0 && (
           <Card className="p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-muted-foreground" />
                 <h3 className="text-lg font-semibold">Worker Policies</h3>

@@ -104,7 +104,7 @@ const ConfigSettingsPage = () => {
     return (
       <div className="space-y-6">
         <div>
-          <h3 className="text-lg font-medium">Configuration</h3>
+          <h2 className="text-2xl font-semibold tracking-tight">Configuration</h2>
           <p className="text-sm text-muted-foreground">
             Manage server configuration settings
           </p>
@@ -119,7 +119,7 @@ const ConfigSettingsPage = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-medium">Configuration</h3>
+        <h2 className="text-2xl font-semibold tracking-tight">Configuration</h2>
         <p className="text-sm text-muted-foreground">
           Manage server configuration settings. Changes are applied immediately.
         </p>
@@ -133,8 +133,9 @@ const ConfigSettingsPage = () => {
         </Card>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button
+          aria-pressed={!showRawEditor}
           variant={showRawEditor ? "outline" : "default"}
           onClick={() => setShowRawEditor(false)}
         >
@@ -142,6 +143,7 @@ const ConfigSettingsPage = () => {
           Form Editor
         </Button>
         <Button
+          aria-pressed={showRawEditor}
           variant={showRawEditor ? "default" : "outline"}
           onClick={() => setShowRawEditor(true)}
         >
@@ -243,7 +245,7 @@ const ConfigSettingsPage = () => {
           </Card>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={saving}>
             {saving ? (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />

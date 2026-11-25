@@ -368,7 +368,7 @@ export function PipelineDetailSection({
           className="group flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted/50"
           data-testid={testId}
         >
-          <span className="flex min-w-0 items-center gap-2 text-xs font-medium">
+          <span className="flex min-w-0 items-center gap-2 text-sm font-semibold">
             {icon}
             <span>{title}</span>
           </span>
@@ -928,7 +928,7 @@ export default function AudioPipelinePage() {
 
   return (
     <div
-      className="container mx-auto p-6 space-y-6"
+      className="min-w-0 space-y-5"
       data-testid="audio-pipeline-page"
     >
       <div className="flex items-center justify-between">
@@ -941,13 +941,13 @@ export default function AudioPipelinePage() {
       <AudioOperationsCard onCalculate={refetch} calculating={isFetching} />
 
       <details
-        className="rounded-lg border p-4"
+        className="min-w-0 rounded-xl border bg-card px-3 py-2 sm:px-4"
         data-testid="processing-details"
       >
-        <summary className="cursor-pointer font-medium">
+        <summary className="cursor-pointer py-2 text-lg font-semibold">
           Processing details
         </summary>
-        <div className="mt-4 space-y-6">
+        <div className="mt-2 space-y-4 border-t pt-4">
           <div className="flex justify-end">
             <Button
               variant="outline"
@@ -1061,7 +1061,7 @@ export default function AudioPipelinePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(12rem,100%),1fr))] gap-3">
                 {(stats?.stages ?? [])
                   .filter((stage) => TRANSCRIPT_STAGE_TYPES.has(stage.type))
                   .map((stage, index) => {
@@ -1081,7 +1081,7 @@ export default function AudioPipelinePage() {
                         <p className="mt-2 text-2xl font-semibold">
                           {stageBacklogValue(stage)}
                         </p>
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {stageBacklogLabel(stage)}
                         </p>
                         <p
@@ -1092,7 +1092,7 @@ export default function AudioPipelinePage() {
                         {stage.latestJob && (
                           <Link
                             to={`/jobs/${stage.latestJob.id}`}
-                            className="mt-2 block truncate text-[11px] text-primary hover:underline"
+                            className="mt-2 block truncate text-xs text-primary hover:underline"
                           >
                             Latest: {stage.latestJob.state}
                           </Link>
@@ -1288,7 +1288,7 @@ export default function AudioPipelinePage() {
 
           <VoiceIdentityStatusCard />
 
-          <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
             <Card>
               <CardHeader>
                 <CardTitle>Audio sources</CardTitle>
@@ -1297,7 +1297,7 @@ export default function AudioPipelinePage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 lg:grid-cols-2 xl:grid-cols-5">
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(min(6.5rem,100%),1fr))] gap-3">
                   {[
                     ["Total", stats?.sourceFiles?.total],
                     ["Ingested", stats?.sourceFiles?.ingested],
@@ -1460,7 +1460,7 @@ export default function AudioPipelinePage() {
                   <p className="mt-1 text-xl font-semibold">
                     {stats ? `${stats.vadRatePerMinute.toFixed(1)}/min` : "—"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     last 15 minutes
                   </p>
                 </div>
@@ -1478,7 +1478,7 @@ export default function AudioPipelinePage() {
                       }h`
                       : "—"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     assumes {MAX_AUDIO_CHUNK_SECONDS}s per chunk
                   </p>
                 </div>
@@ -1536,7 +1536,7 @@ export default function AudioPipelinePage() {
                           key={failure.id}
                           className="rounded-md border border-destructive/20 bg-background/60 p-3"
                         >
-                          <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+                          <div className="mb-1 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                             <span>
                               {failure.failedAt
                                 ? format(
@@ -1620,7 +1620,7 @@ export default function AudioPipelinePage() {
                       }h`
                       : "—"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     assumes {MAX_AUDIO_CHUNK_SECONDS}s per chunk
                   </p>
                 </div>
@@ -1726,7 +1726,7 @@ export default function AudioPipelinePage() {
       </details>
 
       <details
-        className="rounded-lg border p-4"
+        className="min-w-0 rounded-xl border bg-card px-3 py-2 sm:px-4"
         data-testid="source-files-details"
       >
         <summary className="cursor-pointer font-medium">Source files</summary>
@@ -2073,7 +2073,7 @@ export default function AudioPipelinePage() {
                                 </div>
                                 {session.transcriptions >
                                     session.transcriptionDetails.length && (
-                                  <p className="mt-2 text-[11px] text-muted-foreground">
+                                  <p className="mt-2 text-xs text-muted-foreground">
                                     Showing the first{" "}
                                     {session.transcriptionDetails
                                       .length.toLocaleString()} of {session
@@ -2234,7 +2234,7 @@ export default function AudioPipelinePage() {
                                   ) && " (empty chunks)"}
                                 </span>
                               )}
-                              <span className="font-mono text-[10px] ml-auto">
+                              <span className="font-mono text-xs ml-auto">
                                 {session._id}
                               </span>
                             </div>

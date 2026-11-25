@@ -156,11 +156,11 @@ function CodeBlock({ value, variant = "before" }: { value: any; variant?: "befor
       : "bg-green-50 dark:bg-green-950/20 p-2 rounded border border-green-200 dark:border-green-900"
     }>
       {isEmpty ? (
-        <pre className="text-xs whitespace-pre-wrap break-words text-muted-foreground">
+        <pre className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
           (empty)
         </pre>
       ) : (
-        <pre className="text-xs whitespace-pre-wrap break-words">
+        <pre className="whitespace-pre-wrap break-words text-sm">
           {formatted}
         </pre>
       )}
@@ -192,7 +192,7 @@ function HistoryEntryCard({ entry }: { entry: HistoryEntry }) {
         </div>
 
           {entry.action === "create" && (
-            <div className="grid grid-cols-2 gap-4 text-sm" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+            <div className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
               <div>
                 <div className="font-medium text-muted-foreground mb-1">
                   Before:
@@ -210,7 +210,7 @@ function HistoryEntryCard({ entry }: { entry: HistoryEntry }) {
 
           {entry.action === "update" && entry.field && (
             <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-4 text-sm" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+              <div className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
                 <div>
                   <div className="font-medium text-muted-foreground mb-1">
                     Before:
@@ -228,7 +228,7 @@ function HistoryEntryCard({ entry }: { entry: HistoryEntry }) {
           )}
 
           {entry.action === "delete" && (
-            <div className="grid grid-cols-2 gap-4 text-sm" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+            <div className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
               <div>
                 <div className="font-medium text-muted-foreground mb-1">
                   Before:
@@ -282,7 +282,7 @@ function GroupedHistoryCard({
           </div>
             
             {!isExpanded && (
-              <div className="grid grid-cols-2 gap-4 text-sm" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+              <div className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
                 <div>
                   <div className="font-medium text-muted-foreground mb-1">
                     Before:
@@ -347,7 +347,7 @@ const ObjectHistoryPage = () => {
 
   if (objectLoading && !hasHistory) {
     return (
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="mx-auto max-w-4xl space-y-4">
         <div className="flex items-center gap-4">
           <SmartBackButton defaultPath={id ? `/objects/${id}` : "/objects"} />
         </div>
@@ -361,7 +361,7 @@ const ObjectHistoryPage = () => {
   // Only show "not found" if object doesn't exist AND there's no history
   if (!object && !hasHistory && !objectLoading && !historyLoading) {
     return (
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="mx-auto max-w-4xl space-y-4">
         <div className="flex items-center gap-4">
           <SmartBackButton defaultPath="/objects" />
         </div>
@@ -373,13 +373,13 @@ const ObjectHistoryPage = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="mx-auto max-w-4xl space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <SmartBackButton defaultPath={object ? `/objects/${id}` : "/objects"} />
           <div>
-            <h1 className="text-3xl font-bold">Object History</h1>
-            <p className="text-muted-foreground mt-1">
+            <h1 className="text-2xl font-semibold tracking-tight">Object History</h1>
+            <p className="mt-1 break-words text-muted-foreground">
               {object ? (
                 <>
                   Edit history for{" "}

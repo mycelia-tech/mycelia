@@ -77,7 +77,7 @@ export function ChatThreadHeader({
   };
 
   return (
-    <header className="border-b bg-muted/20 px-3 py-3 sm:px-4">
+    <header className="border-b bg-card px-3 py-2.5 sm:px-4">
       <div className="flex min-w-0 items-start gap-2">
         <Button
           variant="ghost"
@@ -132,7 +132,7 @@ export function ChatThreadHeader({
                   type="button"
                   onClick={() => setEditing(true)}
                   disabled={!chat}
-                  className="min-w-0 truncate rounded text-left text-base font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-w-0 truncate rounded text-left text-lg font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   title={`${title} — click to rename`}
                 >
                   {title}
@@ -153,7 +153,7 @@ export function ChatThreadHeader({
             </Badge>
           </div>
           <div
-            className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+            className="mt-1 truncate text-xs text-muted-foreground"
             title={resolvedModel}
           >
             Next response: {selectedModel || "configured default"}
@@ -190,7 +190,7 @@ export function ChatThreadHeader({
           />
         </Button>
       </div>
-      <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-[minmax(220px,1fr)_auto]">
+      <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0">
           <ModelSelector
             value={selectedModel}

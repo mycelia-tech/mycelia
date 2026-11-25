@@ -1,9 +1,8 @@
+import { RouterProvider } from "react-router-dom";
 import { useTheme } from "./hooks/useTheme";
-import { Outlet } from "react-router-dom";
+import { router } from "./router";
 
-function App() {
+export default function App() {
   useTheme();
-  return <Outlet />;
+  return <RouterProvider router={router} />;
 }
-
-export default App;

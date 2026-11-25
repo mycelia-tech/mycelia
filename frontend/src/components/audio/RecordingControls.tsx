@@ -14,30 +14,28 @@ export const RecordingControls = ({ recording }: RecordingControlsProps) => {
     currentStep === "audio-start" || currentStep === "stopping";
 
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className="flex flex-wrap items-center gap-3">
       {!isRecording
         ? (
           <Button
             onClick={startRecording}
             disabled={isDisabled || !recording.canAccessMicrophone}
-            size="lg"
-            className="h-16 w-16 rounded-full"
           >
             {isLoading
               ? (
-                <div className="h-6 w-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
               )
-              : <Mic className="h-8 w-8" />}
+              : <Mic className="size-4" />}
+            Start recording
           </Button>
         )
         : (
           <Button
             onClick={stopRecording}
             variant="destructive"
-            size="lg"
-            className="h-16 w-16 rounded-full"
           >
-            <Square className="h-8 w-8" />
+            <Square className="size-4" />
+            Stop recording
           </Button>
         )}
 

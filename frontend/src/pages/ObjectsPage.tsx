@@ -78,7 +78,7 @@ function renderHighlightedText(text: string, query: string) {
       {parts.map((part, idx) =>
         checkRe.test(part)
           ? (
-            <mark key={idx} className="bg-yellow-200">
+            <mark key={idx} className="rounded-sm bg-yellow-200 text-slate-950">
               {part}
             </mark>
           )
@@ -314,140 +314,141 @@ function ObjectCard(
   };
 
   return (
-    <Link to={`/objects/${object._id.toString()}`}>
-      <Card className="p-2 hover:border-primary transition-colors h-full relative group/card">
-        {/* Star button - top right corner, always visible */}
-        {onToggleStar && (
-          <button
-            type="button"
-            onClick={handleStarClick}
-            className={`absolute top-1.5 right-1.5 p-0.5 rounded transition-colors ${
-              object.starred
-                ? "text-yellow-500 hover:text-yellow-600"
-                : "text-muted-foreground/40 hover:text-yellow-500"
-            }`}
-            title={object.starred ? "Remove from starred" : "Add to starred"}
-          >
-            <Star
-              className={`w-3.5 h-3.5 ${object.starred ? "fill-current" : ""}`}
-            />
-          </button>
-        )}
-        <div className="space-y-1">
-          {/* Header with icon and name */}
-          <div className="flex items-center gap-2 min-w-0 pr-5">
-            <span
-              className="text-base flex-shrink-0 w-6 h-6 flex items-center justify-center rounded"
-              style={{
-                backgroundColor: object.color ? `${object.color}20` : undefined,
-              }}
-            >
-              {renderIcon(object.icon)}
-            </span>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="font-medium text-sm truncate">
-                  {searchQuery.trim() && object.name
-                    ? renderHighlightedText(object.name, searchQuery.trim())
-                    : object.name || "Unnamed"}
-                </span>
-                {showType && (
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] px-1 py-0 ${typeConfig.color}`}
-                  >
-                    {objectType === "other" ? "Object" : objectType}
-                  </Badge>
-                )}
-                {/* Show linked objects count for tags */}
-                {objectType === "tag" &&
-                  object.linkedObjectsCount !== undefined && (
-                  <Badge variant="secondary" className="text-[10px] px-1 py-0">
-                    {object.linkedObjectsCount}{" "}
-                    {object.linkedObjectsCount === 1 ? "object" : "objects"}
-                  </Badge>
-                )}
+    <article className="relative min-w-0">
+      <Link className="block h-full rounded-lg focus-visible:outline focus-visible:outline-ring" to={`/objects/${object._id.toString()}`}>
+        <Card className="relative h-full rounded-lg bg-card p-3 shadow-none transition-colors hover:border-primary">
+          <div className="space-y-1">
+            {/* Header with icon and name */}
+            <div className="flex min-w-0 items-center gap-2 pr-6">
+              <span
+                className="text-base flex-shrink-0 w-6 h-6 flex items-center justify-center rounded"
+                style={{
+                  backgroundColor: object.color ? `${object.color}20` : undefined,
+                }}
+              >
+                {renderIcon(object.icon)}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="line-clamp-2 break-words text-base font-semibold leading-snug">
+                    {searchQuery.trim() && object.name
+                      ? renderHighlightedText(object.name, searchQuery.trim())
+                      : object.name || "Unnamed"}
+                  </span>
+                  {showType && (
+                    <Badge
+                      variant="outline"
+                      className={`text-xs px-1 py-0 ${typeConfig.color}`}
+                    >
+                      {objectType === "other" ? "Object" : objectType}
+                    </Badge>
+                  )}
+                  {/* Show linked objects count for tags */}
+                  {objectType === "tag" &&
+                    object.linkedObjectsCount !== undefined && (
+                    <Badge variant="secondary" className="text-xs px-1 py-0">
+                      {object.linkedObjectsCount}{" "}
+                      {object.linkedObjectsCount === 1 ? "object" : "objects"}
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Relationship info - compact */}
-          {isRelationship && hasRelationshipData && (
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground pl-8 truncate">
-              <span>{object.subjectObject?.name}</span>
-              {object.relationship?.symmetrical
-                ? <ArrowLeftRight className="w-3 h-3 flex-shrink-0" />
-                : <ArrowRight className="w-3 h-3 flex-shrink-0" />}
-              <span className="truncate">{object.objectObject?.name}</span>
-            </div>
-          )}
-
-          {/* Details - truncated to 2 lines */}
-          {object.details && !isRelationship && (
-            <div className="text-xs text-muted-foreground pl-8 line-clamp-2">
-              {object.details}
-            </div>
-          )}
-
-          {/* Metadata row - compact */}
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground pl-8 flex-wrap">
-            {/* Conversation: duration and time */}
-            {isConversation && timeRangeInfo && (
-              <>
-                <span>{timeRangeInfo.duration}</span>
-                <span className="text-muted-foreground/50">·</span>
-                <span>{timeRangeInfo.startDateTime}</span>
-              </>
+            {/* Relationship info - compact */}
+            {isRelationship && hasRelationshipData && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground pl-8 truncate">
+                <span>{object.subjectObject?.name}</span>
+                {object.relationship?.symmetrical
+                  ? <ArrowLeftRight className="w-3 h-3 flex-shrink-0" />
+                  : <ArrowRight className="w-3 h-3 flex-shrink-0" />}
+                <span className="truncate">{object.objectObject?.name}</span>
+              </div>
             )}
-            {/* Non-conversation: date range */}
-            {!isConversation && timeRangeInfo && (
-              <div className="flex items-center gap-1">
-                <CalendarClock className="w-2.5 h-2.5" />
-                <span>{timeRangeInfo.startFormatted}</span>
-                {timeRangeInfo.count > 1 && (
-                  <span className="text-muted-foreground/60">
-                    (+{timeRangeInfo.count - 1})
+
+            {/* Details - truncated to 2 lines */}
+            {object.details && !isRelationship && (
+              <div className="line-clamp-2 break-words pl-8 text-sm leading-snug text-muted-foreground">
+                {object.details}
+              </div>
+            )}
+
+            {/* Metadata row - compact */}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground pl-8 flex-wrap">
+              {/* Conversation: duration and time */}
+              {isConversation && timeRangeInfo && (
+                <>
+                  <span>{timeRangeInfo.duration}</span>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span>{timeRangeInfo.startDateTime}</span>
+                </>
+              )}
+              {/* Non-conversation: date range */}
+              {!isConversation && timeRangeInfo && (
+                <div className="flex items-center gap-1">
+                  <CalendarClock className="w-2.5 h-2.5" />
+                  <span>{timeRangeInfo.startFormatted}</span>
+                  {timeRangeInfo.count > 1 && (
+                    <span className="text-muted-foreground">
+                      (+{timeRangeInfo.count - 1})
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Aliases - show only if no details */}
+              {object.aliases && object.aliases.length > 0 && !object.details &&
+                !isConversation && (
+                <span className="truncate">
+                  aka {object.aliases.slice(0, 2).join(", ")}
+                </span>
+              )}
+            </div>
+
+            {/* Tags row */}
+            {object.tags && object.tags.length > 0 && (
+              <div className="flex items-center gap-1 pl-8 flex-wrap">
+                <Tag className="w-2.5 h-2.5 text-muted-foreground" />
+                {object.tags.slice(0, 3).map((
+                  tag: { _id: string; name?: string; color?: string },
+                ) => (
+                  <Badge
+                    key={tag._id}
+                    variant="outline"
+                    className="text-xs px-1 py-0"
+                    style={tag.color
+                      ? { borderColor: tag.color, color: tag.color }
+                      : undefined}
+                  >
+                    {tag.name || "Unnamed"}
+                  </Badge>
+                ))}
+                {object.tags.length > 3 && (
+                  <span className="text-xs text-muted-foreground">
+                    +{object.tags.length - 3}
                   </span>
                 )}
               </div>
             )}
-            {/* Aliases - show only if no details */}
-            {object.aliases && object.aliases.length > 0 && !object.details &&
-              !isConversation && (
-              <span className="truncate">
-                aka {object.aliases.slice(0, 2).join(", ")}
-              </span>
-            )}
           </div>
-
-          {/* Tags row */}
-          {object.tags && object.tags.length > 0 && (
-            <div className="flex items-center gap-1 pl-8 flex-wrap">
-              <Tag className="w-2.5 h-2.5 text-muted-foreground" />
-              {object.tags.slice(0, 3).map((
-                tag: { _id: string; name?: string; color?: string },
-              ) => (
-                <Badge
-                  key={tag._id}
-                  variant="outline"
-                  className="text-[10px] px-1 py-0"
-                  style={tag.color
-                    ? { borderColor: tag.color, color: tag.color }
-                    : undefined}
-                >
-                  {tag.name || "Unnamed"}
-                </Badge>
-              ))}
-              {object.tags.length > 3 && (
-                <span className="text-[10px] text-muted-foreground">
-                  +{object.tags.length - 3}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </Card>
-    </Link>
+        </Card>
+      </Link>
+      {onToggleStar && (
+        <button
+          type="button"
+          onClick={handleStarClick}
+          className={`absolute right-1 top-1 flex size-8 items-center justify-center rounded-md transition-colors ${
+            object.starred
+              ? "text-yellow-500 hover:text-yellow-600"
+              : "text-muted-foreground hover:bg-muted hover:text-yellow-700"
+          }`}
+          title={object.starred ? "Remove from starred" : "Add to starred"}
+        >
+          <Star
+            className={`w-3.5 h-3.5 ${object.starred ? "fill-current" : ""}`}
+          />
+        </button>
+      )}
+    </article>
   );
 }
 
@@ -485,8 +486,9 @@ function TypeFilterButton(
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={isActive}
       className={`
-        flex items-center gap-2 px-3 py-2 rounded-lg border transition-all
+        flex min-h-8 items-center gap-1.5 rounded-md border px-2 py-1 transition-colors
         ${
         isActive
           ? `${config.color} border-current`
@@ -496,7 +498,7 @@ function TypeFilterButton(
     >
       <Icon className="w-4 h-4" />
       <span className="text-sm font-medium">{config.label}</span>
-      <Badge variant="secondary" className="text-xs ml-1">
+      <Badge variant="secondary" className="border-0 px-1.5 text-xs tabular-nums">
         {count}
       </Badge>
     </button>
@@ -1580,10 +1582,13 @@ const ObjectsPage = () => {
   const hasActiveFilters = q.trim() || activeTypes.size > 0 ||
     showOrphanedOnly || activeTagIds.length > 0;
 
+  const filterCount = activeTypes.size + activeTagIds.length +
+    Number(showOrphanedOnly) + Number(showDuplicates);
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Objects</h1>
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight">Objects</h1>
         <Button asChild>
           <Link to="/objects/create">
             <Plus className="w-4 h-4 mr-2" />
@@ -1605,7 +1610,8 @@ const ObjectsPage = () => {
           <Input
             value={localQ}
             onChange={(e) => setLocalQ(e.target.value)}
-            placeholder="Search by name, aliases, or details..."
+            aria-label="Search objects"
+            placeholder="Search by name, aliases, or details…"
             className="pl-9"
           />
         </div>
@@ -1614,157 +1620,166 @@ const ObjectsPage = () => {
         </Button>
       </form>
 
-      {/* Tag filter: active tags + suggestions narrowed by the search input */}
-      {allTags.length > 0 && (() => {
-        const activeTagObjects = activeTagIds
-          .map((id) => ({
-            id,
-            tag: allTags.find((t) => t._id.toString() === id),
-          }));
-        const queryLower = localQ.trim().toLowerCase();
-        const suggestions = allTags.filter((tag) => {
-          const id = tag._id.toString();
-          if (activeTagIds.includes(id)) return false;
-          if (!queryLower) return true;
-          return (tag.name ?? "").toLowerCase().includes(queryLower);
-        });
-        const visibleSuggestions = suggestions.slice(0, 12);
-        const hiddenCount = suggestions.length - visibleSuggestions.length;
-        return (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Tag className="w-3.5 h-3.5 text-muted-foreground" />
-            {activeTagObjects.map(({ id, tag }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => toggleTagFilter(id)}
-                title="Remove tag from filter"
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary text-primary-foreground hover:opacity-80"
-              >
-                {tag ? `${iconText(tag.icon)} ` : ""}
-                {tag?.name ?? id}
-                <X className="w-3 h-3" />
-              </button>
-            ))}
-            {activeTagIds.length >= 2 && (
-              <button
-                type="button"
-                onClick={() =>
-                  setTagFilterMode(tagMode === "and" ? "or" : "and")}
-                title={tagMode === "and"
-                  ? "Objects must have ALL selected tags — click for ANY"
-                  : "Objects may have ANY selected tag — click for ALL"}
-                className="px-1.5 py-0.5 rounded border text-[10px] font-mono text-muted-foreground hover:bg-muted"
-              >
-                {tagMode === "and" ? "&&" : "||"}
-              </button>
-            )}
-            {visibleSuggestions.map((tag) => (
-              <button
-                key={tag._id.toString()}
-                type="button"
-                onClick={() => toggleTagFilter(tag._id.toString())}
-                title={`Filter by tag "${tag.name}"`}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                {`${iconText(tag.icon)} `}
-                {tag.name}
-              </button>
-            ))}
-            {hiddenCount > 0 && (
-              <span className="text-xs text-muted-foreground">
-                +{hiddenCount} more
-              </span>
-            )}
-          </div>
-        );
-      })()}
-
       {/* Type filters and sort */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Label className="text-sm text-muted-foreground">Filter by type:</Label>
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(TYPE_CONFIG) as ObjectType[]).map((type) => (
-            <TypeFilterButton
-              key={type}
-              type={type}
-              count={totalCounts[type]}
-              isActive={activeTypes.has(type)}
-              onClick={() => toggleType(type)}
-            />
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2.5">
+        <details className="group rounded-md border bg-background open:basis-full">
+          <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md px-3 text-sm font-medium hover:bg-muted focus-visible:outline focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+            Filters{filterCount > 0 && ` (${filterCount})`}
+            <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="space-y-3 border-t p-3">
+            {/* Tag filter: active tags + suggestions narrowed by the search input */}
+            {allTags.length > 0 && (() => {
+              const activeTagObjects = activeTagIds
+                .map((id) => ({
+                  id,
+                  tag: allTags.find((t) => t._id.toString() === id),
+                }));
+              const queryLower = localQ.trim().toLowerCase();
+              const suggestions = allTags.filter((tag) => {
+                const id = tag._id.toString();
+                if (activeTagIds.includes(id)) return false;
+                if (!queryLower) return true;
+                return (tag.name ?? "").toLowerCase().includes(queryLower);
+              });
+              const visibleSuggestions = suggestions.slice(0, 12);
+              const hiddenCount = suggestions.length - visibleSuggestions.length;
+              return (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-muted-foreground" />
+                  {activeTagObjects.map(({ id, tag }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => toggleTagFilter(id)}
+                      title="Remove tag from filter"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary text-primary-foreground hover:opacity-80"
+                    >
+                      {tag ? `${iconText(tag.icon)} ` : ""}
+                      {tag?.name ?? id}
+                      <X className="w-3 h-3" />
+                    </button>
+                  ))}
+                  {activeTagIds.length >= 2 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTagFilterMode(tagMode === "and" ? "or" : "and")}
+                      title={tagMode === "and"
+                        ? "Objects must have ALL selected tags — click for ANY"
+                        : "Objects may have ANY selected tag — click for ALL"}
+                      className="px-1.5 py-0.5 rounded border text-xs font-mono text-muted-foreground hover:bg-muted"
+                    >
+                      {tagMode === "and" ? "&&" : "||"}
+                    </button>
+                  )}
+                  {visibleSuggestions.map((tag) => (
+                    <button
+                      key={tag._id.toString()}
+                      type="button"
+                      onClick={() => toggleTagFilter(tag._id.toString())}
+                      title={`Filter by tag "${tag.name}"`}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      {`${iconText(tag.icon)} `}
+                      {tag.name}
+                    </button>
+                  ))}
+                  {hiddenCount > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      +{hiddenCount} more
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+            <div role="group" aria-label="Object types" className="flex flex-wrap gap-1.5">
+              {(Object.keys(TYPE_CONFIG) as ObjectType[]).map((type) => (
+                <TypeFilterButton
+                  key={type}
+                  type={type}
+                  count={totalCounts[type]}
+                  isActive={activeTypes.has(type)}
+                  onClick={() => toggleType(type)}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+              {/* Orphaned filter */}
+              <Button
+                variant={showOrphanedOnly ? "secondary" : "outline"}
+                size="sm"
+                aria-pressed={showOrphanedOnly}
+                onClick={toggleOrphaned}
+                className="flex items-center gap-2"
+              >
+                {showOrphanedOnly
+                  ? (
+                    <>
+                      <Link2Off className="w-4 h-4" />
+                      Orphaned Only
+                    </>
+                  )
+                  : (
+                    <>
+                      <Link2 className="w-4 h-4" />
+                      Show Orphaned
+                    </>
+                  )}
+                <Badge variant="secondary" className="text-xs ml-1">
+                  {countsLoading
+                    ? "..."
+                    : (orphanedCount === null ? "..." : orphanedCount)}
+                </Badge>
+              </Button>
 
-        {/* Orphaned filter */}
-        <Button
-          variant={showOrphanedOnly ? "secondary" : "outline"}
-          size="sm"
-          onClick={toggleOrphaned}
-          className="flex items-center gap-2"
-        >
-          {showOrphanedOnly
-            ? (
-              <>
-                <Link2Off className="w-4 h-4" />
-                Orphaned Only
-              </>
-            )
-            : (
-              <>
-                <Link2 className="w-4 h-4" />
-                Show Orphaned
-              </>
-            )}
-          <Badge variant="secondary" className="text-xs ml-1">
-            {countsLoading
-              ? "..."
-              : (orphanedCount === null ? "..." : orphanedCount)}
-          </Badge>
-        </Button>
+              {/* Duplicates scan */}
+              <Button
+                variant={showDuplicates ? "secondary" : "outline"}
+                size="sm"
+                aria-pressed={showDuplicates}
+                onClick={() => setShowDuplicates((prev) => !prev)}
+                className="flex items-center gap-2"
+              >
+                <Combine className="w-4 h-4" />
+                Duplicates
+                {showDuplicates && (
+                  <Badge variant="secondary" className="text-xs ml-1">
+                    {duplicateGroupsLoading ? "..." : duplicateGroups.length}
+                  </Badge>
+                )}
+              </Button>
 
-        {/* Duplicates scan */}
-        <Button
-          variant={showDuplicates ? "secondary" : "outline"}
-          size="sm"
-          onClick={() => setShowDuplicates((prev) => !prev)}
-          className="flex items-center gap-2"
-        >
-          <Combine className="w-4 h-4" />
-          Duplicates
-          {showDuplicates && (
-            <Badge variant="secondary" className="text-xs ml-1">
-              {duplicateGroupsLoading ? "..." : duplicateGroups.length}
-            </Badge>
-          )}
-        </Button>
+              {/* Refresh counts button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => fetchCounts(true)}
+                disabled={countsLoading}
+                className="flex items-center gap-1"
+                title="Refresh counts"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${countsLoading ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
+          </div>
+        </details>
 
-        {/* Refresh counts button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => fetchCounts(true)}
-          disabled={countsLoading}
-          className="flex items-center gap-1"
-          title="Refresh counts"
-        >
-          <RefreshCw
-            className={`w-4 h-4 ${countsLoading ? "animate-spin" : ""}`}
-          />
-        </Button>
-
-        <div className="flex items-center gap-2 ml-auto">
-          <Label className="text-sm text-muted-foreground">Sort:</Label>
+        <div className="ml-auto flex items-center gap-2">
+          <Label htmlFor="objects-sort" className="text-sm text-muted-foreground">Sort</Label>
           <Select
             value={sortBy}
             onValueChange={(value: SortOption) =>
               updateFilters(q, activeTypes, value, showOrphanedOnly)}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger id="objects-sort" className="w-36 sm:w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="updatedAt">Recently Updated</SelectItem>
-              <SelectItem value="createdAt">Recently Created</SelectItem>
+              <SelectItem value="updatedAt">Last updated</SelectItem>
+              <SelectItem value="createdAt">Last created</SelectItem>
               <SelectItem value="name">Name (A-Z)</SelectItem>
             </SelectContent>
           </Select>
@@ -1786,9 +1801,6 @@ const ObjectsPage = () => {
                 : grandTotal
             } objects found`
             : `${grandTotal} objects in database`}
-        </span>
-        <span className="text-xs text-muted-foreground/60">
-          (sections load as they approach the viewport)
         </span>
         {hasActiveFilters && (
           <Button
@@ -1916,7 +1928,7 @@ const ObjectsPage = () => {
                 id="starred-section"
                 className="border rounded-lg border-yellow-200 bg-yellow-50/30 dark:border-yellow-900/50 dark:bg-yellow-900/10"
               >
-                <div className="flex items-center p-4 gap-2">
+                <div className="flex flex-wrap items-center gap-2 px-3 py-3">
                   <CollapsibleTrigger asChild>
                     <button
                       type="button"
@@ -1943,7 +1955,7 @@ const ObjectsPage = () => {
                   <div className="p-3 pt-0">
                     {starredError
                       ? (
-                        <div className="min-h-[7rem] flex flex-col items-center justify-center gap-2 text-sm text-destructive">
+                        <div className="min-h-16 flex flex-col items-center justify-center gap-2 text-sm text-destructive">
                           <span>Could not load starred objects.</span>
                           <Button
                             variant="outline"
@@ -1956,7 +1968,7 @@ const ObjectsPage = () => {
                       )
                       : starredLoading && starredObjects.length === 0
                       ? (
-                        <p className="min-h-[7rem] flex items-center justify-center text-sm text-muted-foreground">
+                        <p className="min-h-16 flex items-center justify-center text-sm text-muted-foreground">
                           Loading starred objects...
                         </p>
                       )
@@ -2036,9 +2048,9 @@ const ObjectsPage = () => {
                 <div
                   ref={getSectionNodeRef(type)}
                   data-object-section={type}
-                  className="border rounded-lg"
+                  className="rounded-lg border bg-muted/30"
                 >
-                  <div className="flex items-center p-4 gap-2">
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-3">
                     <CollapsibleTrigger asChild>
                       <button
                         type="button"
@@ -2110,10 +2122,10 @@ const ObjectsPage = () => {
                   </div>
 
                   <CollapsibleContent>
-                    <div className="p-3 pt-0 min-h-[7rem]">
+                    <div className="p-3 pt-0 min-h-16">
                       {typeErrors[type]
                         ? (
-                          <div className="min-h-[7rem] flex flex-col items-center justify-center gap-2 text-sm text-destructive">
+                          <div className="min-h-16 flex flex-col items-center justify-center gap-2 text-sm text-destructive">
                             <span>
                               Could not load {config.label.toLowerCase()}.
                             </span>
@@ -2135,13 +2147,13 @@ const ObjectsPage = () => {
                         )
                         : typeObjects.length === 0 && isLoadingMore
                         ? (
-                          <p className="min-h-[7rem] flex items-center justify-center text-sm text-muted-foreground">
+                          <p className="min-h-16 flex items-center justify-center text-sm text-muted-foreground">
                             Loading {config.label.toLowerCase()}...
                           </p>
                         )
                         : typeObjects.length === 0 && fetchedTypes.has(type)
                         ? (
-                          <div className="min-h-[7rem] flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                          <div className="min-h-16 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
                             <span>
                               {hasMore
                                 ? `No ${config.label.toLowerCase()} in the current candidate page`
@@ -2161,7 +2173,7 @@ const ObjectsPage = () => {
                         )
                         : typeObjects.length === 0
                         ? (
-                          <p className="min-h-[7rem] flex items-center justify-center text-sm text-muted-foreground">
+                          <p className="min-h-16 flex items-center justify-center text-sm text-muted-foreground">
                             Scroll to load {config.label.toLowerCase()}
                           </p>
                         )

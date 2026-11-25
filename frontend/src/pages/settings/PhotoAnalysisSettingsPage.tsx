@@ -148,7 +148,7 @@ export default function PhotoAnalysisSettingsPage() {
   return (
     <div className="max-w-3xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Photo analysis</h1>
+        <h2 className="text-2xl font-semibold tracking-tight">Photo analysis</h2>
         <Badge variant="secondary">
           {settings.googleEnabled ? "Google is enabled" : "Google is off"}
         </Badge>

@@ -1,7 +1,7 @@
 import type { Platform } from "../core/types.ts";
 import { defaultPlatform } from "./default.tsx";
 import { Send, PhoneCall, Video, File, Download, Reply, Forward } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useFormattedTime } from "@/lib/formatTime";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,6 @@ interface TelegramBubbleProps {
 }
 
 function TelegramBubble({ message, children }: TelegramBubbleProps) {
-  const navigate = useNavigate();
   const formattedDate = useFormattedTime(new Date(message.timestamp));
   const raw = message.raw;
   
@@ -77,32 +76,18 @@ function TelegramBubble({ message, children }: TelegramBubbleProps) {
   const isForwarded = !!message.forwardedFrom;
   const forwardedName = message.forwardedFrom?.name;
 
-  const handleSenderClick = () => {
-    if (message.senderId) {
-      navigate(`/objects/${message.senderId.toString()}`);
-    }
-  };
 
   return (
     <div className="flex w-full py-1.5 group">
       <div className="flex flex-col max-w-[85%] sm:max-w-[70%] min-w-0">
         {/* Sender Name */}
         <div className="flex items-center gap-1.5 mb-0.5 ml-3">
-          <span 
-            className="text-xs font-medium cursor-pointer hover:underline underline-offset-2 transition-colors"
-            style={{ color: senderColor }}
-            onClick={handleSenderClick}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                handleSenderClick();
-              }
-            }}
-          >
-            {senderName}
-          </span>
+          <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: senderColor }} aria-hidden="true" />
+          {message.senderId ? (
+            <Link className="break-words text-sm font-semibold text-primary hover:underline" to={`/objects/${message.senderId.toString()}`}>
+              {senderName}
+            </Link>
+          ) : <span className="break-words text-sm font-semibold">{senderName}</span>}
         </div>
         
         {/* Message Bubble */}
@@ -123,7 +108,7 @@ function TelegramBubble({ message, children }: TelegramBubbleProps) {
           )}>
             {/* Forwarded Indicator */}
             {isForwarded && (
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1.5 pb-1.5 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5 pb-1.5 border-b border-black/5 dark:border-white/5">
                 <Forward className="w-3 h-3" />
                 <span>Forwarded from</span>
                 <span className="font-medium text-[#3390ec] dark:text-[#71aaeb]">{forwardedName}</span>
@@ -136,17 +121,17 @@ function TelegramBubble({ message, children }: TelegramBubbleProps) {
                 <div className="w-0.5 bg-[#3390ec] dark:bg-[#71aaeb] rounded-full shrink-0" />
                 <div className="flex flex-col min-w-0 py-0.5">
                   {replyAuthor && (
-                    <span className="text-[11px] font-medium text-[#3390ec] dark:text-[#71aaeb] truncate">
+                    <span className="text-xs font-medium text-[#3390ec] dark:text-[#71aaeb] truncate">
                       {replyAuthor}
                     </span>
                   )}
                   {replyPreview && (
-                    <span className="text-[11px] text-muted-foreground truncate max-w-[200px]">
+                    <span className="text-xs text-muted-foreground truncate max-w-[200px]">
                       {typeof replyPreview === 'string' ? replyPreview : 'Message'}
                     </span>
                   )}
                   {!replyPreview && !replyAuthor && (
-                    <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Reply className="w-3 h-3" />
                       Reply
                     </span>
@@ -156,13 +141,13 @@ function TelegramBubble({ message, children }: TelegramBubbleProps) {
             )}
             
             {/* Message Content */}
-            <div className="text-sm text-foreground leading-[1.4]">
+            <div className="break-words text-base leading-relaxed text-foreground">
               {children}
             </div>
             
             {/* Timestamp */}
             <div className="flex justify-end mt-1 -mb-0.5 -mr-1">
-              <span className="text-[10px] text-muted-foreground/70 select-none">
+              <span className="text-xs text-muted-foreground select-none">
                 {formattedDate}
               </span>
             </div>
@@ -212,7 +197,7 @@ const TelegramMessageComponent: Platform["MessageComponent"] = ({ message }) => 
                     {duration && <span className="font-mono text-xs opacity-80">({duration})</span>}
                 </div>
                 {discardReason && (
-                    <span className="text-[10px] text-muted-foreground opacity-60 uppercase tracking-wider">
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">
                         {discardReason.replace(/_/g, " ")}
                     </span>
                 )}
@@ -236,8 +221,8 @@ const TelegramMessageComponent: Platform["MessageComponent"] = ({ message }) => 
                     <div className="flex flex-col items-center text-muted-foreground">
                         <Video className="w-8 h-8 opacity-50 mb-1" />
                         <span className="text-xs font-semibold">Video Message</span>
-                        {duration && <span className="text-[10px] opacity-70">{duration}</span>}
-                        <span className="text-[9px] opacity-50 mt-1 italic">File not available</span>
+                        {duration && <span className="text-xs">{duration}</span>}
+                        <span className="text-xs mt-1 italic">File not available</span>
                     </div>
                 )}
            </div>
@@ -265,7 +250,7 @@ const TelegramMessageComponent: Platform["MessageComponent"] = ({ message }) => 
                         <span className="text-sm font-medium truncate" title={fileName}>
                             {fileName}
                         </span>
-                        <span className="text-[11px] text-muted-foreground truncate">
+                        <span className="text-xs text-muted-foreground truncate">
                             {mimeType}
                         </span>
                     </div>
@@ -305,7 +290,7 @@ const TelegramMessageComponent: Platform["MessageComponent"] = ({ message }) => 
                   key={idx} 
                   src={media.url} 
                   alt="media" 
-                  className="max-w-[280px] rounded-lg h-auto cursor-pointer hover:opacity-90 transition-opacity" 
+                  className="max-w-full sm:max-w-[min(100%,280px)] rounded-lg h-auto cursor-pointer hover:opacity-90 transition-opacity"
                 />
               );
             }

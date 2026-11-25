@@ -195,6 +195,8 @@ verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-a
 - Independent projection lifecycle with durable checkpoints, source/chunk
   ledger, incremental change-stream updates, periodic reconciliation, and
   blue/green rebuilds that keep the previous active generation searchable.
+- The home page searches the archive directly and groups shortcuts for exploring
+  memories, reading conversations, and working with audio.
 - Dedicated Search page and Knowledge settings page for status, progress,
   freshness, errors, chunk inspection, reconcile, pause/resume, and confirmed
   rebuild operations. Chat receives only the read-only search tool.

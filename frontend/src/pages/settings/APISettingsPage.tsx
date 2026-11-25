@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Check, Copy, Edit2, Key, Plus, Save, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Edit2, Key, Plus, Save, X } from "lucide-react";
 import { ObjectId } from "bson";
 import { useActionDialog } from "@/components/ActionDialogProvider";
 
@@ -271,7 +271,7 @@ const APISettingsPage = () => {
       {/* ── Client Configuration ── */}
       <div className="space-y-4">
         <h3 className="text-lg font-semibold">Client Configuration</h3>
-        <div className="border rounded-lg p-6 space-y-6">
+        <div className="space-y-5 rounded-xl border bg-card p-4 sm:p-5">
           <div className="space-y-4">
             <APIEndpointField
               value={localEndpoint}
@@ -472,91 +472,25 @@ const APISettingsPage = () => {
                       className="group"
                       open={editingKeyId === key._id.toString()}
                     >
-                      <summary className="list-none cursor-pointer">
-                        <div className="flex items-center gap-2">
-                          {/* Name column - fixed width */}
-                          <div className="w-[160px] shrink-0 truncate flex items-center gap-2">
-                            <h3 className="font-semibold text-sm truncate">
-                              {key.name}
-                            </h3>
-                            {isActiveKey && (
-                              <Badge
-                                variant="outline"
-                                className="shrink-0 text-[10px] px-1.5 py-0"
-                              >
-                                current
-                              </Badge>
-                            )}
+                      <summary className="cursor-pointer list-none rounded-md focus-visible:outline-2 focus-visible:outline-ring">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="break-all font-semibold">{key.name}</h3>
+                              {isActiveKey && <Badge variant="outline">current</Badge>}
+                              {!key.isActive && <Badge variant="secondary">Revoked</Badge>}
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                              <span>ID: <code>{key._id.toString().slice(0, 8)}…</code></span>
+                              <span className="break-all">Secret: <code>{key.openPrefix}…</code></span>
+                              <span className="break-all">Owner: {key.owner}</span>
+                              <span>{new Date(key.createdAt).toLocaleDateString()}</span>
+                            </div>
                           </div>
-
-                          {/* ID column - fixed width */}
-                          <div className="w-[120px] shrink-0 flex items-center gap-1 text-xs">
-                            <span className="text-muted-foreground">ID:</span>
-                            <code className="font-mono text-[11px] bg-muted px-1.5 py-0.5 rounded truncate">
-                              {key._id.toString().slice(0, 8)}...
-                            </code>
-                          </div>
-
-                          {/* Secret column - fixed width */}
-                          <div className="w-[160px] shrink-0 flex items-center gap-1 text-xs">
-                            <span className="text-muted-foreground">
-                              Secret:
-                            </span>
-                            <code className="font-mono text-[11px] bg-muted px-1.5 py-0.5 rounded truncate">
-                              {key.openPrefix}...
-                            </code>
-                          </div>
-
-                          {/* Owner column - fixed width */}
-                          <div className="w-[80px] shrink-0 flex items-center gap-1 text-xs">
-                            <span className="text-muted-foreground">
-                              Owner:
-                            </span>
-                            <span className="truncate">{key.owner}</span>
-                          </div>
-
-                          {/* Date column - fixed width */}
-                          <div className="w-[90px] shrink-0 text-xs text-muted-foreground">
-                            {new Date(key.createdAt).toLocaleDateString()}
-                          </div>
-
-                          {/* Spacer */}
-                          <div className="flex-1" />
-
-                          {/* Details toggle - fixed width */}
-                          <div className="w-[60px] shrink-0">
-                            <span className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                              <span className="group-open:hidden">▶</span>
-                              <span className="hidden group-open:inline">
-                                ▼
-                              </span>
-                              Details
-                            </span>
-                          </div>
-
-                          {/* Action column - fixed width */}
-                          <div className="w-[70px] shrink-0 flex justify-end">
-                            {key.isActive
-                              ? (
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRevoke(key._id.toString(), key.owner);
-                                  }}
-                                  title="Revoke this API key"
-                                >
-                                  Revoke
-                                </Button>
-                              )
-                              : (
-                                <span className="inline-flex items-center justify-center h-7 px-2 text-[11px] rounded-md bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                                  Revoked
-                                </span>
-                              )}
-                          </div>
+                          <span className="flex shrink-0 items-center gap-1 text-sm font-medium">
+                            <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden="true" />
+                            Details
+                          </span>
                         </div>
                       </summary>
 
@@ -566,22 +500,24 @@ const APISettingsPage = () => {
                           <span className="text-xs font-medium text-muted-foreground">
                             Policies
                           </span>
-                          {key.isActive &&
-                            editingKeyId !== key._id.toString() && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleStartEdit(key);
-                              }}
-                              title="Edit policies"
-                            >
-                              <Edit2 className="w-3 h-3 mr-1" />
-                              Edit
-                            </Button>
-                          )}
+                          <div className="flex flex-wrap gap-2">
+                            {key.isActive && editingKeyId !== key._id.toString() && (
+                              <Button variant="outline" size="sm" onClick={() => handleStartEdit(key)}>
+                                <Edit2 className="size-4" />
+                                Edit
+                              </Button>
+                            )}
+                            {key.isActive && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleRevoke(key._id.toString(), key.owner)}
+                                title="Revoke this API key"
+                              >
+                                Revoke
+                              </Button>
+                            )}
+                          </div>
                         </div>
                         {editingKeyId === key._id.toString()
                           ? (
@@ -627,7 +563,7 @@ const APISettingsPage = () => {
                             </div>
                           )
                           : (
-                            <pre className="p-2 bg-muted rounded text-[11px] font-mono overflow-x-auto">
+                            <pre className="p-2 bg-muted rounded text-xs font-mono overflow-x-auto">
                         {key.policiesYaml}
                             </pre>
                           )}

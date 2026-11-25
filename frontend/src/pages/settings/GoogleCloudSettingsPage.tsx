@@ -8,7 +8,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -348,9 +347,9 @@ export default function GoogleCloudSettingsPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Cloud className="h-5 w-5" /> Google Cloud (optional)
-          </CardTitle>
+          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+            <Cloud className="size-5 shrink-0" /> Google Cloud (optional)
+          </h2>
           <CardDescription>
             Visual understanding uses Gemini on Vertex AI through server-side
             Application Default Credentials. Gemini API / AI Studio keys are not
@@ -586,9 +585,9 @@ export default function GoogleCloudSettingsPage() {
             </div>
           )}
 
-          <div className="grid gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-4 md:grid-cols-4">
+          <div className="grid gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-4 @3xl/settings:grid-cols-4">
             {status?.usage && (
-              <div className="grid gap-2 rounded-md bg-background/80 p-3 text-sm md:col-span-4 md:grid-cols-4">
+              <div className="grid gap-2 rounded-md bg-background/80 p-3 text-sm @3xl/settings:col-span-4 @3xl/settings:grid-cols-4">
                 <div>
                   <div className="text-xs text-muted-foreground">
                     Month used / stop
@@ -723,7 +722,7 @@ export default function GoogleCloudSettingsPage() {
                   })}
               />
             </div>
-            <p className="text-xs text-muted-foreground md:col-span-4">
+            <p className="text-xs text-muted-foreground @3xl/settings:col-span-4">
               This is a fail-closed application guard, not a Google billing
               guarantee. Free-trial mode stops processing{" "}
               {config.promoGuard.stopBeforeHours}{" "}

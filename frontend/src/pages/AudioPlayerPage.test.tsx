@@ -66,7 +66,7 @@ describe("AudioPlayerPage date selection", () => {
       expect(state.isPlaying).toBe(isPlaying);
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       if (!isPlaying) {
-        await user.click(screen.getByRole("button", { name: "" }));
+        await user.click(screen.getByRole("button", { name: "Start playback" }));
         expect(useAudioPlayer.getState().isPlaying).toBe(true);
         expect(useAudioPlayer.getState().seekGeneration).toBe(1);
       }
@@ -113,7 +113,7 @@ describe("AudioPlayerPage date selection", () => {
     const before = Date.now();
     render(<AudioPlayerPage />);
 
-    await user.click(screen.getByRole("button", { name: "" }));
+    await user.click(screen.getByRole("button", { name: "Start playback" }));
 
     const state = useAudioPlayer.getState();
     expect(state.currentDate?.getTime()).toBeGreaterThanOrEqual(before);

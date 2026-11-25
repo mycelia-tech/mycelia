@@ -10,9 +10,11 @@ import {
   AlertTriangle,
   Bookmark,
   Clock,
+  ChevronDown,
   Crosshair,
   Database,
   Images,
+  Layers,
   Link as LinkIcon,
   Loader2,
   MapPin,
@@ -125,8 +127,8 @@ function SourceBounds({ bounds, onFit }: { bounds: MapBounds; onFit: () => void 
 
 function LayerGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div role="group" aria-label={label} className="flex min-w-0 max-w-full flex-col gap-1">
-      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+    <div role="group" aria-label={label} className="flex min-w-0 max-w-full flex-col gap-1.5">
+      <span className="text-sm font-medium">{label}</span>
       <div className="flex flex-wrap items-center gap-1">{children}</div>
     </div>
   );
@@ -270,6 +272,8 @@ const MapExperiencePage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const initialUrl = useMemo(readMapUrlState, []);
+  const [layersExpanded, setLayersExpanded] = useState(false);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
   const focusedPhotoAssetId = useMemo(
     () =>
       new URLSearchParams(location.search).get("photoAssetId")?.trim() ||
@@ -749,9 +753,22 @@ const MapExperiencePage = () => {
     selectedSavedPlace || selectedRecordedTrack;
 
   return (
-    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[34rem] flex-col gap-2">
+    <div className="flex flex-col gap-2 md:h-[var(--workspace-panel-height)] md:min-h-[38rem]">
       <div className="flex flex-wrap items-center gap-1.5">
-        <h1 className="mr-auto text-lg font-semibold tracking-tight">Location map</h1>
+        <div className="flex w-full items-center justify-between gap-2 md:mr-auto md:w-auto">
+          <h1 className="text-2xl font-semibold tracking-tight">Location map</h1>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="md:hidden"
+            aria-expanded={toolsExpanded}
+            aria-controls="map-tools"
+            onClick={() => setToolsExpanded(!toolsExpanded)}
+          >
+            Map tools <ChevronDown className="ml-1 size-4" />
+          </Button>
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -765,16 +782,27 @@ const MapExperiencePage = () => {
           <Crosshair className="mr-1.5 h-4 w-4" /> Fit selected data
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
-          onClick={async () => {
-            await navigator.clipboard.writeText(window.location.href);
-            toast.success("Exact map link copied");
-          }}
+          className="md:hidden"
+          aria-expanded={layersExpanded}
+          aria-controls="map-layer-controls"
+          onClick={() => setLayersExpanded(!layersExpanded)}
         >
-          <LinkIcon className="mr-1.5 h-4 w-4" /> Copy link
+          <Layers className="mr-1.5 size-4" /> Layers<span className="sr-only"> and sources</span>
         </Button>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div id="map-tools" className={`${toolsExpanded ? "flex" : "hidden"} w-full flex-wrap items-center gap-1.5 md:flex md:w-auto`}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              await navigator.clipboard.writeText(window.location.href);
+              toast.success("Exact map link copied");
+            }}
+          >
+            <LinkIcon className="mr-1.5 h-4 w-4" /> Copy link
+          </Button>
           {status && !status.geonamesReady && (
             <Button
               variant="outline"
@@ -810,7 +838,7 @@ const MapExperiencePage = () => {
         </div>
       </div>
 
-      <section aria-label="Map layers and sources" className="flex flex-wrap items-start gap-x-5 gap-y-2 rounded-lg border bg-muted/25 px-3 py-2">
+      <section id="map-layer-controls" aria-label="Map layers and sources" className={`${layersExpanded ? "flex" : "hidden"} flex-wrap items-start gap-x-5 gap-y-3 rounded-lg border bg-card px-3 py-2 md:flex`}>
         <LayerGroup label="Location markers">
           <LayerButton active={showPresence} onClick={() => toggleLayer("presence")}>
             <MapPin className="size-3.5" /> Presence
@@ -861,7 +889,7 @@ const MapExperiencePage = () => {
 
       <div className="relative flex min-h-0 flex-1 gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <div className="relative isolate min-h-0 flex-1 overflow-hidden rounded-lg border">
+          <div className="relative isolate min-h-[max(20rem,45dvh)] flex-1 overflow-hidden rounded-lg border md:min-h-64">
             <LocationMap
               segments={mapPresenceSegments}
               fitToSegments={((autoFitSegments && showPresence) || fitReady) &&
@@ -968,7 +996,7 @@ const MapExperiencePage = () => {
 
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1">
             <div
-              className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground"
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"
               aria-label="Map layer legend"
             >
               {showConversations && (
@@ -1053,7 +1081,7 @@ const MapExperiencePage = () => {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
+                className="h-8 w-8"
                 aria-label="Close location details"
                 onClick={closeSelection}
               >

@@ -250,8 +250,9 @@ export default function MapsSettingsPage() {
         <CardContent className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="tile-url">Tile server URL</Label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Input
+                className="min-w-0 basis-full @xl/settings:flex-1"
                 id="tile-url"
                 value={tileDraft}
                 onChange={(e) => setTileDraft(e.target.value)}
@@ -288,7 +289,7 @@ export default function MapsSettingsPage() {
             </p>
           </div>
 
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div className="space-y-0.5">
               <Label htmlFor="locations-track">
                 Show Locations track on the timeline

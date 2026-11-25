@@ -116,7 +116,7 @@ export function TimelineTimeZoneControl({
           </span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[420px] space-y-5">
+      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-[min(26rem,calc(100vw-2rem))] space-y-5 overflow-y-auto">
         <div className="space-y-1">
           <h3 className="font-medium">Timeline time zone</h3>
           <p className="text-xs text-muted-foreground">

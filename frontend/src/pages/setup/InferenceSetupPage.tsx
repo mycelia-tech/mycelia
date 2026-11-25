@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { callResource } from "@/lib/api";
 import { getCurrentJWT } from "@/lib/auth";
-import { ArrowRight, CheckCircle2, Cpu, Loader2, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -131,34 +131,18 @@ export default function InferenceSetupPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-cyan-500 to-blue-500 mb-6 shadow-lg shadow-cyan-500/30">
-            <Cpu className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold text-white mb-2 tracking-tight">
-            Inference Provider
-          </h1>
-          <p className="text-slate-300 text-lg">
-            Configure your AI inference backend
-          </p>
-        </div>
-
-        {/* Progress indicator */}
-        <div className="flex items-center justify-center gap-2 mb-8">
-          <div className="w-3 h-3 rounded-full bg-green-400" />
-          <div className="w-8 h-0.5 bg-green-400" />
-          <div className="w-3 h-3 rounded-full bg-purple-400 ring-2 ring-purple-400/50" />
-        </div>
-
-        {/* Setup Card */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 shadow-2xl">
+    <main className="grid min-h-dvh place-items-center bg-background px-4 py-6 sm:py-10">
+      <div className="w-full min-w-0 max-w-lg">
+        <header className="mb-4">
+          <p className="mb-1 text-sm font-semibold text-primary">Setup · Step 2 of 2</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Inference Provider</h1>
+          <p className="mt-1 text-muted-foreground">Configure your AI inference backend.</p>
+        </header>
+        <div className="rounded-xl border bg-card p-4 shadow-xs sm:p-6">
           {status === "checking" && (
             <div className="text-center py-8">
-              <Loader2 className="w-12 h-12 text-cyan-400 animate-spin mx-auto mb-4" />
-              <p className="text-white text-lg font-medium">
+              <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
+              <p className="text-foreground text-lg font-medium">
                 Checking configuration...
               </p>
             </div>
@@ -172,14 +156,14 @@ export default function InferenceSetupPage() {
               }}
             >
               {status === "error" && (
-                <div className="mb-6 p-4 rounded-lg bg-red-500/20 border border-red-500/30">
+                <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/40">
                   <div className="flex items-start gap-3">
-                    <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                    <XCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-red-300 font-medium">
+                      <p className="text-destructive font-medium">
                         Configuration Failed
                       </p>
-                      <p className="text-red-300/80 text-sm mt-1">
+                      <p className="text-destructive text-sm mt-1">
                         {errorMessage}
                       </p>
                     </div>
@@ -191,7 +175,7 @@ export default function InferenceSetupPage() {
                 <div>
                   <Label
                     htmlFor="baseUrl"
-                    className="text-slate-200 mb-2 block"
+                    className="text-foreground mb-2 block"
                   >
                     Inference API URL
                   </Label>
@@ -202,15 +186,14 @@ export default function InferenceSetupPage() {
                     onChange={(e) => setBaseUrl(e.target.value)}
                     placeholder="http://your-openai-compatible-server:8080/v1"
                     disabled={status === "saving"}
-                    className="bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:border-cyan-400 disabled:opacity-50"
                   />
-                  <p className="text-slate-400 text-xs mt-1">
+                  <p className="text-muted-foreground text-xs mt-1">
                     OpenAI-compatible inference endpoint
                   </p>
                 </div>
 
                 <div>
-                  <Label htmlFor="apiKey" className="text-slate-200 mb-2 block">
+                  <Label htmlFor="apiKey" className="text-foreground mb-2 block">
                     API Key
                   </Label>
                   <Input
@@ -220,7 +203,6 @@ export default function InferenceSetupPage() {
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder="Enter your API key"
                     disabled={status === "saving"}
-                    className="bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:border-cyan-400 disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -239,13 +221,13 @@ export default function InferenceSetupPage() {
                     ? "Checking connection…"
                     : "Check provider connection"}
                 </Button>
-                <p role="status" className="text-sm text-slate-300">
+                <p role="status" className="text-sm text-muted-foreground">
                   {connectionText}
                 </p>
                 <Button
                   type="submit"
                   disabled={!baseUrl || status === "saving"}
-                  className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-medium py-6 text-lg rounded-xl shadow-lg shadow-cyan-500/30 transition-all hover:shadow-cyan-500/50 disabled:opacity-80"
+                  className="w-full"
                 >
                   {status === "saving"
                     ? (
@@ -267,13 +249,13 @@ export default function InferenceSetupPage() {
                   onClick={skipSetup}
                   disabled={status === "saving"}
                   variant="ghost"
-                  className="w-full text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-50"
+                  className="w-full text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
                 >
                   Skip for now
                 </Button>
               </div>
 
-              <p className="text-slate-400 text-sm text-center mt-4">
+              <p className="text-muted-foreground text-sm text-center mt-4">
                 You can change this later in Settings
               </p>
             </form>
@@ -281,11 +263,11 @@ export default function InferenceSetupPage() {
 
           {status === "success" && (
             <div className="text-center py-8">
-              <CheckCircle2 className="w-12 h-12 text-green-400 mx-auto mb-4" />
-              <p className="text-white text-lg font-medium">
+              <CheckCircle2 className="w-12 h-12 text-primary mx-auto mb-4" />
+              <p className="text-foreground text-lg font-medium">
                 Configuration Saved!
               </p>
-              <p className="text-slate-400 text-sm mt-2">
+              <p className="text-muted-foreground text-sm mt-2">
                 {connectionText} Model generation has not been tested.
               </p>
               <Button
@@ -298,11 +280,7 @@ export default function InferenceSetupPage() {
           )}
         </div>
 
-        {/* Footer */}
-        <p className="text-slate-500 text-xs text-center mt-6">
-          Step 2 of 2 - Inference Configuration
-        </p>
       </div>
-    </div>
+    </main>
   );
 }

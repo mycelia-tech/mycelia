@@ -276,9 +276,9 @@ const TimelinePage = () => {
 
   return (
     <TooltipProvider>
-      <div className="flex gap-4">
-        {/* Main timeline content */}
-        <div className="flex-1 space-y-6 min-w-0">
+      <div className="grid min-w-0 grid-cols-1 items-start gap-3 lg:has-[aside]:grid-cols-[minmax(0,1fr)_17rem]">
+        <h1 className="text-2xl font-semibold tracking-tight lg:col-span-full">Timeline</h1>
+        <div className="min-w-0">
           <TimelineHeader
             hasTimeSelection={hasTimeSelection}
             timeSelectionStart={timeSelection.start ?? undefined}
@@ -292,9 +292,12 @@ const TimelinePage = () => {
             onClearTimeSelection={clearTimeSelection}
           />
 
+        </div>
+        <TrackVisibilityPanel />
+        <div className="min-w-0 space-y-3 lg:col-start-1">
           <TimelineRecoveryStatus />
 
-          <div className="border rounded-lg p-2">
+          <div className="rounded-lg border bg-card p-1.5 sm:p-2">
             <MultiTrackTimeline
               timeline={timeline}
               focusedPhoto={focusedPhoto}
@@ -314,8 +317,6 @@ const TimelinePage = () => {
           />
         </div>
 
-        {/* Side panel for track visibility */}
-        <TrackVisibilityPanel />
       </div>
     </TooltipProvider>
   );

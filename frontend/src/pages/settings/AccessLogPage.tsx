@@ -94,7 +94,7 @@ const AccessLogPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold mb-2">Access Log</h2>
           <p className="text-muted-foreground">
@@ -162,7 +162,7 @@ const AccessLogPage = () => {
       </Card>
 
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <h3 className="text-lg font-semibold">
             Log Entries ({logs.length})
           </h3>
@@ -180,17 +180,17 @@ const AccessLogPage = () => {
               <Card key={log._id} className="p-4">
                 <div className="space-y-3">
                   <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-2">
+                    <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex items-center gap-3">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-sm">
+                            <span className="break-all text-sm font-semibold">
                               {log.principal}
                             </span>
                             <span className="text-xs text-muted-foreground">
                               →
                             </span>
-                            <span className="font-mono text-sm">
+                            <span className="break-all font-mono text-sm">
                               {log.resource}
                             </span>
                           </div>
@@ -203,7 +203,7 @@ const AccessLogPage = () => {
                         {log.actions.map((action, idx) => (
                           <div
                             key={idx}
-                            className="text-xs bg-muted rounded px-2 py-1 inline-block mr-2"
+                            className="mr-2 inline-block max-w-full break-all rounded bg-muted px-2 py-1 text-sm"
                           >
                             <span className="font-mono">
                               {action.path.join(".")}

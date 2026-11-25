@@ -696,7 +696,7 @@ export function VoiceIdentityOperations() {
                   : "No classification campaign has run for this active generation."}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {latestIdentityCampaign?.currentJobId && (
                 <Link
                   to={withVoiceProfile(
@@ -802,7 +802,7 @@ export function VoiceIdentityOperations() {
                       <p className="mt-1 text-xs text-muted-foreground">
                         {runStatusExplanation(run.status)}
                       </p>
-                      <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                      <p className="mt-1 font-mono text-xs text-muted-foreground">
                         run {shortTechnicalId(run.runId)} · space{" "}
                         {shortTechnicalId(run.embeddingSpaceId)}
                       </p>
@@ -906,7 +906,7 @@ export function VoiceIdentityOperations() {
                             run.campaign.totalChunks) * 100
                           : 0}
                       />
-                      <div className="flex justify-between gap-3 text-[11px] text-muted-foreground">
+                      <div className="flex justify-between gap-3 text-xs text-muted-foreground">
                         <span className="font-mono">
                           campaign {shortTechnicalId(run.campaign.campaignId)}
                         </span>
@@ -980,7 +980,7 @@ export function VoiceIdentityOperations() {
                     segment documents stay intact
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 @2xl/settings:grid-cols-3">
                   <div className="rounded-md border p-3">
                     <p className="text-xl font-semibold tabular-nums">
                       {repairPreview.counts.alreadyActiveReplacementSegments
@@ -1071,7 +1071,7 @@ export function VoiceIdentityOperations() {
             </DialogHeader>
             {purgePreview && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 @lg/settings:grid-cols-2">
                   <div className="rounded-md border p-3">
                     <p className="text-2xl font-semibold tabular-nums">
                       {purgePreview.documents.toLocaleString()}

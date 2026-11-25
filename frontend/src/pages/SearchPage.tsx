@@ -4,7 +4,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   CalendarX2,
-  Database,
+  ChevronDown,
   Filter,
   Loader2,
   Search,
@@ -163,7 +163,7 @@ function ResultCard(
             <CardTitle
               role="heading"
               aria-level={3}
-              className="text-base leading-snug"
+              className="break-words text-lg leading-snug"
             >
               {source.title || source.id || result.pointId || result.id}
             </CardTitle>
@@ -181,7 +181,7 @@ function ResultCard(
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="whitespace-pre-wrap text-sm leading-6">{result.text}</p>
+        <p className="whitespace-pre-wrap break-words text-base leading-relaxed">{result.text}</p>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
           <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">Result diagnostics</summary>
@@ -226,7 +226,7 @@ function ResultCard(
 }
 
 export default function SearchPage() {
-  const { form, setField, submit, response, loading, error, hasSearched } =
+  const { form, setField, submit, response, loading, error } =
     useMemorySearch();
   const {
     query,
@@ -257,11 +257,21 @@ export default function SearchPage() {
       checked ? [...kinds, kind] : kinds.filter((value) => value !== kind),
     );
 
+  const activeOptions = [
+    ...kinds.map((kind) => SOURCE_KINDS.find((option) => option.value === kind)?.label),
+    range && "Date range",
+    platforms.trim(),
+    senderIds.trim() && "Sender",
+    sourceId.trim() && "Source ID",
+    limit !== "10" && `Limit ${limit}`,
+    maxPerSource !== "2" && `${maxPerSource} per context`,
+  ].filter(Boolean);
+
   const actualMode = response?.mode ?? mode;
   const results = response?.results ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-4">
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <Search className="h-6 w-6 text-primary" />
@@ -274,20 +284,19 @@ export default function SearchPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Search knowledge</CardTitle>
-          <CardDescription>{MODE_COPY[mode]}</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 sm:p-5">
           <form
-            className="space-y-5"
+            className="space-y-3"
             onSubmit={(event) => {
               event.preventDefault();
+              if (query.trim()) {
+                event.currentTarget.querySelector("details")?.removeAttribute("open");
+              }
               submit();
             }}
           >
             <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="flex-1 space-y-2">
+              <div className="min-w-0 flex-1 space-y-2">
                 <Label htmlFor="rag-query">Question or phrase</Label>
                 <Input
                   id="rag-query"
@@ -327,163 +336,172 @@ export default function SearchPage() {
               </div>
             </div>
 
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <div className="mb-4 flex items-center gap-2 text-sm font-medium">
-                <SlidersHorizontal className="h-4 w-4" />
+            <p className="text-sm text-muted-foreground">{MODE_COPY[mode]}</p>
+            <details className="group rounded-lg border bg-muted/25">
+              <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+                <SlidersHorizontal className="h-4 w-4 shrink-0" />
                 Filters
-              </div>
-              <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr_8rem]">
-                <fieldset className="space-y-2">
-                  <legend className="text-sm font-medium">Source kinds</legend>
-                  <div className="grid grid-cols-2 gap-2">
-                    {SOURCE_KINDS.map((option) => (
-                      <label
-                        key={option.value}
-                        className="flex cursor-pointer items-center gap-2 text-sm"
+                {activeOptions.length > 0 && (
+                  <span className="truncate font-normal text-muted-foreground">
+                    {activeOptions.join(" · ")}
+                  </span>
+                )}
+                <ChevronDown className="ml-auto h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="space-y-4 border-t p-3 sm:p-4">
+                <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr_8rem]">
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-medium">Source kinds</legend>
+                    <div className="grid grid-cols-2 gap-2">
+                      {SOURCE_KINDS.map((option) => (
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-center gap-2 text-sm"
+                        >
+                          <Checkbox
+                            checked={kinds.includes(option.value)}
+                            onCheckedChange={(checked) =>
+                              toggleKind(option.value, checked === true)}
+                            aria-label={option.label}
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      No selection searches every indexed source.
+                    </p>
+                  </fieldset>
+
+                  <div className="space-y-2">
+                    <DateRangePicker
+                      value={range}
+                      onChange={setRange}
+                      label="Date and time range"
+                      placeholder="Any date"
+                      precision="minute"
+                    />
+                    {range && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setRange(undefined)}
                       >
-                        <Checkbox
-                          checked={kinds.includes(option.value)}
-                          onCheckedChange={(checked) =>
-                            toggleKind(option.value, checked === true)}
-                          aria-label={option.label}
-                        />
-                        {option.label}
-                      </label>
-                    ))}
+                        <CalendarX2 className="mr-1 h-3.5 w-3.5" />
+                        Clear range
+                      </Button>
+                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    No selection searches every indexed source.
-                  </p>
-                </fieldset>
 
-                <div className="space-y-2">
-                  <DateRangePicker
-                    value={range}
-                    onChange={setRange}
-                    label="Date and time range"
-                    placeholder="Any date"
-                    precision="minute"
-                  />
-                  {range && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setRange(undefined)}
-                    >
-                      <CalendarX2 className="mr-1 h-3.5 w-3.5" />
-                      Clear range
-                    </Button>
-                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="rag-limit">Result limit</Label>
+                    <Select value={limit} onValueChange={setLimit}>
+                      <SelectTrigger id="rag-limit" aria-label="Result limit">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[5, 10, 20, 50].map((value) => (
+                          <SelectItem key={value} value={String(value)}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="rag-limit">Result limit</Label>
-                  <Select value={limit} onValueChange={setLimit}>
-                    <SelectTrigger id="rag-limit" aria-label="Result limit">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {[5, 10, 20, 50].map((value) => (
-                        <SelectItem key={value} value={String(value)}>
-                          {value}
+                <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="rag-platforms">Exact platforms</Label>
+                    <Input
+                      id="rag-platforms"
+                      value={platforms}
+                      onChange={(event) => setPlatforms(event.target.value)}
+                      placeholder="mycelia, telegram"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Comma-separated canonical message platform IDs.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rag-sender-ids">
+                      Exact message sender IDs
+                    </Label>
+                    <Input
+                      id="rag-sender-ids"
+                      value={senderIds}
+                      onChange={(event) => setSenderIds(event.target.value)}
+                      placeholder="Canonical messages.senderId values"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Comma-separated IDs; this is not a voice-profile filter.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-[11rem_1fr_10rem]">
+                  <div className="space-y-2">
+                    <Label htmlFor="rag-source-collection">
+                      Exact source type
+                    </Label>
+                    <Select
+                      value={sourceCollection}
+                      onValueChange={setSourceCollection}
+                    >
+                      <SelectTrigger
+                        id="rag-source-collection"
+                        aria-label="Exact source type"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="transcriptions">
+                          Transcription
                         </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="mt-5 grid gap-5 border-t pt-5 lg:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="rag-platforms">Exact platforms</Label>
-                  <Input
-                    id="rag-platforms"
-                    value={platforms}
-                    onChange={(event) => setPlatforms(event.target.value)}
-                    placeholder="mycelia, telegram"
-                    autoComplete="off"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Comma-separated canonical message platform IDs.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="rag-sender-ids">
-                    Exact message sender IDs
-                  </Label>
-                  <Input
-                    id="rag-sender-ids"
-                    value={senderIds}
-                    onChange={(event) => setSenderIds(event.target.value)}
-                    placeholder="Canonical messages.senderId values"
-                    autoComplete="off"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Comma-separated IDs; this is not a voice-profile filter.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-5 grid gap-5 lg:grid-cols-[11rem_1fr_10rem]">
-                <div className="space-y-2">
-                  <Label htmlFor="rag-source-collection">
-                    Exact source type
-                  </Label>
-                  <Select
-                    value={sourceCollection}
-                    onValueChange={setSourceCollection}
-                  >
-                    <SelectTrigger
-                      id="rag-source-collection"
-                      aria-label="Exact source type"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="transcriptions">
-                        Transcription
-                      </SelectItem>
-                      <SelectItem value="messages">Message</SelectItem>
-                      <SelectItem value="objects">Object</SelectItem>
-                      <SelectItem value="media_visual_descriptions">
-                        Media description
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="rag-source-id">Exact source ID</Label>
-                  <Input
-                    id="rag-source-id"
-                    value={sourceId}
-                    onChange={(event) => setSourceId(event.target.value)}
-                    placeholder="Optional MongoDB source ID"
-                    autoComplete="off"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="rag-source-cap">Evidence per context</Label>
-                  <Select value={maxPerSource} onValueChange={setMaxPerSource}>
-                    <SelectTrigger
-                      id="rag-source-cap"
-                      aria-label="Evidence per context"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {[1, 2, 3, 5, 10].map((value) => (
-                        <SelectItem key={value} value={String(value)}>
-                          {value}
+                        <SelectItem value="messages">Message</SelectItem>
+                        <SelectItem value="objects">Object</SelectItem>
+                        <SelectItem value="media_visual_descriptions">
+                          Media description
                         </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Caps neighboring chunks per chat, recording, or source.
-                  </p>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rag-source-id">Exact source ID</Label>
+                    <Input
+                      id="rag-source-id"
+                      value={sourceId}
+                      onChange={(event) => setSourceId(event.target.value)}
+                      placeholder="Optional MongoDB source ID"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rag-source-cap">Evidence per context</Label>
+                    <Select value={maxPerSource} onValueChange={setMaxPerSource}>
+                      <SelectTrigger
+                        id="rag-source-cap"
+                        aria-label="Evidence per context"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 5, 10].map((value) => (
+                          <SelectItem key={value} value={String(value)}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Caps neighboring chunks per chat, recording, or source.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            </details>
           </form>
         </CardContent>
       </Card>
@@ -615,16 +633,6 @@ export default function SearchPage() {
           </div>
         )}
 
-        {!loading && !hasSearched && !error && (
-          <Card className="p-10 text-center">
-            <Database className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-            <p className="font-medium">Search your memories</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Enter a phrase or question, then open a source to see the full
-              context.
-            </p>
-          </Card>
-        )}
       </section>
     </div>
   );

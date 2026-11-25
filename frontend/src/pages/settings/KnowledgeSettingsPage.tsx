@@ -1087,7 +1087,7 @@ export default function KnowledgeSettingsPage() {
                           )}
                           {source.lastCheckpoint && (
                             <p
-                              className="mt-1 max-w-40 truncate font-mono text-[10px] font-normal text-muted-foreground"
+                              className="mt-1 max-w-40 truncate font-mono text-xs font-normal text-muted-foreground"
                               title={source.lastCheckpoint}
                             >
                               {source.lastCheckpoint}
@@ -1196,7 +1196,7 @@ export default function KnowledgeSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[12rem_1fr_auto]">
+          <div className="grid gap-3 @3xl/settings:grid-cols-[12rem_minmax(0,1fr)_auto]">
             <div className="space-y-2">
               <Label htmlFor="chunk-kind">Kind</Label>
               <Select value={draftKind} onValueChange={setDraftKind}>
@@ -1305,7 +1305,7 @@ export default function KnowledgeSettingsPage() {
                             </p>
                             {source.hash && (
                               <p
-                                className="mt-1 max-w-36 truncate font-mono text-[10px] text-muted-foreground"
+                                className="mt-1 max-w-36 truncate font-mono text-xs text-muted-foreground"
                                 title={source.hash}
                               >
                                 {source.hash}

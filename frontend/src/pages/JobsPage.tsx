@@ -215,18 +215,14 @@ type ExternalServiceHealth = {
 
 function DiarizatorReadinessStatusBadge({
   route,
-  compact = false,
 }: {
   route: NonNullable<ExternalServiceHealth["routes"]>[number];
-  compact?: boolean;
 }) {
   const readiness = getDiarizatorReadinessBadge(route);
   return (
     <Badge
       variant="outline"
-      className={`shrink-0 py-0 ${
-        compact ? "px-1 text-[9px]" : "px-1.5 text-[10px]"
-      } ${
+      className={`shrink-0 px-1.5 py-0 text-xs ${
         readiness.kind === "legacy"
           ? "border-amber-500/50 text-amber-600"
           : readiness.kind === "current"
@@ -2858,10 +2854,10 @@ export default function JobsPage() {
   };
 
   return (
-    <div className="container mx-auto space-y-3 p-3 md:p-4">
-      <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+    <div className="min-w-0 space-y-5">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-bold tracking-tight">System Jobs</h1>
+          <h1 className="text-3xl font-bold tracking-tight">System Jobs</h1>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="relative flex h-2 w-2">
               {backendReadiness?.status === "ready" &&
@@ -2890,37 +2886,8 @@ export default function JobsPage() {
               ? "Stale"
               : "Live"}
           </div>
-          <Badge
-            variant="outline"
-            className="px-2 py-0.5 text-[10px] font-normal"
-            title={`Frontend ${
-              import.meta.env.DEV
-                ? "development server started"
-                : "build created"
-            } at ${import.meta.env.VITE_FRONTEND_LIFECYCLE_AT}`}
-          >
-            Frontend: {import.meta.env.DEV ? "dev · HMR" : "prod · rebuild"}
-            {" · "}
-            {import.meta.env.DEV ? "started" : "built"}{" "}
-            {formatLifecycleTimestamp(
-              import.meta.env.VITE_FRONTEND_LIFECYCLE_AT,
-            )}
-          </Badge>
-          <Badge
-            variant="outline"
-            className="px-2 py-0.5 text-[10px] font-normal"
-            title={backendReadiness?.startedAt
-              ? `Backend process restarted at ${backendReadiness.startedAt}`
-              : "Checking backend process start time"}
-          >
-            Backend: {backendReadiness
-              ? backendReadiness.mode === "dev" ? "dev" : "prod"
-              : "checking"} · {backendReadiness?.reload ?? "…"}
-            {" · restarted "}
-            {formatLifecycleTimestamp(backendReadiness?.startedAt)}
-          </Badge>
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <span className="text-blue-500">{displayCounts.active} active</span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{displayCounts.active} active</span>
             <span>{displayCounts.waiting + displayCounts.delayed} queued</span>
             <span
               className={displayCounts.failed > 0 ? "text-red-500" : ""}
@@ -2934,7 +2901,7 @@ export default function JobsPage() {
           <Button
             variant="default"
             size="sm"
-            className="h-8 px-2.5 text-xs"
+            className="h-9 px-3 text-sm"
             asChild
           >
             <Link to="/jobs/new">
@@ -2943,9 +2910,9 @@ export default function JobsPage() {
             </Link>
           </Button>
           <Button
-            variant="default"
+            variant="outline"
             size="sm"
-            className="h-8 px-2.5 text-xs"
+            className="h-9 px-3 text-sm"
             onClick={() => resumeAllMutation.mutate()}
             disabled={resumeAllMutation.isPending ||
               pauseAllMutation.isPending ||
@@ -2957,7 +2924,7 @@ export default function JobsPage() {
           <Button
             variant="secondary"
             size="sm"
-            className="h-8 px-2.5 text-xs"
+            className="h-9 px-3 text-sm"
             onClick={() => pauseAllMutation.mutate()}
             disabled={pauseAllMutation.isPending ||
               resumeAllMutation.isPending ||
@@ -2969,7 +2936,7 @@ export default function JobsPage() {
           <Button
             variant="destructive"
             size="sm"
-            className="h-8 px-2.5 text-xs"
+            className="h-9 px-3 text-sm"
             onClick={handleCancelAll}
           >
             <Trash2 className="mr-1.5 h-3.5 w-3.5" />
@@ -2979,7 +2946,7 @@ export default function JobsPage() {
             <Button
               variant="outline"
               size="sm"
-              className="h-8 px-2.5 text-xs"
+              className="h-9 px-3 text-sm"
               onClick={handleClearCompleted}
               title="Hide terminal rows without deleting MongoDB records"
             >
@@ -2990,16 +2957,65 @@ export default function JobsPage() {
           <Button
             variant="outline"
             size="sm"
-            className="h-8 px-2.5 text-xs"
+            className="h-9 px-3 text-sm"
             onClick={() => refetch()}
           >
             <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
             Refresh
           </Button>
         </div>
+        <details className="text-sm text-muted-foreground">
+          <summary className="w-fit cursor-pointer rounded font-medium hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+            Runtime details
+          </summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Badge
+              variant="outline"
+              className="px-2 py-0.5 text-xs font-normal"
+              title={`Frontend ${
+                import.meta.env.DEV
+                  ? "development server started"
+                  : "build created"
+              } at ${import.meta.env.VITE_FRONTEND_LIFECYCLE_AT}`}
+            >
+              Frontend: {import.meta.env.DEV ? "dev · HMR" : "prod · rebuild"}
+              {" · "}
+              {import.meta.env.DEV ? "started" : "built"}{" "}
+              {formatLifecycleTimestamp(
+                import.meta.env.VITE_FRONTEND_LIFECYCLE_AT,
+              )}
+            </Badge>
+            <Badge
+              variant="outline"
+              className="px-2 py-0.5 text-xs font-normal"
+              title={backendReadiness?.startedAt
+                ? `Backend process restarted at ${backendReadiness.startedAt}`
+                : "Checking backend process start time"}
+            >
+              Backend: {backendReadiness
+                ? backendReadiness.mode === "dev" ? "dev" : "prod"
+                : "checking"} · {backendReadiness?.reload ?? "…"}
+              {" · restarted "}
+              {formatLifecycleTimestamp(backendReadiness?.startedAt)}
+            </Badge>
+          </div>
+        </details>
       </div>
 
-      <div className="flex flex-col gap-3">
+      <nav aria-label="Jobs sections" className="flex flex-wrap gap-1 rounded-lg border bg-card p-1.5">
+        {[
+          ["services", "Services"],
+          ["timeline-integrity", "Timeline integrity"],
+          ["backlog", "Backlog"],
+          ["workers", "Workers"],
+          ["job-history", "Job history"],
+        ].map(([id, label]) => (
+          <a key={id} href={`#${id}`} className="rounded-md px-3 py-1.5 text-sm font-medium text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
+            {label}
+          </a>
+        ))}
+      </nav>
+      <div className="flex min-w-0 flex-col gap-4">
         {pausedPipelineWorkers.length > 0 && (
           <Card className="order-4 border-amber-500/50 bg-amber-500/5">
             <CardContent className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3031,11 +3047,11 @@ export default function JobsPage() {
           </Card>
         )}
 
-        <Card className="order-1">
-          <CardHeader className="px-3 py-2.5">
+        <Card id="services" className="order-1 min-w-0 scroll-mt-4">
+          <CardHeader className="px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <CardTitle className="flex items-center gap-2 text-base">
+                <CardTitle className="flex items-center gap-2 text-lg">
                   <Server className="h-4 w-4" />
                   External services & routing
                 </CardTitle>
@@ -3048,7 +3064,7 @@ export default function JobsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 px-2.5 text-xs"
+                  className="h-9 px-3 text-sm"
                   onClick={() => testServicesMutation.mutate()}
                   disabled={testServicesMutation.isPending ||
                     isFetchingServicesHealth}
@@ -3063,7 +3079,7 @@ export default function JobsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 px-2.5 text-xs"
+                  className="h-9 px-3 text-sm"
                   asChild
                 >
                   <Link to="/settings/inference">Configure routing</Link>
@@ -3071,7 +3087,7 @@ export default function JobsPage() {
                 <Button
                   variant={showRoutingDetails ? "secondary" : "outline"}
                   size="sm"
-                  className="h-8 px-2.5 text-xs"
+                  className="h-9 px-3 text-sm"
                   onClick={() => setShowRoutingDetails((current) => !current)}
                   aria-expanded={showRoutingDetails}
                   aria-controls="routing-details"
@@ -3086,7 +3102,7 @@ export default function JobsPage() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="px-3 pb-3 pt-0">
+          <CardContent className="px-4 pb-4 pt-0">
             {!servicesHealth && !pipelineHealth
               ? (
                 <div className="text-sm text-muted-foreground">
@@ -3097,7 +3113,7 @@ export default function JobsPage() {
                 <>
                   <div
                     id="routing-details"
-                    className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
+                    className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
                   >
                     {services.map((service) => {
                       const allPausedForService = service.usedBy.every(
@@ -3159,10 +3175,10 @@ export default function JobsPage() {
                       return (
                         <div
                           key={`summary-${service.id}`}
-                          className="min-w-0 rounded-md border bg-muted/10 p-2.5"
+                          className="min-w-0 rounded-lg border bg-muted/30 p-3"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
+                            <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
                               {intentionallyPaused
                                 ? (
                                   <PauseCircle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
@@ -3178,12 +3194,12 @@ export default function JobsPage() {
                             </div>
                             <Badge
                               variant="secondary"
-                              className={`${statusClass} shrink-0 px-1.5 py-0 text-[10px]`}
+                              className={`${statusClass} shrink-0 px-1.5 py-0 text-xs`}
                             >
                               {intentionallyPaused ? "paused" : service.status}
                             </Badge>
                           </div>
-                          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+                          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                             <span className="min-w-0 flex-1 truncate font-mono text-foreground">
                               {service.model || service.models?.[0] ||
                                 "unknown model"}
@@ -3195,7 +3211,7 @@ export default function JobsPage() {
                             </span>
                           </div>
                           <div
-                            className={`mt-1 line-clamp-2 text-[10px] leading-tight ${
+                            className={`mt-1 line-clamp-2 text-xs leading-tight ${
                               service.status === "healthy" ||
                                 intentionallyPaused
                                 ? "text-muted-foreground"
@@ -3209,7 +3225,7 @@ export default function JobsPage() {
                           </div>
                           {showRoutingDetails && routes.length > 0 && (
                             <div className="mt-2 border-t pt-2">
-                              <div className="mb-1.5 min-w-0 text-[9px] leading-tight text-muted-foreground">
+                              <div className="mb-1.5 min-w-0 text-xs leading-tight text-muted-foreground">
                                 <div
                                   className="truncate font-mono text-foreground"
                                   title={service.baseUrl || "Not configured"}
@@ -3233,7 +3249,7 @@ export default function JobsPage() {
                                 </div>
                               </div>
                               <div className="mb-1.5 flex items-center justify-between gap-2">
-                                <span className="text-[10px] font-medium text-muted-foreground">
+                                <span className="text-xs font-medium text-muted-foreground">
                                   Routes ·{" "}
                                   {routes.filter((route) => route.enabled)
                                     .length}/
@@ -3244,7 +3260,7 @@ export default function JobsPage() {
                                     type="button"
                                     variant="ghost"
                                     size="sm"
-                                    className="h-6 px-1.5 text-[10px]"
+                                    className="h-8 px-2 text-xs"
                                     disabled={routeMutationPending ||
                                       allRoutesEnabled}
                                     onClick={() =>
@@ -3264,7 +3280,7 @@ export default function JobsPage() {
                                     type="button"
                                     variant="ghost"
                                     size="sm"
-                                    className="h-6 px-1.5 text-[10px]"
+                                    className="h-8 px-2 text-xs"
                                     disabled={routeMutationPending ||
                                       allRoutesDisabled}
                                     onClick={() =>
@@ -3280,7 +3296,7 @@ export default function JobsPage() {
                                   </Button>
                                 </div>
                               </div>
-                              <p className="mb-1.5 text-[9px] leading-tight text-muted-foreground">
+                              <p className="mb-1.5 text-xs leading-tight text-muted-foreground">
                                 {service.id === "diarizator"
                                   ? "8-slot limit: routes are enabled in this list order; routes that do not fit stay off."
                                   : "Availability reflects enabled routes only; disabled routes are not probed."}
@@ -3289,7 +3305,7 @@ export default function JobsPage() {
                                 {routes.map((route) => (
                                   <div
                                     key={`summary-route-${service.id}-${route.providerProfileId}`}
-                                    className="flex min-w-0 items-center gap-1.5 rounded bg-background/70 px-1.5 py-1"
+                                    className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md bg-background px-2 py-1.5"
                                     title={route.message}
                                   >
                                     <Switch
@@ -3319,15 +3335,14 @@ export default function JobsPage() {
                                       aria-label={`${
                                         route.enabled ? "Disable" : "Enable"
                                       } ${route.providerProfileName} ${service.label} route`}
-                                      className="scale-75"
+                                      className="shrink-0"
                                     />
-                                    <span className="min-w-0 flex-1 truncate text-[10px] font-medium">
+                                    <span className="min-w-16 flex-1 break-words text-xs font-medium">
                                       {route.providerProfileName}
                                     </span>
                                     {service.id === "diarizator" && (
                                       <DiarizatorReadinessStatusBadge
                                         route={route}
-                                        compact
                                       />
                                     )}
                                     {service.id === "llm" &&
@@ -3340,7 +3355,7 @@ export default function JobsPage() {
                                       (
                                         <Badge
                                           variant="destructive"
-                                          className="h-4 shrink-0 px-1 text-[8px]"
+                                          className="shrink-0 px-1.5 text-xs"
                                           title="Workers are pinned to this disabled route"
                                         >
                                           {Object.values(pinnedTaskRoutes ?? {})
@@ -3351,7 +3366,7 @@ export default function JobsPage() {
                                         </Badge>
                                       )}
                                     <span
-                                      className="min-w-0 max-w-[52%] truncate font-mono text-[9px] text-muted-foreground"
+                                      className="min-w-0 max-w-[52%] truncate font-mono text-xs text-muted-foreground"
                                       title={`Priority ${route.priority}${
                                         route.concurrency
                                           ? ` · ${route.concurrency} slot${
@@ -3388,7 +3403,7 @@ export default function JobsPage() {
                                               [route.providerProfileId]:
                                                 event.target.value,
                                             }))}
-                                          className="h-6 w-12 px-1 text-[9px]"
+                                          className="h-7 w-14 px-1.5 text-xs"
                                           aria-label={`Priority for ${route.providerProfileName}`}
                                         />
                                         <Button
@@ -3443,7 +3458,7 @@ export default function JobsPage() {
                                         type="button"
                                         size="sm"
                                         variant="ghost"
-                                        className="h-6 shrink-0 px-1.5 text-[9px]"
+                                        className="h-7 shrink-0 px-2 text-xs"
                                         onClick={() =>
                                           makeLlmPrimaryMutation.mutate(
                                             route.providerProfileId,
@@ -3473,7 +3488,7 @@ export default function JobsPage() {
                                   type="button"
                                   size="sm"
                                   variant="ghost"
-                                  className="h-6 px-1.5 text-[9px]"
+                                  className="h-8 px-2 text-xs"
                                   asChild
                                 >
                                   <Link
@@ -3491,7 +3506,7 @@ export default function JobsPage() {
                                     type="button"
                                     size="sm"
                                     variant="ghost"
-                                    className="h-6 px-1.5 text-[9px]"
+                                    className="h-8 px-2 text-xs"
                                     onClick={() =>
                                       testServiceMutation.mutate(
                                         service.id === "stt" ? "stt" : "llm",
@@ -3505,7 +3520,7 @@ export default function JobsPage() {
                                   type="button"
                                   size="sm"
                                   variant="ghost"
-                                  className="h-6 px-1.5 text-[9px]"
+                                  className="h-8 px-2 text-xs"
                                   onClick={() =>
                                     setServiceWorkersPausedMutation.mutate({
                                       workerTypes: service.usedBy,
@@ -3519,7 +3534,7 @@ export default function JobsPage() {
                                 </Button>
                                 {serviceTestResults[service.id] && (
                                   <span
-                                    className="min-w-0 flex-1 truncate text-[9px] text-muted-foreground"
+                                    className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
                                     title={serviceTestResults[service.id]}
                                   >
                                     {serviceTestResults[service.id]}
@@ -3537,11 +3552,11 @@ export default function JobsPage() {
           </CardContent>
         </Card>
 
-        <Card className="order-3">
-          <CardHeader className="px-3 py-2.5">
+        <Card id="backlog" className="order-3 min-w-0 scroll-mt-4">
+          <CardHeader className="px-4 py-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <CardTitle className="text-base">Work ready now</CardTitle>
+                <CardTitle className="text-lg">Work ready now</CardTitle>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Last persisted exact counts. Updating is manual and keeps the
                   previous values visible.
@@ -3550,7 +3565,7 @@ export default function JobsPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 px-2.5 text-xs"
+                className="h-9 px-3 text-sm"
                 onClick={() => refreshExactBacklogMutation.mutate()}
                 disabled={refreshExactBacklogMutation.isPending ||
                   pipelineHealth?.snapshot?.state === "refreshing"}
@@ -3571,7 +3586,7 @@ export default function JobsPage() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="px-3 pb-3 pt-0">
+          <CardContent className="px-4 pb-4 pt-0">
             {!pipelineHealth
               ? (
                 <div
@@ -3590,7 +3605,7 @@ export default function JobsPage() {
               )
               : (
                 <>
-                  <div className="mb-2 text-[10px] text-muted-foreground">
+                  <div className="mb-2 text-xs text-muted-foreground">
                     {pipelineHealth.snapshot?.state === "stale"
                       ? "Stale snapshot"
                       : "Persisted snapshot"}
@@ -3610,7 +3625,7 @@ export default function JobsPage() {
                       ? " · timed-out counts are marked below"
                       : ""}
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
                     {([
                       ["transcription", "Ready for transcription", "stt"],
                       [
@@ -3672,7 +3687,7 @@ export default function JobsPage() {
                               {backlog.ready == null ? "—" : backlog.ready}
                             </div>
                           </div>
-                          <div className="space-y-0.5 text-[10px] leading-tight text-muted-foreground">
+                          <div className="space-y-0.5 text-xs leading-tight text-muted-foreground">
                             {backlog.processing != null && (
                               <div>Processing: {backlog.processing}</div>
                             )}
@@ -3717,7 +3732,7 @@ export default function JobsPage() {
                           <div className="flex flex-wrap gap-1.5">
                             <Button
                               size="sm"
-                              className="h-7 px-2 text-[11px]"
+                              className="h-8 px-2 text-xs"
                               onClick={() =>
                                 runBacklogMutation.mutate(workerType)}
                               disabled={!runnable || availableWork === 0 ||
@@ -3733,7 +3748,7 @@ export default function JobsPage() {
                                 asChild
                                 variant="outline"
                                 size="sm"
-                                className="h-7 px-2 text-[11px]"
+                                className="h-8 px-2 text-xs"
                               >
                                 <Link to="/jobs/new?type=objectListCatalogBackfill">
                                   Prepare catalog
@@ -3743,7 +3758,7 @@ export default function JobsPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-7 px-2 text-[11px]"
+                              className="h-8 px-2 text-xs"
                               onClick={async () => {
                                 if (
                                   await confirmAction({
@@ -3774,7 +3789,7 @@ export default function JobsPage() {
                           </div>
                           {blockedReason && (
                             <div
-                              className={`text-[10px] leading-tight ${
+                              className={`text-xs leading-tight ${
                                 service?.status !== "healthy"
                                   ? "text-red-500"
                                   : workerPaused
@@ -3811,16 +3826,16 @@ export default function JobsPage() {
 
         <Card id="timeline-integrity" className="order-2 scroll-mt-4">
           <Dialog>
-            <CardContent className="p-2.5">
+            <CardContent className="p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <CardTitle className="text-sm">
+                  <CardTitle className="text-lg">
                     Timeline density integrity
                   </CardTitle>
                   {timelineIntegrity && (
                     <Badge
                       variant="secondary"
-                      className={`h-5 px-1.5 text-[10px] ${timelineStatusClass}`}
+                      className={`h-5 px-1.5 text-xs ${timelineStatusClass}`}
                     >
                       {timelineStatusLabel}
                     </Badge>
@@ -3830,7 +3845,7 @@ export default function JobsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-7 px-2 text-[11px]"
+                    className="h-8 px-2 text-xs"
                     onClick={() => refreshTimelineIntegrityMutation.mutate()}
                     disabled={refreshTimelineIntegrityMutation.isPending ||
                       timelineIntegrity?.snapshot?.state === "refreshing"}
@@ -3855,14 +3870,14 @@ export default function JobsPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-[11px]"
+                      className="h-8 px-2 text-xs"
                     >
                       Details
                     </Button>
                   </DialogTrigger>
                 </div>
               </div>
-              <div className="mt-1.5 flex min-h-7 flex-wrap items-center justify-between gap-2 border-t pt-1.5 text-[11px]">
+              <div className="mt-1.5 flex min-h-7 flex-wrap items-center justify-between gap-2 border-t pt-1.5 text-xs">
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
                   {!hasTimelineSnapshot && <span>Full check not run yet.</span>}
                   {timelineMaintenancePending &&
@@ -3941,7 +3956,7 @@ export default function JobsPage() {
                 ) && (
                   <Button
                     size="sm"
-                    className="h-7 shrink-0 px-2 text-[11px]"
+                    className="h-7 shrink-0 px-2 text-xs"
                     onClick={() => void queueAffectedTimelineDates()}
                     disabled={timelineRepairRanges.length === 0 ||
                       timelineCampaignBusy ||
@@ -4069,7 +4084,7 @@ export default function JobsPage() {
                               Difference: {source.difference > 0 ? "+" : ""}
                               {source.difference}
                             </div>
-                            <div className="mt-2 text-[11px] text-muted-foreground">
+                            <div className="mt-2 text-xs text-muted-foreground">
                               Coverage at full check:{" "}
                               {formatTimelineAuditDate(source.firstStart)} —
                               {" "}
@@ -4339,7 +4354,7 @@ export default function JobsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="mt-1 h-7 px-2 text-xs"
+                              className="mt-1 h-8 px-2 text-xs"
                               onClick={async () => {
                                 if (
                                   await confirmAction({
@@ -4578,7 +4593,7 @@ export default function JobsPage() {
                         </div>
                       )}
 
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {timelineIntegrity.scope.note}
                       </p>
                     </>
@@ -4589,20 +4604,20 @@ export default function JobsPage() {
         </Card>
 
         {/* Workers & Statistics */}
-        <Card className="order-3">
-          <CardHeader className="px-3 py-2.5">
+        <Card id="workers" className="order-3 min-w-0 scroll-mt-4">
+          <CardHeader className="px-4 py-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <CardTitle className="text-base">Workers</CardTitle>
+                <CardTitle className="text-lg">Workers</CardTitle>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Runtime queues grouped by their role in the system.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2 text-[11px]"
+                  className="h-8 px-2 text-xs"
                   onClick={() => setShowWorkerAdvanced((current) => !current)}
                 >
                   {showWorkerAdvanced ? "Hide advanced" : "Advanced columns"}
@@ -4610,7 +4625,7 @@ export default function JobsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 px-2 text-[11px]"
+                  className="h-8 px-2 text-xs"
                   onClick={() => refreshRunHistoryMutation.mutate()}
                   disabled={refreshRunHistoryMutation.isPending ||
                     jobStatsResponse?.snapshot?.state === "refreshing"}
@@ -4653,14 +4668,14 @@ export default function JobsPage() {
                   ).length} ready · {sortedWorkers.length} known
                 </span>
                 {jobsDashboard?.catalog.state !== "ready" && (
-                  <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
                     catalog {jobsDashboard?.catalog.state ?? "starting"}
                   </Badge>
                 )}
                 {somePaused && (
                   <Badge
                     variant="secondary"
-                    className="bg-amber-500/10 px-1.5 py-0 text-[10px] text-amber-500"
+                    className="bg-amber-500/10 px-1.5 py-0 text-xs text-amber-500"
                   >
                     {sortedWorkers.filter((w) =>
                       workerStatus?.workers[w.type]?.paused
@@ -4681,7 +4696,7 @@ export default function JobsPage() {
                 <Table
                   className={`${
                     showWorkerAdvanced ? "min-w-[1050px]" : "min-w-[760px]"
-                  } text-xs`}
+                  } text-sm`}
                 >
                   <TableHeader>
                     <TableRow className="h-8">
@@ -4703,7 +4718,7 @@ export default function JobsPage() {
                           <TooltipTrigger asChild>
                             <div className="cursor-help leading-tight">
                               <div>Current queue</div>
-                              <div className="text-[9px] font-normal text-muted-foreground">
+                              <div className="text-xs font-normal text-muted-foreground">
                                 active · queued · stale
                               </div>
                             </div>
@@ -4719,7 +4734,7 @@ export default function JobsPage() {
                           <TooltipTrigger asChild>
                             <div className="cursor-help leading-tight">
                               <div>Run history</div>
-                              <div className="text-[9px] font-normal text-muted-foreground">
+                              <div className="text-xs font-normal text-muted-foreground">
                                 failed · total · success · empty
                               </div>
                             </div>
@@ -4757,7 +4772,7 @@ export default function JobsPage() {
                       );
                       return (
                         <Fragment key={group.id}>
-                          <TableRow className="border-y bg-muted/35 hover:bg-muted/35">
+                          <TableRow className="border-y bg-muted/65 hover:bg-muted/65">
                             <TableCell
                               colSpan={showWorkerAdvanced ? 8 : 5}
                               className="px-4 py-2"
@@ -4770,11 +4785,11 @@ export default function JobsPage() {
                                       {group.workers.length}
                                     </span>
                                   </div>
-                                  <div className="truncate text-[10px] text-muted-foreground">
+                                  <div className="truncate text-xs text-muted-foreground">
                                     {group.description}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                   <span
                                     className={activeInGroup > 0
                                       ? "text-blue-500"
@@ -4856,7 +4871,7 @@ export default function JobsPage() {
                                           asChild
                                           variant="ghost"
                                           size="sm"
-                                          className="h-7 px-2 text-[10px]"
+                                          className="h-8 px-2 text-xs"
                                         >
                                           <Link to={managedDestination.to}>
                                             {managedDestination.label}
@@ -5051,7 +5066,7 @@ export default function JobsPage() {
                                         <span>{worker.label}</span>
                                         <Badge
                                           variant="outline"
-                                          className="px-1 py-0 text-[9px] font-normal"
+                                          className="px-1 py-0 text-xs font-normal"
                                         >
                                           {worker.availability.replaceAll(
                                             "_",
@@ -5128,7 +5143,7 @@ export default function JobsPage() {
                                         <Save className="h-3.5 w-3.5" />
                                       </Button>
                                     </div>
-                                    <div className="text-center text-[10px] text-muted-foreground">
+                                    <div className="text-center text-xs text-muted-foreground">
                                       {setWorkerConcurrencyMutation.isPending &&
                                           setWorkerConcurrencyMutation.variables
                                               ?.workerType === worker.type
@@ -5214,7 +5229,7 @@ export default function JobsPage() {
                                               <Save className="h-3.5 w-3.5" />
                                             </Button>
                                           </div>
-                                          <div className="text-center text-[10px] text-muted-foreground">
+                                          <div className="text-center text-xs text-muted-foreground">
                                             {setWorkerBatchMutation.isPending &&
                                                 setWorkerBatchMutation.variables
                                                     ?.workerType === worker.type
@@ -5247,7 +5262,7 @@ export default function JobsPage() {
                                   </TableCell>
                                 )}
                                 <TableCell className="py-1 text-center">
-                                  <div className="flex items-center justify-center gap-2 text-[10px]">
+                                  <div className="flex items-center justify-center gap-2 text-xs">
                                     <span
                                       className={(runtime?.active ?? 0) > 0
                                         ? "text-blue-500"
@@ -5289,7 +5304,7 @@ export default function JobsPage() {
                                   </div>
                                 </TableCell>
                                 <TableCell className="py-1 text-center">
-                                  <div className="flex items-center justify-center gap-2 text-[10px]">
+                                  <div className="flex items-center justify-center gap-2 text-xs">
                                     <span
                                       className={(stats?.failed ?? 0) > 0
                                         ? "text-red-500"
@@ -5314,7 +5329,7 @@ export default function JobsPage() {
                                           : stats.successRate >= 80
                                           ? "bg-yellow-500/10 text-yellow-600"
                                           : "bg-red-500/10 text-red-600"
-                                      } px-1.5 py-0 font-mono text-[10px]`}
+                                      } px-1.5 py-0 font-mono text-xs`}
                                       title="Success rate"
                                     >
                                       {stats
@@ -5393,7 +5408,7 @@ export default function JobsPage() {
                                               <Save className="h-3.5 w-3.5" />
                                             </Button>
                                           </div>
-                                          <div className="text-center text-[10px] text-muted-foreground">
+                                          <div className="text-center text-xs text-muted-foreground">
                                             {Number(
                                                 intervalDrafts[worker.type] ??
                                                   runtime
@@ -5431,10 +5446,10 @@ export default function JobsPage() {
           </CardContent>
         </Card>
 
-        <div className="order-6 space-y-3">
+        <div id="job-history" className="order-6 min-w-0 scroll-mt-4 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h2 className="text-base font-semibold">Job history</h2>
+              <h2 className="text-xl font-semibold">Job history</h2>
               <p className="mt-1 text-xs text-muted-foreground">
                 {isEmptyView
                   ? "Automatic checks that completed without finding work."
@@ -5445,7 +5460,7 @@ export default function JobsPage() {
               <Button
                 variant={!isEmptyView ? "default" : "outline"}
                 size="sm"
-                className="h-7 px-2 text-xs"
+                className="h-8 px-2 text-xs"
                 onClick={() => setJobsView("operational")}
               >
                 Jobs ({operationalViewCount})
@@ -5453,7 +5468,7 @@ export default function JobsPage() {
               <Button
                 variant={isEmptyView ? "default" : "outline"}
                 size="sm"
-                className="h-7 px-2 text-xs"
+                className="h-8 px-2 text-xs"
                 onClick={() => setJobsView("idle_auto")}
                 title="Completed automatic checks that found no work"
               >
@@ -5467,7 +5482,7 @@ export default function JobsPage() {
               <Button
                 variant={quickFilter === "all" ? "default" : "outline"}
                 size="sm"
-                className="h-7 px-2 text-xs"
+                className="h-8 px-2 text-xs"
                 onClick={() => setQuickFilter("all")}
               >
                 All ({displayCounts.total})
@@ -5477,8 +5492,8 @@ export default function JobsPage() {
                 size="sm"
                 onClick={() => setQuickFilter("active")}
                 className={quickFilter !== "active"
-                  ? "h-7 px-2 text-xs text-blue-500 hover:text-blue-600"
-                  : "h-7 px-2 text-xs"}
+                  ? "h-8 px-2 text-xs text-blue-700 hover:text-blue-800 dark:text-blue-300"
+                  : "h-8 px-2 text-xs"}
               >
                 <Activity className="h-3.5 w-3.5 mr-1" />
                 Active ({displayCounts.active})
@@ -5488,8 +5503,8 @@ export default function JobsPage() {
                 size="sm"
                 onClick={() => setQuickFilter("waiting")}
                 className={quickFilter !== "waiting"
-                  ? "h-7 px-2 text-xs text-yellow-500 hover:text-yellow-600"
-                  : "h-7 px-2 text-xs"}
+                  ? "h-8 px-2 text-xs text-amber-800 hover:text-amber-900 dark:text-amber-300"
+                  : "h-8 px-2 text-xs"}
               >
                 <Clock className="h-3.5 w-3.5 mr-1" />
                 Waiting ({displayCounts.waiting})
@@ -5499,8 +5514,8 @@ export default function JobsPage() {
                 size="sm"
                 onClick={() => setQuickFilter("failed")}
                 className={quickFilter !== "failed"
-                  ? "h-7 border-red-500/30 px-2 text-xs text-red-500 hover:text-red-600"
-                  : "h-7 px-2 text-xs"}
+                  ? "h-7 border-red-500/30 px-2 text-xs text-red-700 hover:text-red-800 dark:text-red-300"
+                  : "h-8 px-2 text-xs"}
               >
                 <AlertCircle className="h-3.5 w-3.5 mr-1" />
                 Errors ({displayCounts.failed})
@@ -5510,8 +5525,8 @@ export default function JobsPage() {
                 size="sm"
                 onClick={() => setQuickFilter("completed")}
                 className={quickFilter !== "completed"
-                  ? "h-7 px-2 text-xs text-green-500 hover:text-green-600"
-                  : "h-7 px-2 text-xs"}
+                  ? "h-8 px-2 text-xs text-green-700 hover:text-green-800 dark:text-green-300"
+                  : "h-8 px-2 text-xs"}
               >
                 <CheckCircle className="h-3.5 w-3.5 mr-1" />
                 Completed ({displayCounts.completed})
@@ -5522,14 +5537,15 @@ export default function JobsPage() {
           {!isEmptyView && <JobErrorStats />}
 
           <Card>
-            <CardContent className="space-y-2 p-2.5 [&_button]:h-8 [&_input]:h-8">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative w-[220px]">
-                  <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+            <CardContent className="space-y-2 p-2.5 [&_button]:min-h-9 [&_input]:h-9">
+              <div className="grid grid-cols-2 items-center gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
+                <div className="relative col-span-2 min-w-0 sm:col-span-1">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
                     type="search"
                     placeholder="Search by ID or worker..."
-                    className="h-8 pl-8 text-xs"
+                    aria-label="Search by job ID or worker"
+                    className="h-9 pl-8 text-sm"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -5539,10 +5555,10 @@ export default function JobsPage() {
                   <DropdownMenuTrigger asChild>
                     <Button
                       variant="outline"
-                      className="w-[200px] justify-between"
+                      className="w-full min-w-0 justify-between gap-1 truncate px-2.5"
                     >
-                      {getTypesLabel()}
-                      <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+                      <span className="truncate">{getTypesLabel()}</span>
+                      <ChevronDown className="h-4 w-4 opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-[200px]">
@@ -5581,7 +5597,7 @@ export default function JobsPage() {
                             {legacyTypes.includes(type) && (
                               <Badge
                                 variant="outline"
-                                className="ml-1 px-1 py-0 text-[10px]"
+                                className="ml-1 px-1 py-0 text-xs"
                               >
                                 legacy
                               </Badge>
@@ -5597,7 +5613,7 @@ export default function JobsPage() {
                   <VoiceProfileSelect
                     selection={voiceSelection}
                     ariaLabel="Filter identity jobs by voice profile"
-                    className="h-8 w-[220px] rounded-md border bg-background px-2 text-xs"
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-xs"
                   />
                 )}
 
@@ -5608,7 +5624,7 @@ export default function JobsPage() {
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
-                      className="w-[230px] justify-between"
+                      className="w-full min-w-0 justify-between gap-1 truncate px-2.5"
                       title="Filter jobs by LLM provider, model or alias"
                     >
                       <span className="truncate">
@@ -5616,7 +5632,7 @@ export default function JobsPage() {
                           ? `${inferenceFilter.kind}: ${inferenceFilter.value}`
                           : "Provider / model"}
                       </span>
-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-[320px] p-0" align="start">
@@ -5712,7 +5728,7 @@ export default function JobsPage() {
                     setErrorFilter(v === "__all" ? null : v)}
                 >
                   <SelectTrigger
-                    className="w-[190px]"
+                    className="w-full min-w-0"
                     title="Filter failed jobs by error type"
                   >
                     <SelectValue placeholder="Error type" />
@@ -5731,10 +5747,10 @@ export default function JobsPage() {
                   <DropdownMenuTrigger asChild>
                     <Button
                       variant="outline"
-                      className="w-[200px] justify-between capitalize"
+                      className="w-full min-w-0 justify-between gap-1 truncate px-2.5 capitalize"
                     >
-                      {getStatusesLabel()}
-                      <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+                      <span className="truncate">{getStatusesLabel()}</span>
+                      <ChevronDown className="h-4 w-4 opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-[200px]">
@@ -5771,13 +5787,13 @@ export default function JobsPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                <div className="w-[120px]">
+                <div className="min-w-0">
                   <Select
                     value={limit.toString()}
                     onValueChange={(v) => setLimit(parseInt(v))}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Limit" />
+                    <SelectTrigger aria-label="Number of jobs shown">
+                      <SelectValue>{limit} rows</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="20">20</SelectItem>
@@ -5806,45 +5822,31 @@ export default function JobsPage() {
 
           <Card>
             <CardContent className="overflow-x-auto p-0">
-              <Table className="min-w-[760px] text-xs">
+              <Table className="min-w-[760px] text-sm">
                 <TableHeader>
                   <TableRow className="h-8 [&>th]:h-8 [&>th]:px-2">
-                    <TableHead
-                      className="cursor-pointer hover:bg-muted/50 select-none"
-                      onClick={() => handleSort("state")}
-                    >
-                      <div className="flex items-center">
-                        Status
-                        <SortIcon column="state" />
-                      </div>
-                    </TableHead>
-                    <TableHead
-                      className="cursor-pointer hover:bg-muted/50 select-none"
-                      onClick={() => handleSort("type")}
-                    >
-                      <div className="flex items-center">
-                        Type
-                        <SortIcon column="type" />
-                      </div>
-                    </TableHead>
-                    <TableHead
-                      className="cursor-pointer hover:bg-muted/50 select-none"
-                      onClick={() => handleSort("timestamp")}
-                    >
-                      <div className="flex items-center">
-                        Created
-                        <SortIcon column="timestamp" />
-                      </div>
-                    </TableHead>
-                    <TableHead
-                      className="cursor-pointer hover:bg-muted/50 select-none"
-                      onClick={() => handleSort("duration")}
-                    >
-                      <div className="flex items-center">
-                        Duration
-                        <SortIcon column="duration" />
-                      </div>
-                    </TableHead>
+                    {[
+                      ["state", "Status"],
+                      ["type", "Type"],
+                      ["timestamp", "Created"],
+                      ["duration", "Duration"],
+                    ].map(([column, label]) => (
+                      <TableHead
+                        key={column}
+                        aria-sort={sortColumn === column
+                          ? sortDirection === "asc" ? "ascending" : "descending"
+                          : undefined}
+                      >
+                        <button
+                          type="button"
+                          className="flex min-h-9 items-center gap-1 rounded px-1 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+                          onClick={() => handleSort(column)}
+                        >
+                          {label}
+                          <SortIcon column={column} />
+                        </button>
+                      </TableHead>
+                    ))}
                     <TableHead>Progress</TableHead>
                     <TableHead className="w-[80px] text-right">ID</TableHead>
                   </TableRow>
@@ -5916,7 +5918,7 @@ export default function JobsPage() {
                             </div>
                             {job.type === "transcription" &&
                               job.routingContext?.providerProfileName && (
-                              <div className="text-[10px] font-normal text-muted-foreground">
+                              <div className="text-xs font-normal text-muted-foreground">
                                 {inferenceChip(
                                   "provider",
                                   (job.result?.providerProfileName as string) ||
@@ -5944,7 +5946,7 @@ export default function JobsPage() {
                               return route
                                 ? (
                                   <div
-                                    className="text-[10px] font-normal text-muted-foreground"
+                                    className="text-xs font-normal text-muted-foreground"
                                     title={route.url
                                       ? `Diarizator used by this job: ${route.url}`
                                       : "Diarizator route snapshotted for this job"}
@@ -5980,7 +5982,7 @@ export default function JobsPage() {
                                 // fallback markers, every part clickable.
                                 return (
                                   <div
-                                    className="text-[10px] font-normal text-muted-foreground"
+                                    className="text-xs font-normal text-muted-foreground"
                                     title="Calls in this job were served by several routes (saturated routes overflow by priority; failed models retry on their fallback)"
                                   >
                                     {inference.byProvider.map((
@@ -6021,7 +6023,7 @@ export default function JobsPage() {
                                   // when the whole job ran on the fallback.
                                   return (
                                     <div
-                                      className="text-[10px] font-normal text-muted-foreground"
+                                      className="text-xs font-normal text-muted-foreground"
                                       title="LLM provider and model that served this job"
                                     >
                                       {inferenceChip(
@@ -6050,7 +6052,7 @@ export default function JobsPage() {
                                 // notation streamed through progress.
                                 return (
                                   <div
-                                    className="text-[10px] font-normal text-muted-foreground"
+                                    className="text-xs font-normal text-muted-foreground"
                                     title="LLM provider and model currently serving this job"
                                   >
                                     {inferenceChip(
@@ -6120,7 +6122,7 @@ export default function JobsPage() {
                                 : undefined;
                               return (
                                 <div
-                                  className="text-[10px] font-normal text-muted-foreground"
+                                  className="text-xs font-normal text-muted-foreground"
                                   title="Planned LLM route; requests may fail over by priority"
                                 >
                                   {inferenceChip(
@@ -6150,7 +6152,7 @@ export default function JobsPage() {
                                   voiceSelection.selectedProfileId,
                                 )}
                                 onClick={(event) => event.stopPropagation()}
-                                className="block text-[10px] font-normal text-amber-500 hover:underline"
+                                className="block text-xs font-normal text-amber-500 hover:underline"
                               >
                                 restarted from …{job.restartedFromJobId.slice(
                                   -6,
@@ -6164,7 +6166,7 @@ export default function JobsPage() {
                                   voiceSelection.selectedProfileId,
                                 )}
                                 onClick={(event) => event.stopPropagation()}
-                                className="block text-[10px] font-normal text-amber-500 hover:underline"
+                                className="block text-xs font-normal text-amber-500 hover:underline"
                               >
                                 restarted as …{job.restartJobId.slice(-6)}
                               </Link>

@@ -398,7 +398,7 @@ const DiarizationDetailPage = () => {
 
   if (loading) {
     return (
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="w-full max-w-3xl space-y-4">
         <div className="flex items-center gap-4">
           <SmartBackButton defaultPath="/transcript" />
         </div>
@@ -411,7 +411,7 @@ const DiarizationDetailPage = () => {
 
   if (error || !diarization) {
     return (
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="w-full max-w-3xl space-y-4">
         <div className="flex items-center gap-4">
           <SmartBackButton defaultPath="/transcript" />
         </div>
@@ -429,14 +429,14 @@ const DiarizationDetailPage = () => {
   const durationSecondsRemainder = durationSeconds % 60;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="w-full max-w-3xl space-y-4">
       <VoiceProfileContextBar selection={voiceSelection} compact />
       <div className="flex items-center gap-4">
         <SmartBackButton defaultPath="/transcript" />
-        <h1 className="text-3xl font-bold">Diarization</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Diarization</h1>
       </div>
 
-      <div className="border rounded-lg p-6 space-y-4">
+      <div className="space-y-4 rounded-xl border bg-card p-4 sm:p-5">
         <div className="flex items-center gap-3">
           <div className="w-full space-y-3">
             <div className="font-semibold">Speaker Identity</div>
@@ -481,7 +481,7 @@ const DiarizationDetailPage = () => {
                 Clear manual label
               </Button>
               {diarization.speakerIdentity && (
-                <span className="self-center text-xs text-muted-foreground">
+                <span className="self-center text-sm text-muted-foreground">
                   {diarization.speakerIdentity.state} ·{" "}
                   {diarization.speakerIdentity.source}
                 </span>
@@ -496,6 +496,7 @@ const DiarizationDetailPage = () => {
           </div>
           <div className="flex items-center gap-3">
             <Button
+              aria-label={isPlaying ? "Pause segment" : "Play segment"}
               onClick={handlePlayPause}
               disabled={audioLoading}
               size="lg"
@@ -522,13 +523,13 @@ const DiarizationDetailPage = () => {
             </div>
           </div>
           {!audioUrl && !audioLoading && (
-            <p className="text-xs text-muted-foreground mt-2">
+            <p className="text-sm text-muted-foreground mt-2">
               Click play to load and play this diarized segment
             </p>
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+        <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
           <div>
             <div className="text-sm font-medium text-muted-foreground">
               Start Time
@@ -547,7 +548,7 @@ const DiarizationDetailPage = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+        <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
           <div>
             <div className="text-sm font-medium text-muted-foreground mb-1">
               Duration

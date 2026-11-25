@@ -88,7 +88,7 @@ export function ChatToolSelector({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-[min(420px,calc(100vw-2rem))] p-0"
+        className="max-h-[var(--radix-popover-content-available-height)] w-[min(420px,calc(100vw-2rem))] overflow-y-auto p-0"
       >
         <div className="border-b p-3">
           <div className="font-medium">Tools for this chat</div>
@@ -104,6 +104,7 @@ export function ChatToolSelector({
               type="button"
               size="sm"
               variant={policy.mode === mode ? "secondary" : "ghost"}
+              aria-pressed={policy.mode === mode}
               onClick={() => selectMode(mode)}
               className="justify-start"
             >
@@ -140,18 +141,18 @@ export function ChatToolSelector({
                           className="mt-0.5"
                         />
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2 text-sm font-medium">
+                          <span className="flex flex-wrap items-center gap-x-2 text-sm font-medium">
                             {tool.label}
                             {tool.needsApproval && (
                               <Badge
                                 variant="outline"
-                                className="px-1 py-0 text-[10px]"
+                                className="px-1.5 py-0 text-xs"
                               >
                                 approval
                               </Badge>
                             )}
                           </span>
-                          <span className="line-clamp-2 text-xs text-muted-foreground">
+                          <span className="block text-sm leading-snug text-muted-foreground">
                             {tool.description}
                           </span>
                         </span>

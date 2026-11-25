@@ -51,7 +51,7 @@ export function TimelinePlayerControls({
   const isMuted = volume === 0;
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 bg-muted/50 rounded-lg border">
+    <div className="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg bg-muted/50 px-2 py-1.5">
       {/* Play/Pause Button */}
       <Tooltip>
         <TooltipTrigger asChild>
@@ -59,6 +59,7 @@ export function TimelinePlayerControls({
             variant="ghost"
             size="icon"
             className="h-8 w-8"
+            aria-label={isPlaying ? "Pause" : "Play"}
             onClick={() => toggleIsPlaying()}
           >
             {isPlaying
@@ -76,7 +77,7 @@ export function TimelinePlayerControls({
         <span className="text-sm font-mono font-medium">
           {formatTime(currentDate)}
         </span>
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {formatDate(currentDate)}
         </span>
       </div>
@@ -101,7 +102,7 @@ export function TimelinePlayerControls({
       </Tooltip>
 
       {/* Divider */}
-      <div className="h-6 w-px bg-border" />
+      <div className="hidden h-6 w-px bg-border sm:block" />
 
       {/* Volume Control */}
       <div className="flex items-center gap-2">
@@ -111,6 +112,7 @@ export function TimelinePlayerControls({
               variant="ghost"
               size="icon"
               className="h-8 w-8"
+              aria-label={isMuted ? "Unmute" : "Mute"}
               onClick={() => setVolume(isMuted ? 1 : 0)}
             >
               {isMuted
@@ -123,6 +125,7 @@ export function TimelinePlayerControls({
           </TooltipContent>
         </Tooltip>
         <Slider
+          thumbLabels={["Volume"]}
           value={[volume]}
           onValueChange={([v]) => setVolume(v)}
           min={0}
@@ -133,7 +136,7 @@ export function TimelinePlayerControls({
       </div>
 
       {/* Divider */}
-      <div className="h-6 w-px bg-border" />
+      <div className="hidden h-6 w-px bg-border sm:block" />
 
       {/* Playback Speed */}
       <div className="flex items-center gap-2">
@@ -142,7 +145,7 @@ export function TimelinePlayerControls({
           value={String(playbackRate)}
           onValueChange={(v) => setPlaybackRate(parseFloat(v))}
         >
-          <SelectTrigger className="h-8 w-[70px] text-xs">
+          <SelectTrigger aria-label="Playback speed" className="h-8 w-[74px] text-sm">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

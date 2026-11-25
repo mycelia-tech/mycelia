@@ -1,8 +1,7 @@
 import { usePlatform } from "../core/useMessageRenderer.ts";
 import type { Chat } from "@myceliasdk/messengers.ts";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { useFormattedTime } from "@/lib/formatTime";
+import { formatRelativeTime, useFormattedTime } from "@/lib/formatTime";
 
 interface ChatListItemProps {
   chat: Chat;
@@ -13,7 +12,7 @@ interface ChatListItemProps {
 export function ChatListItem({ chat, isSelected, onClick }: ChatListItemProps) {
   const platform = usePlatform(chat.platform);
   const lastDate = chat.lastMessageDate ? new Date(chat.lastMessageDate) : null;
-  const formattedDate = lastDate ? useFormattedTime(lastDate) : "";
+  const formattedDate = useFormattedTime(new Date(chat.lastMessageDate ?? chat.createdAt));
 
   // If the platform has a custom preview component, use it
   if (platform?.ChatPreviewComponent) {
@@ -29,34 +28,31 @@ export function ChatListItem({ chat, isSelected, onClick }: ChatListItemProps) {
   const Icon = platform?.icon;
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
+      aria-current={isSelected ? "page" : undefined}
       className={cn(
-        "flex flex-col gap-2 p-4 cursor-pointer hover:bg-accent transition-colors border-b",
-        isSelected && "bg-accent"
+        "w-full border-b border-l-2 border-l-transparent px-4 py-2.5 text-left hover:bg-muted/60 focus-visible:outline-offset-[-3px]",
+        isSelected && "border-l-primary bg-accent",
       )}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 overflow-hidden">
-          <div className="flex flex-col overflow-hidden">
-            <span className="font-semibold truncate">{chat.name || "Unknown Chat"}</span>
-            <div className="flex items-center gap-1">
-                 {Icon && <Icon className="w-3 h-3 text-muted-foreground mr-1" />}
-                 {chat.platform && (
-                   <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 capitalize">
-                     {platform?.name || chat.platform}
-                   </Badge>
-                 )}
-            </div>
-          </div>
-        </div>
-        {lastDate && (
-          <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-            {formattedDate}
+      <span className="block truncate font-semibold" title={chat.name}>
+        {chat.name || "Unknown Chat"}
+      </span>
+      <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+        {chat.platform && (
+          <span className="inline-flex items-center gap-1 capitalize">
+            {Icon && <Icon className="size-3.5" />}
+            {platform?.name || chat.platform}
           </span>
         )}
-      </div>
-    </div>
+        {lastDate && (
+          <span className="ml-auto" title={formattedDate}>
+            {formatRelativeTime(lastDate)}
+          </span>
+        )}
+      </span>
+    </button>
   );
 }
-

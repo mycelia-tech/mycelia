@@ -72,26 +72,26 @@ const CreateObjectPage = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
+    <div className="mx-auto max-w-4xl space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
         <SmartBackButton defaultPath="/objects" label="Back to Objects" />
-        <h1 className="text-3xl font-bold">Create Object</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Create Object</h1>
       </div>
 
-      <Card className="p-6">
+      <Card className="p-4 sm:p-5">
         <ObjectForm object={object} onUpdate={handleUpdate} />
 
         {error && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
-            <p className="text-sm text-red-600">{error}</p>
+          <div role="alert" className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+            <p className="text-sm text-destructive">{error}</p>
           </div>
         )}
 
-        <div className="flex gap-3 mt-6">
+        <div className="mt-4 flex justify-end gap-2 border-t pt-4">
           <Button
             onClick={handleSubmit}
             disabled={isSubmitting || !object.name?.trim()}
-            className="flex-1"
+            className="flex-1 sm:flex-none"
           >
             {isSubmitting ? "Creating..." : "Create Object"}
           </Button>

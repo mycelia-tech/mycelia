@@ -141,7 +141,7 @@ export function AudioTimelineTrack({
               cy="44"
               r="6"
               fill="currentColor"
-              stroke="hsl(var(--background))"
+              stroke="var(--background)"
               strokeWidth="3"
             />
           </g>

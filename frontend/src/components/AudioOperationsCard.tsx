@@ -187,8 +187,8 @@ export function AudioOperationsView(
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="space-y-3 rounded-lg border p-4">
+        <div className="grid items-start gap-3 lg:grid-cols-2">
+          <section className="min-w-0 space-y-3 rounded-lg border bg-muted/20 p-4">
             <h3 className="font-medium">Voice Memos app</h3>
             <Badge variant="secondary">Separate Mac application</Badge>
             <p className="text-sm text-muted-foreground">
@@ -292,7 +292,7 @@ open '/Applications/Mycelia Voice Memos Bridge.app'`}</code></pre>
               </DialogContent>
             </Dialog>
           </section>
-          <section className="space-y-3 rounded-lg border p-4">
+          <section className="min-w-0 space-y-3 rounded-lg border bg-muted/20 p-4">
             <h3 className="font-medium">Import from a folder</h3>
             <p className="text-sm text-muted-foreground">
               Uses the background daemon. No Mac app build required.
@@ -378,14 +378,14 @@ open '/Applications/Mycelia Voice Memos Bridge.app'`}</code></pre>
             )}
             <div className="grid gap-3 md:grid-cols-3">
               <div
-                className="rounded-lg border p-4"
+                className="min-w-0 rounded-lg border bg-muted/20 p-4"
                 data-testid="operations-ingestion"
               >
                 <p className="font-medium">1. Audio import</p>
-                <p className="mt-2 text-3xl font-semibold">
+                <p className="mt-2 text-2xl font-semibold tabular-nums">
                   {count(ingestion?.remaining ?? counts?.sourceFiles.pending)}
                 </p>
-                <p className="mb-3 text-sm text-muted-foreground">
+                <p className="mb-2 text-sm text-muted-foreground">
                   files waiting for import
                 </p>
                 <QueueLine queue={data?.queues.ingestion} />
@@ -400,14 +400,14 @@ open '/Applications/Mycelia Voice Memos Bridge.app'`}</code></pre>
                 </p>
               </div>
               <div
-                className="rounded-lg border p-4"
+                className="min-w-0 rounded-lg border bg-muted/20 p-4"
                 data-testid="operations-vad"
               >
                 <p className="font-medium">2. Voice activity · VAD</p>
-                <p className="mt-2 text-3xl font-semibold">
+                <p className="mt-2 text-2xl font-semibold tabular-nums">
                   {count(counts?.vadPending)}
                 </p>
-                <p className="mb-3 text-sm text-muted-foreground">
+                <p className="mb-2 text-sm text-muted-foreground">
                   audio chunks awaiting VAD
                 </p>
                 <QueueLine queue={data?.queues.vad} />
@@ -419,14 +419,14 @@ open '/Applications/Mycelia Voice Memos Bridge.app'`}</code></pre>
                 </p>
               </div>
               <div
-                className="rounded-lg border p-4"
+                className="min-w-0 rounded-lg border bg-muted/20 p-4"
                 data-testid="operations-transcription"
               >
                 <p className="font-medium">3. Transcription</p>
-                <p className="mt-2 text-3xl font-semibold">
+                <p className="mt-2 text-2xl font-semibold tabular-nums">
                   {count(counts?.transcriptionPendingChunks)}
                 </p>
-                <p className="mb-3 text-sm text-muted-foreground">
+                <p className="mb-2 text-sm text-muted-foreground">
                   speech chunks awaiting transcription
                 </p>
                 <QueueLine queue={data?.queues.transcription} />
@@ -509,7 +509,7 @@ open '/Applications/Mycelia Voice Memos Bridge.app'`}</code></pre>
             Last five imported files
           </summary>
           <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b">
                   <th className="p-2">File</th>

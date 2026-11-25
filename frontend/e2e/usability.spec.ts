@@ -30,6 +30,7 @@ test(
   async ({ page, backend }, testInfo) => {
     await page.goto("/search");
     await page.getByLabel("Question or phrase").fill("harbor picnic");
+    await page.getByText("Filters", { exact: true }).click();
     await page.getByLabel("Exact platforms").fill("mycelia");
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await expect(
@@ -191,3 +192,19 @@ test(
       .toBeVisible();
   },
 );
+
+test("home search opens matching archive results on a phone in dark mode", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/");
+  const search = page.getByRole("search");
+  await expect(search).toBeVisible();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await expectAccessible(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
+  await page.screenshot({ path: testInfo.outputPath("home-mobile.png") });
+  await search.getByRole("searchbox").fill("harbor picnic");
+  await search.getByRole("button", { name: "Search memories" }).click();
+  await expect(page).toHaveURL(/\/search\?q=harbor\+picnic/);
+  await expect(page.getByRole("heading", { name: "Harbor picnic recording 1", exact: true })).toBeVisible();
+});

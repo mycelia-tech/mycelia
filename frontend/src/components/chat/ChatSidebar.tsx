@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useFormattedTime } from "@/lib/formatTime";
+import { formatRelativeTime, useFormattedTime } from "@/lib/formatTime";
 import type { MemoryChatSummary } from "@/lib/chat";
 
 function ChatListItem({
@@ -111,14 +111,14 @@ function ChatListItem({
               !["completed", "cancelled"].includes(chat.lastRun.state) && (
               <Badge
                 variant="outline"
-                className="h-4 shrink-0 px-1 text-[9px] capitalize"
+                className="shrink-0 px-1.5 text-xs capitalize"
               >
                 {chat.lastRun.state.replace("_", " ")}
               </Badge>
             )}
           </div>
         )}
-      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
         <span className="shrink-0">{chat.messageCount} messages</span>
         <span aria-hidden="true">·</span>
         <span
@@ -128,11 +128,11 @@ function ChatListItem({
           <Pin className="h-2.5 w-2.5" /> {chat.pinnedMessageCount}
         </span>
         <span aria-hidden="true">·</span>
-        <span className="min-w-0 truncate font-mono" title={model}>
+        <span className="min-w-0 flex-1 basis-12 truncate" title={model}>
           {model}
         </span>
-        <span className="ml-auto shrink-0" title={date.toLocaleString()}>
-          {time}
+        <span className="ml-auto shrink-0" title={time}>
+          {formatRelativeTime(date)}
         </span>
       </div>
     </div>
@@ -141,8 +141,8 @@ function ChatListItem({
   return (
     <div
       className={cn(
-        "group relative border-b px-3 py-2 transition-colors hover:bg-muted/50",
-        selected && "bg-muted",
+        "group relative border-b border-l-2 border-l-transparent px-3 py-2.5 transition-colors hover:bg-muted/50",
+        selected && "border-l-primary bg-accent",
       )}
     >
       <div className="flex items-center gap-1">
@@ -288,6 +288,7 @@ export function ChatSidebar({
             variant={favoritesOnly ? "secondary" : "outline"}
             size="icon"
             onClick={() => onFavoritesOnlyChange(!favoritesOnly)}
+            aria-pressed={favoritesOnly}
             aria-label={favoritesOnly
               ? "Show all chats"
               : "Show favorites only"}
@@ -304,6 +305,7 @@ export function ChatSidebar({
             variant={archivedOnly ? "secondary" : "outline"}
             size="icon"
             onClick={() => onArchivedOnlyChange(!archivedOnly)}
+            aria-pressed={archivedOnly}
             aria-label={archivedOnly
               ? "Show active chats"
               : "Show archived chats"}
@@ -353,7 +355,7 @@ export function ChatSidebar({
               {sections.map((section) =>
                 section.items.length > 0 && (
                   <section key={section.label} aria-label={section.label}>
-                    <div className="sticky top-0 z-10 border-b bg-background/95 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
+                    <div className="sticky top-0 z-10 border-b bg-background/95 px-3 py-1.5 text-xs font-semibold text-muted-foreground backdrop-blur">
                       {section.label}
                     </div>
                     {section.items.map((chat) => (

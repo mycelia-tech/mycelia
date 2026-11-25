@@ -421,15 +421,15 @@ export default function DiarizationSettingsPage() {
                 </Button>
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-7">
-              <div className="space-y-2 md:col-span-2">
+            <div className="grid gap-4 @4xl/settings:grid-cols-7">
+              <div className="space-y-2 @4xl/settings:col-span-2">
                 <Label>Name</Label>
                 <Input
                   value={profile.name}
                   onChange={(event) => update({ name: event.target.value })}
                 />
               </div>
-              <div className="space-y-2 md:col-span-2">
+              <div className="space-y-2 @4xl/settings:col-span-2">
                 <Label>Base URL</Label>
                 <Input
                   value={profile.baseUrl}

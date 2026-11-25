@@ -47,13 +47,13 @@ export function TimelineToolbar({
   onTimeRangeSelect,
 }: TimelineToolbarProps) {
   return (
-    <div className="flex items-start gap-3">
+    <>
       <div className="flex flex-col items-center gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex">
-              <Button variant="outline" size="icon" onClick={onZoomToFit}>
-                <Maximize2 className="w-4 h-4" />
+              <Button variant="outline" size="sm" onClick={onZoomToFit}>
+                <Maximize2 className="h-4 w-4" /> Fit all
               </Button>
             </span>
           </TooltipTrigger>
@@ -61,7 +61,6 @@ export function TimelineToolbar({
             <p>Fit timeline to show all entities</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Fit All</span>
       </div>
 
       <div className="flex flex-col items-center gap-1">
@@ -69,8 +68,8 @@ export function TimelineToolbar({
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon">
-                  <Clock className="w-4 h-4" />
+                <Button variant="outline" size="sm" aria-label="Time range">
+                  <Clock className="h-4 w-4" /> Range
                 </Button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
@@ -105,12 +104,11 @@ export function TimelineToolbar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <span className="text-xs text-muted-foreground">Time Range</span>
       </div>
 
       {config.tools.map((tool, i) => (
         <ToolWrapper key={i} tool={tool} />
       ))}
-    </div>
+    </>
   );
 }

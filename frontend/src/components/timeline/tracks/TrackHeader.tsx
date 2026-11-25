@@ -10,7 +10,7 @@ export const TrackHeader = memo(function TrackHeader({
 }: TrackHeaderProps) {
   return (
     <div
-      className="flex min-h-6 items-center gap-2 px-2 py-1 text-xs font-medium text-muted-foreground"
+      className="flex min-h-6 items-center gap-2 px-2 py-1 text-sm font-medium text-foreground"
       style={{ pointerEvents: "none" }}
     >
       <span

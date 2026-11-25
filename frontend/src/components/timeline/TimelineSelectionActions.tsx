@@ -48,15 +48,15 @@ export function TimelineSelectionActions({
   const [isAddVoiceSampleOpen, setIsAddVoiceSampleOpen] = useState(false);
 
   return (
-    <div className="flex items-start gap-3 mr-auto">
+    <div role="group" aria-label="Selected time range actions" className="flex w-full flex-wrap items-center gap-1.5 rounded-md border border-primary/25 bg-primary/5 p-2">
       <div className="flex flex-col items-center gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button asChild variant="outline" size="icon">
+            <Button asChild variant="outline" size="sm">
               <Link
                 to={`/map?start=${startDate.getTime()}&end=${endDate.getTime()}`}
               >
-                <MapPinned className="h-4 w-4" />
+                <MapPinned className="h-4 w-4" /> Show on map
               </Link>
             </Button>
           </TooltipTrigger>
@@ -64,7 +64,6 @@ export function TimelineSelectionActions({
             <p>Show the selected range on the map</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Show on map</span>
       </div>
 
       <div className="flex flex-col items-center gap-1">
@@ -73,16 +72,15 @@ export function TimelineSelectionActions({
             <Button
               onClick={onZoomToSelection}
               variant="outline"
-              size="icon"
+              size="sm"
             >
-              <Maximize2 className="w-4 h-4" />
+              <Maximize2 className="w-4 h-4" /> Zoom
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             <p>Zoom to selected range</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Zoom</span>
       </div>
 
       <div className="flex flex-col items-center gap-1">
@@ -90,17 +88,16 @@ export function TimelineSelectionActions({
           <TooltipTrigger asChild>
             <Button
               variant="outline"
-              size="icon"
+              size="sm"
               onClick={() => setIsRunJobOpen(true)}
             >
-              <Play className="w-4 h-4" />
+              <Play className="w-4 h-4" /> Run Job
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             <p>Run job on selected range</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Run Job</span>
       </div>
       <RunJobDialog
         open={isRunJobOpen}
@@ -114,17 +111,16 @@ export function TimelineSelectionActions({
           <TooltipTrigger asChild>
             <Button
               variant="outline"
-              size="icon"
+              size="sm"
               onClick={() => setIsAddVoiceSampleOpen(true)}
             >
-              <UserRoundPlus className="h-4 w-4" />
+              <UserRoundPlus className="h-4 w-4" /> Voice sample
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             <p>Save selected audio as a voice profile sample</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Voice sample</span>
       </div>
       <AddTimelineVoiceSampleDialog
         open={isAddVoiceSampleOpen}
@@ -138,7 +134,7 @@ export function TimelineSelectionActions({
       <div className="flex flex-col items-center gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button asChild variant="outline" size="icon">
+            <Button asChild variant="outline" size="sm">
               <Link
                 to={withVoiceProfile(
                   "/settings/voice-identity?reviewSource=timeline&newSession=1&start=" +
@@ -146,7 +142,7 @@ export function TimelineSelectionActions({
                   voiceSelection.selectedProfileId,
                 )}
               >
-                <UsersRound className="h-4 w-4" />
+                <UsersRound className="h-4 w-4" /> Review voices
               </Link>
             </Button>
           </TooltipTrigger>
@@ -154,7 +150,6 @@ export function TimelineSelectionActions({
             <p>Review diarized voices from this exact range</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Review voices</span>
       </div>
 
       {isShortRange && (
@@ -164,17 +159,16 @@ export function TimelineSelectionActions({
               <TooltipTrigger asChild>
                 <Button
                   variant="outline"
-                  size="icon"
+                  size="sm"
                   onClick={() => setIsSummarizeOpen(true)}
                 >
-                  <Wand2 className="w-4 h-4" />
+                  <Wand2 className="w-4 h-4" /> Summarize
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
                 <p>Generate AI summary for range</p>
               </TooltipContent>
             </Tooltip>
-            <span className="text-xs text-muted-foreground">Summarize</span>
           </div>
           <SummarizeDialog
             open={isSummarizeOpen}
@@ -191,16 +185,15 @@ export function TimelineSelectionActions({
             <Button
               onClick={onCreateEvent}
               variant="outline"
-              size="icon"
+              size="sm"
             >
-              <CalendarPlus className="w-4 h-4" />
+              <CalendarPlus className="w-4 h-4" /> Create
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             <p>Create new object from selected range</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Create</span>
       </div>
 
       <div className="flex flex-col items-center gap-1">
@@ -208,17 +201,16 @@ export function TimelineSelectionActions({
           <TooltipTrigger asChild>
             <Button
               variant="outline"
-              size="icon"
+              size="sm"
               onClick={() => setIsSetLocationOpen(true)}
             >
-              <MapPin className="w-4 h-4" />
+              <MapPin className="w-4 h-4" /> Location
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             <p>Set where you were during this range (also sets the timezone)</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Location</span>
       </div>
       <AssignLocationDialog
         open={isSetLocationOpen}
@@ -233,16 +225,15 @@ export function TimelineSelectionActions({
             <Button
               onClick={onClearSelection}
               variant="outline"
-              size="icon"
+              size="sm"
             >
-              <CircleOff className="w-4 h-4" />
+              <CircleOff className="w-4 h-4" /> Clear
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             <p>Clear time selection</p>
           </TooltipContent>
         </Tooltip>
-        <span className="text-xs text-muted-foreground">Clear</span>
       </div>
     </div>
   );

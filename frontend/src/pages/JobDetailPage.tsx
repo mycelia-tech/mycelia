@@ -971,7 +971,7 @@ export default function JobDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-6 space-y-6">
+      <div className="space-y-5">
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -980,16 +980,16 @@ export default function JobDetailPage() {
 
   if (!job) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="min-w-0">
         <Card>
           <CardContent className="p-6">
             <p className="text-muted-foreground">Job not found</p>
-            <Link to="/jobs">
-              <Button variant="outline" className="mt-4">
+            <Button variant="outline" className="mt-4" asChild>
+              <Link to="/jobs">
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Jobs
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -1017,19 +1017,16 @@ export default function JobDetailPage() {
     );
 
   return (
-    <div className="container mx-auto space-y-4 p-4 sm:p-6">
+    <div className="min-w-0 space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <Link
-            to={jobListHrefWithProfile}
-            aria-label={`Back to ${job.type} jobs`}
-          >
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
+          <Button variant="outline" size="icon" className="shrink-0" asChild>
+            <Link to={jobListHrefWithProfile} aria-label={`Back to ${job.type} jobs`}>
+              <ArrowLeft className="size-4" />
+            </Link>
+          </Button>
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight">Job Details</h1>
+            <h1 className="text-3xl font-bold tracking-tight">Job Details</h1>
             <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
               {job.id}
             </p>
@@ -2529,7 +2526,7 @@ export default function JobDetailPage() {
                                 </div>
                                 {(seg.rawStart || seg.rawEnd) && (
                                   <div
-                                    className="mt-1 text-[11px] text-muted-foreground/80 font-mono truncate"
+                                    className="mt-1 text-xs text-muted-foreground font-mono truncate"
                                     title={`start: ${seg.rawStart}\nend: ${seg.rawEnd}`}
                                   >
                                     ⇤ "{seg.rawStart}" ⇥ "{seg.rawEnd}"

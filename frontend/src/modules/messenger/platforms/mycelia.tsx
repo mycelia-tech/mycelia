@@ -1,7 +1,7 @@
 import type { Platform } from "../core/types.ts";
 import { defaultPlatform } from "./default.tsx";
 import { User } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { ToolUIPart } from "ai";
 import { splitUnparsedToolText } from "@myceliasdk/chat-tool-text.ts";
 import { formatRelativeTime } from "@/lib/formatTime";
@@ -186,7 +186,6 @@ function ToolCallDisplay(
 }
 
 function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
-  const navigate = useNavigate();
   const formattedDate = formatRelativeTime(new Date(message.timestamp));
   const raw = message.raw;
 
@@ -208,11 +207,6 @@ function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
     ? (raw?.from || raw?.sender_name || "You")
     : "Mycelia";
 
-  const handleSenderClick = () => {
-    if (message.senderId) {
-      navigate(`/objects/${message.senderId.toString()}`);
-    }
-  };
 
   return (
     <div
@@ -223,7 +217,7 @@ function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
     >
       <div
         className={cn(
-          "flex gap-3 max-w-[85%] sm:max-w-[75%]",
+          "flex min-w-0 max-w-full gap-2 sm:max-w-[min(85%,72ch)] sm:gap-3",
           isUser ? "flex-row-reverse" : "flex-row",
         )}
       >
@@ -250,33 +244,21 @@ function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
           {/* Header */}
           <div
             className={cn(
-              "flex items-center gap-2",
+              "flex flex-wrap items-center gap-x-2 gap-y-1",
               isUser ? "justify-end" : "justify-start",
             )}
           >
-            <span
-              className={cn(
-                "text-xs font-medium cursor-pointer hover:underline underline-offset-2 transition-colors",
-                isUser ? "text-primary" : "text-amber-600 dark:text-amber-400",
-              )}
-              onClick={handleSenderClick}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  handleSenderClick();
-                }
-              }}
-            >
-              {senderName}
-            </span>
-            <span className="text-[10px] text-muted-foreground/60">
+            {message.senderId ? (
+              <Link className="break-words text-sm font-semibold text-primary hover:underline" to={`/objects/${message.senderId.toString()}`}>
+                {senderName}
+              </Link>
+            ) : <span className="break-words text-sm font-semibold">{senderName}</span>}
+            <span className="text-xs text-muted-foreground">
               {formattedDate}
             </span>
             {!isUser && responseModel && (
               <span
-                className="max-w-[240px] truncate rounded border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                className="max-w-[240px] truncate rounded border bg-muted/50 px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
                 title={`Response model: ${responseModel}`}
               >
                 {responseModel}
@@ -300,25 +282,20 @@ function MyceliaMessageBubble({ message }: MyceliaMessageProps) {
                 "relative rounded-2xl px-4 py-3",
                 isUser
                   ? "bg-primary text-primary-foreground rounded-tr-sm"
-                  : "bg-gradient-to-br from-amber-50 via-orange-50 to-amber-50 dark:from-amber-950/30 dark:via-orange-950/20 dark:to-amber-950/30 border border-amber-200/50 dark:border-amber-800/30 rounded-tl-sm",
+                  : "border bg-card text-card-foreground rounded-tl-sm",
               )}
             >
-              {/* Mycelia glow effect for assistant */}
-              {!isUser && (
-                <div className="absolute inset-0 rounded-2xl rounded-tl-sm bg-gradient-to-br from-amber-500/5 to-orange-500/5 pointer-events-none" />
-              )}
-
               {/* Content */}
               <div
                 className={cn(
-                  "relative text-sm leading-relaxed",
+                  "relative break-words text-base leading-relaxed",
                   isUser ? "" : "text-foreground",
                 )}
               >
                 {isUser
                   ? <span className="whitespace-pre-wrap">{content}</span>
                   : (
-                    <Response className="prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5">
+                    <Response className="prose dark:prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5">
                       {content}
                     </Response>
                   )}

@@ -54,7 +54,7 @@ const FeatureFlagsPage = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-3xl space-y-5">
       <div>
         <h2 className="text-2xl font-semibold mb-2">Feature Flags</h2>
         <p className="text-muted-foreground">
@@ -65,19 +65,20 @@ const FeatureFlagsPage = () => {
       <div className="space-y-4">
         <Card>
           <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-lg bg-primary/10">
                   <UserRound className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <CardTitle className="text-base">Speaker Identification</CardTitle>
+                  <CardTitle id="speaker-identification-label" className="text-lg">Speaker Identification</CardTitle>
                   <CardDescription>
                     Recognize enrolled voices in diarization results
                   </CardDescription>
                 </div>
               </div>
               <Switch
+                aria-labelledby="speaker-identification-label"
                 checked={config?.features?.enable_speaker_identification ?? false}
                 onCheckedChange={(checked) => handleToggle("enable_speaker_identification", checked)}
                 disabled={updateMutation.isPending}

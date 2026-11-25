@@ -414,7 +414,7 @@ export const WaveformPlayer = forwardRef<
           aria-hidden="true"
         />
         <div
-          className="pointer-events-none absolute inset-y-0 w-0.5 bg-primary shadow-[0_0_0_1px_hsl(var(--background))]"
+          className="pointer-events-none absolute inset-y-0 w-0.5 bg-primary shadow-[0_0_0_1px_var(--background)]"
           style={{ left: `${Math.min(99.5, progressPercent)}%` }}
           aria-hidden="true"
         />

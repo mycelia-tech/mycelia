@@ -16,11 +16,13 @@ export function TrackVisibilityButton() {
   return (
     <Button
       variant={isOpen ? "secondary" : "outline"}
-      size="icon"
+      size="sm"
+      aria-expanded={isOpen}
+      aria-controls="timeline-track-panel"
       title="Track visibility"
       onClick={toggle}
     >
-      <Layers className="h-4 w-4" />
+      <Layers className="h-4 w-4" /> Tracks
     </Button>
   );
 }
@@ -85,16 +87,16 @@ export function TrackVisibilityPanel() {
   const showObjectsOptions = visibleTracks.includes("objects");
 
   return (
-    <div className="w-64 border-l bg-background flex flex-col h-full">
+    <aside id="timeline-track-panel" aria-label="Track visibility" className="flex max-h-[55dvh] flex-col rounded-lg border bg-card lg:col-start-2 lg:row-start-2 lg:row-span-2 lg:max-h-[var(--workspace-panel-height)]">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b">
-        <h4 className="font-medium text-sm">Visible Tracks</h4>
+        <h4 className="font-semibold text-base">Visible Tracks</h4>
         <div className="flex gap-1">
           <Button
             variant="ghost"
             size="sm"
             onClick={showAll}
-            className="h-7 px-2"
+            className="h-8 px-2"
             title="Show all"
           >
             <Eye className="h-3 w-3" />
@@ -103,7 +105,7 @@ export function TrackVisibilityPanel() {
             variant="ghost"
             size="sm"
             onClick={hideAll}
-            className="h-7 px-2"
+            className="h-8 px-2"
             title="Hide all"
           >
             <EyeOff className="h-3 w-3" />
@@ -112,7 +114,7 @@ export function TrackVisibilityPanel() {
             variant="ghost"
             size="sm"
             onClick={() => setOpen(false)}
-            className="h-7 px-2"
+            className="h-8 px-2"
             title="Close panel"
           >
             <X className="h-3 w-3" />
@@ -141,7 +143,7 @@ export function TrackVisibilityPanel() {
                   />
                   <span className="truncate">{track.config.label}</span>
                   {count !== undefined && (
-                    <span className="text-muted-foreground/60 ml-auto tabular-nums text-xs">
+                    <span className="text-muted-foreground ml-auto tabular-nums text-xs">
                       {count.toLocaleString()}
                     </span>
                   )}
@@ -167,7 +169,7 @@ export function TrackVisibilityPanel() {
                   variant={objectsLayoutMode === "mixed" ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => setObjectsLayoutMode("mixed")}
-                  className="h-7 px-2"
+                  className="h-8 px-2"
                   title="Mixed layout"
                 >
                   <LayoutList className="h-3 w-3" />
@@ -176,7 +178,7 @@ export function TrackVisibilityPanel() {
                   variant={objectsLayoutMode === "by-category" ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => setObjectsLayoutMode("by-category")}
-                  className="h-7 px-2"
+                  className="h-8 px-2"
                   title="Group by category"
                 >
                   <LayoutGrid className="h-3 w-3" />
@@ -194,7 +196,7 @@ export function TrackVisibilityPanel() {
                 >
                   <Label
                     htmlFor={`cat-${category.id}`}
-                    className="text-xs cursor-pointer flex items-center gap-1.5 flex-1"
+                    className="text-sm cursor-pointer flex items-center gap-1.5 flex-1"
                   >
                     <span>{category.icon}</span>
                     <span
@@ -202,7 +204,7 @@ export function TrackVisibilityPanel() {
                       style={{ backgroundColor: category.color }}
                     />
                     <span className="truncate">{category.label}</span>
-                    <span className="text-muted-foreground/60 ml-auto tabular-nums">
+                    <span className="text-muted-foreground ml-auto tabular-nums">
                       {categoryCounts[category.id].toLocaleString()}
                     </span>
                   </Label>
@@ -210,7 +212,7 @@ export function TrackVisibilityPanel() {
                     id={`cat-${category.id}`}
                     checked={visibleObjectCategories.includes(category.id)}
                     onCheckedChange={() => toggleObjectCategory(category.id)}
-                    className="scale-75 ml-2"
+                    className="ml-2"
                   />
                 </div>
               ))}
@@ -218,6 +220,6 @@ export function TrackVisibilityPanel() {
           </div>
         )}
       </div>
-    </div>
+    </aside>
   );
 }

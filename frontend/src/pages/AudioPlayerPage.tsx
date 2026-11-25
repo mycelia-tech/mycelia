@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Gauge, Volume2 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Volume2 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import {
   Select,
@@ -61,32 +61,27 @@ export default function AudioPlayerPage() {
     setPlaybackRate(parseFloat(value));
   };
 
-  const formatDate = (date: Date | null) => {
-    if (!date) return "Not playing";
-    return new Intl.DateTimeFormat("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(date);
-  };
-
   return (
-    <div className="max-w-4xl mx-auto space-y-6 py-8">
+    <div className="w-full max-w-2xl space-y-4">
+      <h1 className="text-2xl font-semibold tracking-tight">Audio player</h1>
       <Card>
-        <CardHeader>
-          <CardTitle>Player Controls</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-8">
-          <div className="flex gap-4">
-            <PlayPauseButton />
+        <CardContent className="space-y-4 p-4 sm:p-5">
+          <div className="space-y-2">
+            <h2 className="font-semibold">Playback position</h2>
+            <DateTimePicker
+              value={jumpToDate || undefined}
+              onChange={handleJumpToDateChange}
+              placeholder="Select date and time"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <PlayPauseButton showLabel />
+            <label htmlFor="speed-select" className="ml-1 text-sm font-medium">Speed</label>
             <Select
               value={playbackRate.toString()}
               onValueChange={handleSpeedChange}
             >
-              <SelectTrigger id="speed-select" className="w-full">
+              <SelectTrigger id="speed-select" className="w-24">
                 <SelectValue placeholder="Select speed" />
               </SelectTrigger>
               <SelectContent>
@@ -102,15 +97,7 @@ export default function AudioPlayerPage() {
             </Select>
           </div>
 
-          <div className="space-y-4">
-            <DateTimePicker
-              value={jumpToDate || undefined}
-              onChange={handleJumpToDateChange}
-              placeholder="Select date and time"
-            />
-          </div>
-
-          <div className="space-y-4">
+          <div className="space-y-2 border-t pt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Volume2 className="w-5 h-5 text-muted-foreground" />
@@ -124,12 +111,14 @@ export default function AudioPlayerPage() {
             </div>
             <Slider
               id="volume-slider"
+              thumbLabels={["Volume"]}
+              thumbValueTexts={[`${Math.round(volume * 100)}%`]}
               value={[volume]}
               onValueChange={handleVolumeChange}
               min={0}
               max={3}
               step={0.01}
-              className="w-full"
+              className="h-6 w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>0%</span>

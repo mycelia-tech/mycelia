@@ -92,6 +92,7 @@ describe("SearchPage", () => {
       screen.getByLabelText("Question or phrase"),
       "migration decision",
     );
+    await user.click(screen.getByText("Filters", { selector: "summary" }));
     await user.type(screen.getByLabelText("Exact platforms"), "mycelia");
     await user.type(
       screen.getByLabelText("Exact message sender IDs"),

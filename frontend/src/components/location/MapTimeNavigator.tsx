@@ -107,7 +107,7 @@ export function MapTimeNavigator({
   const helpId = useId();
   const chartId = useId();
   const [showHistory, setShowHistory] = useState(
-    () => typeof window === "undefined" || window.innerWidth >= 768,
+    () => typeof window === "undefined" || window.innerWidth >= 1024,
   );
   const editorTitleId = useId();
   const editorErrorId = useId();
@@ -160,7 +160,7 @@ export function MapTimeNavigator({
   return (
     <section
       aria-label="Location history and date range"
-      className="shrink-0 rounded-lg border bg-background px-3 py-2.5"
+      className="shrink-0 rounded-lg border bg-card px-3 py-2.5"
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
         <div className="min-w-0">
@@ -193,7 +193,7 @@ export function MapTimeNavigator({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-xs"
+                className="h-8 gap-1.5 text-sm"
               >
                 <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
                 Edit dates
@@ -288,7 +288,7 @@ export function MapTimeNavigator({
         <div
           role="group"
           aria-label="Map period shortcuts"
-          className="flex items-center gap-0.5 rounded-md bg-muted p-0.5"
+          className="flex max-w-full flex-wrap items-center gap-0.5 rounded-md bg-muted p-0.5"
         >
           {shortcuts.map(({ label, days, title }) => (
             <Button
@@ -296,7 +296,7 @@ export function MapTimeNavigator({
               type="button"
               size="sm"
               variant="ghost"
-              className="h-7 px-2.5 text-xs tabular-nums"
+              className="h-8 px-2.5 text-sm tabular-nums"
               title={title}
               aria-label={title}
               onClick={() => {
@@ -311,7 +311,7 @@ export function MapTimeNavigator({
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 px-2.5 text-xs"
+            className="h-8 px-2.5 text-sm"
             disabled={!summary || !(dataEnd > dataStart)}
             onClick={() => commitRange(dataStart, dataEnd)}
           >
@@ -322,7 +322,7 @@ export function MapTimeNavigator({
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 gap-1 px-1.5 text-xs"
+          className="h-8 gap-1 px-2 text-sm"
           onClick={() => setShowHistory(!showHistory)}
           aria-expanded={showHistory}
           aria-controls={chartId}
@@ -355,7 +355,7 @@ export function MapTimeNavigator({
               moment
             </span>
           )}
-          <span className="text-[11px]">Each row has its own scale</span>
+          <span className="text-xs">Each row has its own scale</span>
         </div>
         <div
           className="relative mx-2 h-14 rounded bg-muted/30"
@@ -436,7 +436,7 @@ export function MapTimeNavigator({
               />
             )}
         </div>
-        <div className="relative mx-2 h-5 text-[11px] tabular-nums text-muted-foreground">
+        <div className="relative mx-2 h-5 text-xs tabular-nums text-muted-foreground">
           {scaleMarks.map(({ fraction, className }) => {
             const value = Math.round(min + (max - min) * fraction);
             return (
@@ -495,7 +495,7 @@ export function MapTimeNavigator({
             </Button>
           </div>
         )}
-        <p id={helpId} className="text-[11px] text-muted-foreground">
+        <p id={helpId} className="text-xs text-muted-foreground">
           Drag the handles to change the map period. Select a bar to inspect its
           activity.
         </p>

@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   ChevronRight,
   ChevronDown,
@@ -19,7 +18,6 @@ import {
   RefreshCw,
   Download,
   Search,
-  Clock,
   Upload,
   RotateCcw,
   X
@@ -163,23 +161,24 @@ const TreeItem = ({ node, level = 0, onRetry, retryingIds, queuedRetryIds }: { n
   const content = (
     <div
       className={cn(
-        "flex items-center py-1 px-2 hover:bg-accent rounded-sm cursor-pointer text-sm group",
+        "grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1 rounded-md px-2 py-1.5 text-sm hover:bg-accent lg:grid-cols-[auto_auto_minmax(0,1fr)_auto]",
+        node.type === "folder" && "cursor-pointer",
         level === 0 && "font-semibold bg-muted/50"
       )}
-      style={{ paddingLeft: `${level * 1.25}rem` }}
+      style={{ paddingLeft: `min(${0.5 + level * 0.875}rem, 14%)` }}
       role={node.type === 'folder' ? 'button' : undefined}
       tabIndex={node.type === 'folder' ? 0 : undefined}
       aria-expanded={node.type === 'folder' ? isExpanded : undefined}
       onKeyDown={event => { if (node.type === 'folder' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setIsExpanded(!isExpanded); } }}
       onClick={() => node.type === 'folder' && setIsExpanded(!isExpanded)}
     >
-      <span className="w-4 h-4 mr-1 flex items-center justify-center">
+      <span className="size-4 flex items-center justify-center">
         {hasChildren ? (
           isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />
         ) : null}
       </span>
 
-      <span className="mr-2 text-muted-foreground">
+      <span className="text-muted-foreground">
         {node.type === 'folder' ? (
           <Folder className={cn("w-4 h-4", isExpanded && "fill-current opacity-20")} />
         ) : (
@@ -187,11 +186,11 @@ const TreeItem = ({ node, level = 0, onRetry, retryingIds, queuedRetryIds }: { n
         )}
       </span>
 
-      {node.type === 'file' && node.id ? <Link className="flex-1 truncate hover:underline focus-visible:outline" to={`/audio/source_files/${node.id}`}>{node.name}</Link> : <span className="flex-1 truncate">{node.name}</span>}
+      {node.type === 'file' && node.id ? <Link title={node.fullPath} className="min-w-0 truncate hover:underline focus-visible:outline" to={`/audio/source_files/${node.id}`}>{node.name}</Link> : <span title={node.fullPath} className="min-w-0 truncate">{node.name}</span>}
 
-      <div className="flex items-center gap-4 ml-4 opacity-70 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+      <div className="col-span-3 flex flex-wrap items-center gap-x-3 gap-y-1 pl-5 text-xs lg:col-span-1 lg:justify-end">
         {dateStr && (
-          <span className="text-xs text-muted-foreground font-mono">
+          <span className="text-xs text-muted-foreground tabular-nums">
             {dateStr}
           </span>
         )}
@@ -202,7 +201,7 @@ const TreeItem = ({ node, level = 0, onRetry, retryingIds, queuedRetryIds }: { n
             size="sm"
             disabled={retryingIds.has(node.id) || queuedRetryIds.has(node.id)}
             aria-label={`Retry ${node.name}`}
-            className="h-5 px-1.5 text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+            className="h-7 px-2 text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -215,7 +214,7 @@ const TreeItem = ({ node, level = 0, onRetry, retryingIds, queuedRetryIds }: { n
         )}
 
         <div className="flex items-center gap-1.5 min-w-[60px] justify-end">
-          <span className="text-[10px] text-muted-foreground uppercase font-medium">Ingested</span>
+          <span className="text-xs text-muted-foreground">Ingested</span>
           <CheckCircle2 className={cn(
             "w-3.5 h-3.5",
             allIngested ? "text-green-500" : someIngested ? "text-yellow-500" : "text-muted-foreground"
@@ -229,14 +228,14 @@ const TreeItem = ({ node, level = 0, onRetry, retryingIds, queuedRetryIds }: { n
         </div>
 
         <div className="flex items-center gap-1.5 min-w-[40px] justify-end">
-          <span className="text-[10px] text-muted-foreground uppercase font-medium">Errors</span>
+          <span className="text-xs text-muted-foreground">Errors</span>
           <AlertCircle className={cn(
             "w-3.5 h-3.5",
-            node.errorCount > 0 ? "text-destructive" : "text-muted-foreground opacity-30"
+            node.errorCount > 0 ? "text-destructive" : "text-muted-foreground"
           )} />
           <span className={cn(
             "font-mono text-xs",
-            node.errorCount > 0 ? "text-destructive" : "text-muted-foreground opacity-30"
+            node.errorCount > 0 ? "text-destructive" : "text-muted-foreground"
           )}>
             {node.errorCount}
           </span>
@@ -569,15 +568,15 @@ export default function AudioSourceFilesPage() {
   const progress = totalCount ? (fetchedFiles.length / totalCount) * 100 : 0;
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Audio Source Files</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Audio Source Files</h1>
           <p className="text-muted-foreground mt-1">
             Hierarchy of discovered audio files and their ingestion status.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {baseStats.error > 0 && (
             <Button
               variant="outline"
@@ -612,14 +611,14 @@ export default function AudioSourceFilesPage() {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
       >
-        <CardContent className="pt-6 pb-6">
-          <div className="flex flex-col items-center justify-center text-center space-y-3">
-            <Upload className={cn("w-8 h-8", isDragging ? "text-primary" : "text-muted-foreground")} />
-            <div>
-              <p className="text-sm font-medium">
+        <CardContent className="p-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Upload className={cn("size-6 shrink-0", isDragging ? "text-primary" : "text-muted-foreground")} />
+            <div className="min-w-0 flex-1 basis-52">
+              <p className="font-medium">
                 {isDragging ? "Drop audio files here" : "Drag & drop audio files to upload"}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 WAV, MP3, M4A, MP4, FLAC, OPUS, OGG supported
               </p>
             </div>
@@ -697,7 +696,7 @@ export default function AudioSourceFilesPage() {
 
       {isDownloading && (
         <Card className="border-primary/20 bg-primary/5">
-          <CardContent className="pt-6 pb-6">
+          <CardContent className="p-4">
             <div className="space-y-4">
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2">
@@ -729,78 +728,50 @@ export default function AudioSourceFilesPage() {
 
       <Card>
         <CardHeader className="pb-3 border-b">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <CardTitle className="text-lg font-medium whitespace-nowrap">Source File Hierarchy</CardTitle>
-
-            <div className="flex flex-1 items-center gap-3 md:gap-4 max-w-2xl">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <div className="space-y-3">
+            <CardTitle className="text-lg">Source File Hierarchy</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1 basis-52">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="search"
+                  aria-label="Filter paths"
                   placeholder="Filter paths..."
-                  className="pl-8 h-9"
+                  className="pl-8"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-
-              <div className="flex items-center gap-2">
-                <Badge
-                  variant={statusFilter === 'all' ? 'default' : 'outline'}
-                  className="cursor-pointer hover:bg-primary/90 whitespace-nowrap"
-                  onClick={() => setStatusFilter('all')}
-                >
-                  Total: {baseStats.total}
-                </Badge>
-
-                <Badge
-                  variant={statusFilter === 'ingested' ? 'default' : 'outline'}
-                  className={cn(
-                    "cursor-pointer whitespace-nowrap transition-colors",
-                    statusFilter === 'ingested' ? "bg-green-600 hover:bg-green-700" : "hover:bg-green-50 text-green-600 border-green-200"
-                  )}
-                  onClick={() => setStatusFilter(statusFilter === 'ingested' ? 'all' : 'ingested')}
-                >
-                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                  Ingested: {baseStats.ingested}
-                </Badge>
-
-                <Badge
-                  variant={statusFilter === 'error' ? 'default' : 'outline'}
-                  className={cn(
-                    "cursor-pointer whitespace-nowrap transition-colors",
-                    statusFilter === 'error' ? "bg-destructive hover:bg-destructive/90" : "hover:bg-red-50 text-destructive border-red-200"
-                  )}
-                  onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
-                >
-                  <AlertCircle className="w-3 h-3 mr-1" />
-                  Errors: {baseStats.error}
-                </Badge>
-
-                <Badge
-                  variant={statusFilter === 'pending' ? 'default' : 'outline'}
-                  className={cn(
-                    "cursor-pointer whitespace-nowrap transition-colors",
-                    statusFilter === 'pending' ? "bg-yellow-600 hover:bg-yellow-700" : "hover:bg-yellow-50 text-yellow-600 border-yellow-200"
-                  )}
-                  onClick={() => setStatusFilter(statusFilter === 'pending' ? 'all' : 'pending')}
-                >
-                  <Clock className="w-3 h-3 mr-1" />
-                  Pending: {baseStats.pending}
-                </Badge>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Ingestion status">
+                {([
+                  ["all", "Total", baseStats.total],
+                  ["ingested", "Ingested", baseStats.ingested],
+                  ["error", "Errors", baseStats.error],
+                  ["pending", "Pending", baseStats.pending],
+                ] as const).map(([status, label, count]) => (
+                  <Button
+                    key={status}
+                    variant={statusFilter === status ? "default" : "outline"}
+                    size="sm"
+                    aria-pressed={statusFilter === status}
+                    onClick={() => setStatusFilter(statusFilter === status ? "all" : status)}
+                  >
+                    {label}: {count}
+                  </Button>
+                ))}
               </div>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-6">
+        <CardContent className="p-3">
           {fetchedFiles.length === 0 && isDownloading ? (
-            <div className="flex flex-col items-center justify-center py-20 space-y-4">
+            <div className="flex flex-col items-center justify-center py-8 space-y-2">
               <RefreshCw className="h-10 w-10 animate-spin text-primary opacity-50" />
               <p className="text-muted-foreground animate-pulse">Initializing download...</p>
             </div>
           ) : tree && tree.totalCount > 0 ? (
-            <div className="border rounded-lg bg-card overflow-hidden shadow-sm">
-               <div className="p-2 max-h-[75vh] overflow-y-auto">
+            <div className="min-w-0">
+               <div className="max-h-[75vh] overflow-y-auto">
                   {Object.values(tree.children).length > 0 ? (
                     Object.values(tree.children)
                       .sort((a, b) => {
@@ -814,19 +785,25 @@ export default function AudioSourceFilesPage() {
                </div>
             </div>
           ) : !isDownloading ? (
-            <div className="text-center py-20 border-2 border-dashed rounded-lg">
+            <div className="rounded-lg bg-muted/30 px-3 py-8 text-center">
               <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-muted mb-4">
                 <Folder className="w-6 h-6 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-medium">No source files found</h3>
+              <h3 className="text-lg font-medium">{baseStats.total > 0 ? "No files match these filters" : "No source files found"}</h3>
               <p className="text-muted-foreground max-w-xs mx-auto mt-2">
-                We couldn't find any source files in the database.
-                Upload audio files above or make sure the discovery process is running.
+                {baseStats.total > 0
+                  ? "Try a different path or ingestion status."
+                  : "Upload audio files above or check that discovery is running."}
               </p>
-              <Button variant="outline" className="mt-6" onClick={() => fetchInBatches()}>
+              {baseStats.total > 0 ? (
+                <Button variant="outline" className="mt-3" onClick={() => {
+                  setStatusFilter('all');
+                  setSearchQuery("");
+                }}>Clear filters</Button>
+              ) : <Button variant="outline" className="mt-3" onClick={() => fetchInBatches()}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Try again
-              </Button>
+              </Button>}
             </div>
           ) : null}
         </CardContent>

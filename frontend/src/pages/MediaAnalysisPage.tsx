@@ -1009,7 +1009,7 @@ export default function MediaAnalysisPage() {
   ] as const;
 
   return (
-    <div className="container mx-auto space-y-4 p-4">
+    <div className="min-w-0 space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
@@ -1058,7 +1058,7 @@ export default function MediaAnalysisPage() {
       <Card>
         <nav
           aria-label="Analysis views"
-          className="flex flex-wrap gap-1 px-3 pt-3"
+          className="flex flex-wrap gap-1 rounded-t-xl border-b bg-muted/30 p-2 sm:px-3"
         >
           {([["unprocessed", "To analyze"], ["ready", "Results"], [
             "needs_attention",
@@ -1070,6 +1070,7 @@ export default function MediaAnalysisPage() {
               variant={filters.inventoryFilter === value
                 ? "secondary"
                 : "ghost"}
+              aria-pressed={filters.inventoryFilter === value}
               onClick={() => updateFilters({ status: value })}
             >
               {label}
@@ -1091,7 +1092,7 @@ export default function MediaAnalysisPage() {
           </select>
           <select
             aria-label="Import batch"
-            className="h-9 max-w-80 rounded-md border bg-background px-2 text-sm"
+            className="h-9 max-w-full rounded-md sm:max-w-80 border bg-background px-2 text-sm"
             value={importFilter}
             onChange={(event) => updateFilters({ import: event.target.value })}
           >
@@ -1107,7 +1108,7 @@ export default function MediaAnalysisPage() {
         <CardHeader className="p-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1">
-              <CardTitle className="text-base">Photos</CardTitle>
+              <CardTitle className="text-lg">Photos</CardTitle>
               <MediaHint label="About analysis filters">
                 Filters and sorting are stored in the URL. Batch review verifies
                 originals and shows the exact eligible count and maximum cost
@@ -1165,7 +1166,7 @@ export default function MediaAnalysisPage() {
             </Button>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[1.3fr_repeat(4,minmax(0,0.7fr))]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.3fr_repeat(4,minmax(0,0.7fr))]">
             <form
               className="space-y-1.5"
               onSubmit={(event) => {
@@ -1224,7 +1225,7 @@ export default function MediaAnalysisPage() {
                 <option value="missing_location">Missing location</option>
               </select>
             </div>
-            <div className="space-y-1.5 lg:col-span-2">
+            <div className="space-y-1.5 xl:col-span-2">
               {captureEndOnly
                 ? (
                   <div
@@ -1322,10 +1323,10 @@ export default function MediaAnalysisPage() {
                   : selectedIds.size + " selected"}
               </Badge>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <select
                 aria-label="Analysis provider"
-                className="h-9 min-w-[220px] rounded-md border bg-background px-3 text-sm"
+                className="h-9 w-full min-w-0 max-w-full rounded-md sm:w-56 border bg-background px-3 text-sm"
                 value={profileId}
                 onChange={(event) => {
                   setProfileId(event.target.value);
@@ -1382,7 +1383,7 @@ export default function MediaAnalysisPage() {
 
           {currentPreview && (
             <div className="flex flex-col gap-3 rounded-lg border border-primary/40 bg-primary/5 p-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <div className="font-medium">Exact provider preview</div>
                 <div className="text-sm text-muted-foreground">
                   {Number(currentPreview.eligibleCount ?? 0)}{" "}
@@ -1417,7 +1418,7 @@ export default function MediaAnalysisPage() {
                   </div>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex max-w-full flex-wrap gap-2">
                 <Button
                   variant="outline"
                   onClick={() =>
@@ -1463,7 +1464,7 @@ export default function MediaAnalysisPage() {
 
           {loading && assets.length === 0
             ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,14rem),1fr))] gap-3">
                 {Array.from({ length: 8 }).map((_, index) => (
                   <div
                     key={index}
@@ -1484,7 +1485,7 @@ export default function MediaAnalysisPage() {
             )
             : viewMode === "grid"
             ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,14rem),1fr))] gap-3">
                 {assets.map((asset) => {
                   const assetId = idOf(asset._id);
                   return (
@@ -1604,7 +1605,7 @@ export default function MediaAnalysisPage() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="py-2 text-xs">
+                          <TableCell className="py-2 text-sm">
                             {formattedDate(asset.capturedAt)}
                           </TableCell>
                           <TableCell className="py-2">
@@ -1685,21 +1686,21 @@ export default function MediaAnalysisPage() {
               return (
                 <div key={batchId} className="space-y-3 rounded-lg border p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 max-w-full">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={statusTone(batch.status)}>
                           {batch.status}
                         </Badge>
-                        <span className="font-medium">
+                        <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
                           {batch.profileName ?? "Recognition provider"}
                         </span>
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
+                      <div className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                         {(batch.requestedTasks ?? []).join(" + ") ||
                           "Stored task selection"}
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap gap-2">
                       {coordinatorJobId && (
                         <Button size="sm" variant="ghost" asChild>
                           <Link
@@ -1741,7 +1742,7 @@ export default function MediaAnalysisPage() {
                             );
                           }}
                         >
-                          <RefreshCw className="mr-2 h-3.5 w-3.5" />Review{" "}
+                          <RefreshCw className="h-3.5 w-3.5" />Review{" "}
                           {failed} in a new batch
                         </Button>
                       )}
@@ -1785,10 +1786,10 @@ export default function MediaAnalysisPage() {
           <SheetHeader
             className={detail?.asset && !detailLoading ? "pr-8" : "sr-only"}
           >
-            <SheetTitle>
+            <SheetTitle className="[overflow-wrap:anywhere]">
               {detail?.asset?.fileName ?? "Photo details"}
             </SheetTitle>
-            <SheetDescription>
+            <SheetDescription className="[overflow-wrap:anywhere]">
               {detail?.asset?.source?.relativePath ??
                 detail?.asset?.storageMode ??
                 "Loading imported photo details"}
@@ -1820,7 +1821,7 @@ export default function MediaAnalysisPage() {
                       {detail.asset.location ? "GPS available" : "No GPS"}
                     </Badge>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex min-w-0 max-w-full flex-wrap gap-2">
                     {detail.asset.kind === "image" && (
                       <>
                         {detail.asset.location && (

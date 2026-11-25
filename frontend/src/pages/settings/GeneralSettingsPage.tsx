@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -22,7 +22,7 @@ const GeneralSettingsPage = () => {
   const now = useMemo(() => new Date(), []);
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-3xl space-y-5">
       <div>
         <h2 className="text-2xl font-semibold mb-2">Appearance</h2>
         <p className="text-muted-foreground">
@@ -30,51 +30,48 @@ const GeneralSettingsPage = () => {
         </p>
       </div>
 
-      <div className="border rounded-lg p-6 space-y-6">
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Theme</Label>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="rounded-xl border bg-card px-4 sm:px-5">
+        <div className="divide-y">
+          <div className="space-y-2 py-4">
+            <span id="appearance-theme" className="text-sm font-medium">Theme</span>
+            <div role="group" aria-labelledby="appearance-theme" className="grid max-w-md grid-cols-3 gap-1.5">
               <Button
                 aria-pressed={theme === "light"}
                 variant={theme === "light" ? "default" : "outline"}
                 onClick={() => setTheme("light")}
-                className="flex-1"
+                className="min-w-0 gap-1.5 px-2"
               >
-                <Sun className="w-4 h-4 mr-2" />
+                <Sun className="size-4" />
                 Light
               </Button>
               <Button
                 aria-pressed={theme === "dark"}
                 variant={theme === "dark" ? "default" : "outline"}
                 onClick={() => setTheme("dark")}
-                className="flex-1"
+                className="min-w-0 gap-1.5 px-2"
               >
-                <Moon className="w-4 h-4 mr-2" />
+                <Moon className="size-4" />
                 Dark
               </Button>
               <Button
                 aria-pressed={theme === "system"}
                 variant={theme === "system" ? "default" : "outline"}
                 onClick={() => setTheme("system")}
-                className="flex-1"
+                className="min-w-0 gap-1.5 px-2"
               >
-                <Monitor className="w-4 h-4 mr-2" />
+                <Monitor className="size-4" />
                 System
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Select your preferred theme or use system settings
-            </p>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 py-4">
             <Label htmlFor="timeFormat">Time Format</Label>
             <select
               id="timeFormat"
               value={timeFormat}
               onChange={(e) => setTimeFormat(e.target.value as any)}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <optgroup label="Gregorian (Local)">
                 <option value="gregorian-local-natural">
@@ -116,12 +113,9 @@ const GeneralSettingsPage = () => {
                 </option>
               </optgroup>
             </select>
-            <p className="text-xs text-muted-foreground">
-              Choose how dates and times are displayed across the application
-            </p>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 py-4">
             <Label htmlFor="defaultTimeZone">Default Time Zone</Label>
             <TimeZoneSelect
               id="defaultTimeZone"
@@ -129,7 +123,7 @@ const GeneralSettingsPage = () => {
               onChange={setDefaultTimeZone}
               includeBrowser
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Used when a timeline instant has no saved time-zone period.
               Current resolved zone:{" "}
               {resolveDefaultTimeZone(defaultTimeZone)}. Device zone:{" "}
@@ -137,7 +131,7 @@ const GeneralSettingsPage = () => {
             </p>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 py-4">
             <Label htmlFor="transcriptThreshold">
               Transcript Button Threshold (hours)
             </Label>
@@ -156,7 +150,7 @@ const GeneralSettingsPage = () => {
               }}
               className="w-32"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Time ranges shorter than this duration will show a "Go to
               transcript" button.
             </p>

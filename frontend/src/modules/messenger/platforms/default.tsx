@@ -1,5 +1,5 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { Platform } from "../core/types.ts";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import { useFormattedTime } from "@/lib/formatTime";
@@ -12,7 +12,7 @@ const Message = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "flex w-full items-end gap-2 py-4",
+      "flex w-full items-end gap-2 py-1",
       isUser ? "justify-end" : "flex-row-reverse justify-end",
       className
     )}
@@ -30,7 +30,7 @@ const MessageContent = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "flex flex-col gap-2 overflow-hidden rounded-lg text-sm text-foreground",
+      "flex flex-col gap-2 overflow-hidden rounded-lg border bg-card px-3 py-2 text-base leading-relaxed text-card-foreground",
       className
     )}
     {...props}
@@ -75,7 +75,6 @@ function renderMessageText(text: any): React.ReactNode {
 
 // Ensure type handles children appropriately
 const DefaultMessageComponent: Platform["MessageComponent"] = ({ message, children }) => {
-  const navigate = useNavigate();
   const formattedDate = useFormattedTime(new Date(message.timestamp));
   const senderName = message.raw?.from || message.raw?.sender_name || "Unknown";
 
@@ -85,31 +84,17 @@ const DefaultMessageComponent: Platform["MessageComponent"] = ({ message, childr
       : (Array.isArray(message.text as any) && (message.text as any).length > 0) || (typeof message.text === 'object' && message.text !== null)
   );
 
-  const handleSenderClick = () => {
-    if (message.senderId) {
-      navigate(`/objects/${message.senderId.toString()}`);
-    }
-  };
 
   return (
     <Message isUser={false}>
-        <div className="flex flex-col gap-1 max-w-[80%] min-w-0">
-            <div className="flex items-center gap-2 mb-1 px-1">
-                <span 
-                  className="font-semibold text-xs text-muted-foreground hover:text-foreground cursor-pointer underline-offset-2 hover:underline transition-colors"
-                  onClick={handleSenderClick}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleSenderClick();
-                    }
-                  }}
-                >
-                  {senderName}
-                </span>
-                <span className="text-[10px] text-muted-foreground opacity-70">{formattedDate}</span>
+        <div className="flex flex-col gap-1 max-w-[95%] min-w-0 sm:max-w-[min(85%,72ch)]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1">
+                {message.senderId ? (
+                  <Link className="break-words text-sm font-semibold text-primary hover:underline" to={`/objects/${message.senderId.toString()}`}>
+                    {senderName}
+                  </Link>
+                ) : <span className="break-words text-sm font-semibold">{senderName}</span>}
+                <span className="text-xs text-muted-foreground">{formattedDate}</span>
             </div>
             
             <MessageContent className="break-words overflow-hidden">

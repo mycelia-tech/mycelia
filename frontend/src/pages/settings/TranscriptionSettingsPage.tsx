@@ -550,7 +550,7 @@ const TranscriptionSettingsPage = () => {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 @xl/settings:grid-cols-2 @4xl/settings:grid-cols-3">
         {currentProfiles.map((profile) => {
           const health = healthById.get(profile.id);
           return (
@@ -608,8 +608,8 @@ const TranscriptionSettingsPage = () => {
           </label>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-6">
-          <div className="space-y-2 md:col-span-3">
+        <div className="grid gap-4 @2xl/settings:grid-cols-6">
+          <div className="space-y-2 @2xl/settings:col-span-3">
             <Label htmlFor="sttName">Server name</Label>
             <Input
               id="sttName"
@@ -621,7 +621,7 @@ const TranscriptionSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-1">
+          <div className="space-y-2 @2xl/settings:col-span-1">
             <Label htmlFor="sttPriority">Priority</Label>
             <Input
               id="sttPriority"
@@ -636,7 +636,7 @@ const TranscriptionSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-1">
+          <div className="space-y-2 @2xl/settings:col-span-1">
             <Label htmlFor="sttSlots">Slots</Label>
             <Input
               id="sttSlots"
@@ -651,10 +651,10 @@ const TranscriptionSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="flex items-end text-xs text-muted-foreground md:col-span-1">
+          <div className="flex items-end text-xs text-muted-foreground @2xl/settings:col-span-1">
             1-8 jobs in parallel
           </div>
-          <div className="space-y-2 md:col-span-6">
+          <div className="space-y-2 @2xl/settings:col-span-6">
             <Label htmlFor="sttBaseUrl">OpenAI-compatible base URL</Label>
             <Input
               id="sttBaseUrl"
@@ -667,7 +667,7 @@ const TranscriptionSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-3">
+          <div className="space-y-2 @2xl/settings:col-span-3">
             <Label htmlFor="sttApiKey">API key</Label>
             <Input
               id="sttApiKey"
@@ -681,7 +681,7 @@ const TranscriptionSettingsPage = () => {
                 }))}
             />
           </div>
-          <div className="space-y-2 md:col-span-3">
+          <div className="space-y-2 @2xl/settings:col-span-3">
             <Label htmlFor="sttModel">Model</Label>
             <ModelSelector
               value={draft.model}

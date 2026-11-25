@@ -38,7 +38,7 @@ export function APIActions({
   };
 
   return (
-    <div className="flex items-center gap-3 pt-4 border-t">
+    <div className="flex flex-wrap items-center gap-2 border-t pt-4">
       <Button
         onClick={onSave}
         disabled={!hasChanges || isSaved}
@@ -78,32 +78,31 @@ export function APIActions({
           )}
       </Button>
 
-      <div className="flex flex-col gap-2 ml-auto">
-        {exchangeResult && (
-          <div className="flex items-center gap-2">
-            {exchangeResult === "success"
-              ? (
-                <>
-                  <CheckCircle2 className="w-5 h-5 text-green-600" />
-                  <span className="text-sm text-green-600">Token valid</span>
-                </>
-              )
-              : (
-                <>
-                  <XCircle className="w-5 h-5 text-red-600" />
-                  <span className="text-sm text-red-600">
-                    {getErrorMessage(exchangeResult)}
-                  </span>
-                </>
-              )}
-          </div>
-        )}
-      </div>
+      {exchangeResult && (
+        <div role="status" className="order-last flex w-full min-w-0 items-center gap-2 break-words text-sm">
+          {exchangeResult === "success"
+            ? (
+              <>
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                <span className="text-sm text-green-600">Token valid</span>
+              </>
+            )
+            : (
+              <>
+                <XCircle className="w-5 h-5 text-red-600" />
+                <span className="text-sm text-red-600">
+                  {getErrorMessage(exchangeResult)}
+                </span>
+              </>
+            )}
+        </div>
+      )}
 
       <Button
-        variant="destructive"
+        variant="outline"
+        className="@lg/settings:ml-auto"
         onClick={onClear}
-        title="Clear all settings"
+        title="Sign out of this browser"
       >
         Log Out
       </Button>
