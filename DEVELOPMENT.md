@@ -1454,6 +1454,14 @@ registered as a model-callable tool. All actions scope records to the current
 user and the Mycelia chat platform. The model sees only the curated tool set;
 raw Mongo writes and internal maintenance actions are excluded.
 
+With the trip search tool enabled, chat checks `search_searchTrips` for personal whereabouts.
+It groups geocoded GPS stays by country, or by city for a city query. Another
+destination or an observation gap over 72 hours starts a separate visit. Date
+filters clip the observed interval. Each visit includes local calendar dates
+and a map link. For simple Russian and English visit-date questions, the chat
+streams a dated answer directly from a successful GPS tool result, preserving
+the tool activity and avoiding a second model request. Missing coverage leaves arrival and departure times uncertain.
+
 Each generation has a durable `chat_runs` record. `activeRunId` protects the
 chat summary from stale completions, and an approval continuation keeps the same
 run and assistant message. The `chat:self` WebSocket subscription is mapped to a

@@ -567,3 +567,63 @@ Deno.test(
     expect(result.results[0].text).toBe("This week meeting");
   }),
 );
+
+Deno.test(
+  "searchTrips separates return visits, uses local dates and respects city and time filters",
+  withFixtures(["Admin", "Mongo"], async (admin: Auth, { db }) => {
+    const search = await getSearchResource(admin, db);
+    const stay = (at: string, city: string, countryCode = "JP") => ({
+      type: "stay",
+      place: {
+        countryCode,
+        city,
+        country: countryCode === "JP" ? "Japan" : "Korea",
+      },
+      timeZone: "Asia/Tokyo",
+      start: new Date(at),
+      end: new Date(Date.parse(at) + 3_600_000),
+    });
+    await db.collection("location_segments").insertMany([
+      stay("2025-01-01T16:00Z", "Tokyo"),
+      stay("2025-01-02T01:00Z", "Osaka"),
+      stay("2025-01-02T05:00Z", "Tokyo"),
+      stay("2025-01-02T08:00Z", "Seoul", "KR"),
+      stay("2025-01-02T12:00Z", "Tokyo"),
+      stay("2025-02-01T23:00Z", "Tokyo"),
+      { ...stay("2025-02-03T12:00Z", "Tokyo"), type: "manual" },
+    ]);
+    const country = await search({
+      action: "searchTrips",
+      country: "jp",
+      limit: 10,
+    });
+    expect(country.visits.map((v: any) => v.stays)).toEqual([1, 1, 3]);
+    expect(country.visits[0].firstLocalDate).toBe("2025-02-02");
+    expect(country.visits[2].firstLocalDate).toBe("2025-01-02");
+    expect(country.visits[2].cities.sort()).toEqual(["Osaka", "Tokyo"]);
+    const city = await search({
+      action: "searchTrips",
+      city: "tokyo",
+      country: "Japan",
+      limit: 3,
+    });
+    expect(city.visits.map((v: any) => v.stays)).toEqual([1, 1, 1]);
+    expect(city.hasMore).toBe(true);
+    const startDate = new Date("2025-01-02T01:15:00Z");
+    const endDate = new Date("2025-01-02T01:30:00Z");
+    const during = await search({
+      action: "searchTrips",
+      startDate,
+      endDate,
+      limit: 10,
+    });
+    expect(during.visits[0].cities).toEqual(["Osaka"]);
+    expect(during.visits[0].mapUrl).toContain(
+      `start=${+startDate}&end=${+endDate}`,
+    );
+    expect(
+      (await search({ action: "searchTrips", country: "BR", limit: 10 }))
+        .visits,
+    ).toEqual([]);
+  }),
+);

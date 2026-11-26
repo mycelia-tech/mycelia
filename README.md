@@ -174,6 +174,7 @@ verified operation; see [access-log recovery](DEVELOPMENT.md#access-log-memory-a
 
 - Chat with your memory using a curated tool catalogue, with Auto, No tools, and
   per-chat Custom policies; data-changing actions require explicit approval.
+- Ask when you visited a country or city. Chat checks GPS stays and links each observed visit to the map.
 - Streaming responses with durable run status, observable tool activity and
   usage metadata, retry/stop controls, and in-app completion notifications.
   Unparsed DeepSeek tool markup is replaced with a skipped-call notice.

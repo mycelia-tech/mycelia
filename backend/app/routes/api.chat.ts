@@ -35,6 +35,11 @@ import { startChatRun, updateChatRunState } from "@/lib/chat/runs.server.ts";
 import { publishChatUpdated } from "@/lib/chat/events.server.ts";
 import type { ChatRunState, ChatToolPolicy } from "@myceliasdk/messengers.ts";
 import { splitUnparsedToolText } from "@myceliasdk/chat-tool-text.ts";
+import {
+  directTripDateAnswer,
+  GPS_TRIP_TOOL,
+  tripDateLocale,
+} from "@/lib/chat/trip-date-answer.ts";
 
 export { chatToolFilter } from "@/lib/chat/tools.server.ts";
 
@@ -45,9 +50,17 @@ const CHAT_TOOL_LIMIT_ERROR =
 const UNPARSED_TOOL_CALL_ERROR =
   "The provider returned tool syntax as text. The response is incomplete.";
 
-export function chatToolSteps(systemPrompt: string) {
+export function chatToolSteps(
+  systemPrompt: string,
+  directLocale?: "ru" | "en",
+) {
+  const direct = directLocale && directTripDateAnswer(directLocale);
   return {
-    stopWhen: stepCountIs(MAX_CHAT_TOOL_STEPS + 1),
+    stopWhen: [
+      stepCountIs(MAX_CHAT_TOOL_STEPS + 1),
+      ...(direct ? [direct.completed] : []),
+    ],
+    ...(direct && { experimental_transform: direct.transform }),
     prepareStep: ({ stepNumber }: { stepNumber: number }) =>
       stepNumber === MAX_CHAT_TOOL_STEPS
         ? {
@@ -55,6 +68,8 @@ export function chatToolSteps(systemPrompt: string) {
           system:
             `${systemPrompt}\n\nThe tool budget for this response is exhausted. Answer the user's question directly using the tool results already available. Identify any gaps in the evidence.`,
         }
+        : direct && stepNumber === 0
+        ? { activeTools: [GPS_TRIP_TOOL], toolChoice: "required" as const }
         : undefined,
   };
 }
@@ -78,6 +93,11 @@ export function appendActiveToolGuidance(
   if (tools.has("search_searchTranscriptions")) {
     guidance.push(
       'For recordings around a known date, start with search_searchTranscriptions with query "" and explicit startDate and endDate. Use the timestamps in the results to choose which recordings to inspect.',
+    );
+  }
+  if (tools.has("search_searchTrips")) {
+    guidance.push(
+      "For personal whereabouts, travel or visit dates, call search_searchTrips FIRST, including when the question is in another language. Supply the country ISO code or canonical city and omit unspecified dates. Answer in the user's language using each returned firstLocalDate and lastLocalDate and link its mapUrl. For a simple dates question, answer immediately after this tool. If no matching GPS stays exist, say so. Distinguish mentions and plans from recorded presence.",
     );
   }
   return guidance.join("\n\n");
@@ -903,7 +923,12 @@ export async function apiChatHandler(req: Request, res: Response) {
       tools,
       activeTools: activeTools as any,
       abortSignal: abortController.signal,
-      ...chatToolSteps(chatSystemPrompt),
+      ...chatToolSteps(
+        chatSystemPrompt,
+        (activeTools ?? Object.keys(tools)).includes(GPS_TRIP_TOOL)
+          ? tripDateLocale(latestUserText)
+          : undefined,
+      ),
       system: chatSystemPrompt,
       messages: modelMessages,
       onError: (errorEvent: any) => {

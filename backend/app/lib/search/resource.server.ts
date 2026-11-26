@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchGpsTrips, searchTripsSchema } from "./gps-trips.ts";
 import { ObjectId } from "bson";
 import { Resource } from "@/lib/auth/resources.ts";
 import { Auth } from "@/lib/auth/core.server.ts";
@@ -99,6 +100,7 @@ const searchRequestSchema = z.discriminatedUnion("action", [
   searchMessagesSchema,
   searchObjectsSchema,
   searchMediaSchema,
+  searchTripsSchema,
 ]);
 
 export type SearchRequest = z.infer<typeof searchRequestSchema>;
@@ -166,6 +168,7 @@ Available actions:
 - searchTranscriptions: Find content in voice recordings/transcriptions
 - searchMessages: Find content in chat conversations
 - searchObjects: Find people, events, places, relationships in knowledge graph (searches names, details, summaries)
+- searchTrips: Find visits by country, city or period in GPS-derived stays
 - searchMedia: Find OCR text and recognized labels in photos and PDFs`;
 
   schemas = {
@@ -177,6 +180,8 @@ Available actions:
     const mongo = await getMongoResource(auth);
 
     switch (input.action) {
+      case "searchTrips":
+        return await searchGpsTrips(mongo, input);
       case "searchMedia": {
         const media = auth.getResource<any, any>("media");
         return await media({

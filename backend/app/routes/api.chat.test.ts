@@ -152,3 +152,92 @@ Deno.test("appendActiveToolGuidance follows Auto and disabled tool policies", ()
   expect(appendActiveToolGuidance("Base", undefined, ["search_searchObjects"]))
     .toBe("Base");
 });
+
+Deno.test("GPS guidance follows the active tool policy", () => {
+  const catalog = ["search_searchTrips"];
+  expect(appendActiveToolGuidance("Base", undefined, catalog)).toContain(
+    "search_searchTrips FIRST",
+  );
+  expect(appendActiveToolGuidance("Base", [], catalog)).toBe("Base");
+});
+
+Deno.test("plain visit dates stream the tool evidence without a second provider request", async () => {
+  const { GPS_TRIP_TOOL, tripDateLocale } = await import(
+    "@/lib/chat/trip-date-answer.ts"
+  );
+  expect(tripDateLocale("Когда я была в Новой Зеландии?")).toBe("ru");
+  expect(tripDateLocale("Когда я был в Греции и с кем встречался?"))
+    .toBeUndefined();
+  expect(tripDateLocale("What did I do in Tokyo?")).toBeUndefined();
+  const question = "When was I in Tokyo?";
+  let requests = 0;
+  const model = createOpenAI({
+    apiKey: "synthetic-test-key",
+    fetch: (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      requests++;
+      expect(requests).toBe(1);
+      expect(body.tools.map((t: any) => t.function.name)).toEqual([
+        GPS_TRIP_TOOL,
+      ]);
+      const events = [
+        {
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "gps",
+                type: "function",
+                function: {
+                  name: GPS_TRIP_TOOL,
+                  arguments: '{"city":"Tokyo"}',
+                },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+      ];
+      return Promise.resolve(
+        new Response(
+          events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") +
+            "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    },
+  }).chat("synthetic");
+  const stream = streamText({
+    model,
+    prompt: question,
+    ...chatToolSteps("Base", tripDateLocale(question)),
+    tools: {
+      [GPS_TRIP_TOOL]: tool({
+        inputSchema: jsonSchema({
+          type: "object",
+          properties: { city: { type: "string" } },
+        }),
+        execute: () => ({
+          type: "json",
+          value: {
+            source: "location_segments",
+            hasMore: false,
+            visits: [{
+              countryCode: "JP",
+              cities: ["Tokyo"],
+              firstLocalDate: "2025-03-05",
+              lastLocalDate: "2025-03-08",
+              mapUrl: "/map?start=1&end=2&layers=presence,routes",
+            }],
+          },
+        }),
+      }),
+    },
+  });
+  expect(await stream.text).toMatch(/Tokyo.*March.*5.*8.*2025/);
+  expect(await stream.finishReason).toBe("stop");
+  expect(await stream.toolResults).toHaveLength(1);
+  expect(requests).toBe(1);
+});
